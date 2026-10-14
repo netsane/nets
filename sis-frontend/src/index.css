@@ -1,0 +1,45 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  font-family: 'Inter', system-ui, Avenir, Helvetica, Arial, sans-serif;
+  /* FORCE STARTING COLOR TO GREEN-BLUE */
+  background-color: #06b6d4 !important; 
+  color: #ffffff;
+  color-scheme: dark;
+}
+
+
+
+body {
+  margin: 0;
+  padding: 0;
+  width: 100vw;
+  min-height: 100vh;
+  /* This prevents the navy "flash" on refresh */
+  background-color: #06b6d4 !important;
+  display: block !important; 
+  overflow-x: hidden;
+}
+
+#root {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+/* This gives your Settings and Cards a separate "Surface" look */
+.card, .settings-panel, .glass-card {
+    /* Use a dark or light overlay so it stands OUT from the green-blue background */
+    background-color: rgba(15, 23, 42, 0.6) !important; 
+    backdrop-filter: blur(16px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+    border-radius: 1rem;
+}
+
+/* Ensure settings text doesn't inherit the background's blur */
+.settings-panel * {
+    filter: none !important;
+}

@@ -1,0 +1,75 @@
+/* src/App.css */
+
+/* 1. LAYOUT UNLOCK */
+/* Removed max-width and margin to allow the background to be full-screen */
+#root {
+  width: 100%;
+  min-height: 100vh;
+  margin: 0;
+  padding: 0;
+  text-align: left; /* Dashboards look better left-aligned */
+}
+
+/* 2. LOGO ENGINE */
+.logo {
+  height: 4em; /* Slightly smaller for professional header use */
+  padding: 1em;
+  will-change: filter;
+  transition: filter 300ms;
+}
+
+.logo:hover {
+  /* Updated shadow to match Green-Blue theme */
+  filter: drop-shadow(0 0 2em rgba(6, 182, 212, 0.6));
+}
+
+@keyframes logo-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .logo-spin-active {
+    animation: logo-spin infinite 20s linear;
+  }
+}
+
+/* 3. CARD & CONTAINER SYSTEM */
+/* Modified to be transparent so the background image/color shows through */
+.card {
+  padding: 1.5rem;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  backdrop-filter: blur(8px);
+  transition: transform 0.2s ease;
+}
+
+.card:hover {
+  border-color: rgba(6, 182, 212, 0.4);
+}
+
+/* 4. TYPOGRAPHY */
+.read-the-docs {
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 0.9rem;
+}
+
+h1, h2, h3 {
+  color: #ffffff;
+  letter-spacing: -0.02em;
+}
+
+/* 5. DASHBOARD UTILITIES */
+.text-institutional {
+  color: #06b6d4; /* The Green-Blue color */
+}
+
+.bg-institutional {
+  background-color: #06b6d4;
+}
+
+/* Ensure the main container doesn't have a hidden background */
+.main-app-container {
+  background: transparent !important;
+}

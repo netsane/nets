@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Unity University FM System</title>
+    <!-- Load Tailwind CSS from CDN (Development Only) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Apply the Inter font and ensure full page height */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            margin: 0;
+            padding: 0;
+            /* Prevent body scroll, React component handles scrolling */
+            overflow: hidden; 
+            min-height: 100vh;
+        }
+        #root {
+            min-height: 100vh;
+        }
+    </style>
+</head>
+<body>
+    <!-- This is the root element where React will mount the App -->
+    <div id="root"></div>
+
+    <!-- 
+        CRITICAL: This line loads the main application module (src/main.jsx)
+        The Vite server processes this file, bundles it, and sends it to the browser.
+    -->
+    <script type="module" src="/src/main.jsx"></script>
+</body>
+</html>
