@@ -16369,51 +16369,56 @@ const Input = ({ label, type, value, onChange, placeholder, isRequired = false, 
         </div>
     );
 };
-
-// Component for Generic Reports (Only available to Admins/Managers/Staff)
 const ReportsGenerator = ({ glassClass }) => {
-    const { allData, getCollection } = useData(); 
+    const { allData, getCollection } = useData();
     const { currentUser, checkPermission } = useAuth();
 
-    // New constants for Report Type
     const REPORT_TYPES = [
         { label: 'All Time', value: 'all' },
         { label: 'Daily', value: 'daily' },
         { label: 'Weekly', value: 'weekly' },
         { label: 'Monthly', value: 'monthly' },
         { label: 'Quarterly', value: 'quarterly' },
-        { label: 'Annually', value: 'annually' }
+        { label: 'Annually', value: 'annually' },
+    ];
+
+    const REPORT_PRESETS = [
+        { id: '', label: 'Custom selection' },
+        { id: 'FIN_TX', label: 'Finance · Transactions', collection: 'transactions' },
+        { id: 'FIN_COA', label: 'Finance · Chart of Accounts', collection: 'FIN_COA_CRUD' },
+        { id: 'FIN_PARTNERS', label: 'Finance · Partners', collection: 'FIN_PARTNERS_CRUD' },
+        { id: 'PAY_PROCESS', label: 'Payroll · Process', collection: 'PAY_PROCESS_CRUD' },
+        { id: 'PAY_OT', label: 'Payroll · Overtime', collection: 'PAY_OVERTIME_CRUD' },
+        { id: 'HR_EMP', label: 'HR · Employees', collection: 'HR_EMPLOYEE_CRUD' },
+        { id: 'HR_LEAVE', label: 'HR · Leave', collection: 'HR_LEAVE_CRUD' },
     ];
 
     const getCollectionLabel = useCallback((name) => {
-        if (!name) return '';
-        if (typeof name !== 'string') return ''; 
+        if (!name || typeof name !== 'string') return '';
         return name.replace(/_/g, ' ').replace('CRUD', '(Data)').trim();
     }, []);
 
-    const collectionNames = useMemo(() => Object.keys(allData).sort(), [allData]);
-    const initialSelectedCollectionName = collectionNames.length > 0 ? collectionNames[0] : '';
-    
-    const [selectedCollection, setSelectedCollection] = useState(initialSelectedCollectionName);
+    const collectionNames = useMemo(() => Object.keys(allData || {}).sort(), [allData]);
+    const initialSelected = collectionNames.length > 0 ? collectionNames[0] : '';
+
+    const [selectedCollection, setSelectedCollection] = useState(initialSelected);
     const [sortKey, setSortKey] = useState('');
     const [groupByKey, setGroupByKey] = useState('');
-    const [reportType, setReportType] = useState('all'); // New State for Type
+    const [reportType, setReportType] = useState('all');
+    const [dateFrom, setDateFrom] = useState('');
+    const [dateTo, setDateTo] = useState('');
+    const [preset, setPreset] = useState('');
+    const [statusFilter, setStatusFilter] = useState('All');
+    const [searchTerm, setSearchTerm] = useState('');
 
-    const columns = useMemo(() => COLUMN_CONFIG[selectedCollection] || [], [selectedCollection]);
+    const columns = useMemo(() => (typeof COLUMN_CONFIG !== 'undefined' ? (COLUMN_CONFIG[selectedCollection] || []) : []), [selectedCollection]);
 
-    const filterableColumns = useMemo(() =>
-        (columns || []).filter(col => !col.isHidden && col.type !== 'array'),
+    const filterableColumns = useMemo(
+        () => (columns || []).filter((col) => !col.isHidden && col.type !== 'array'),
         [columns]
     );
 
-    const [columnFilters, setColumnFilters] = useState(() => {
-        return filterableColumns.reduce((acc, col) => {
-            acc[col.key] = '';  
-            return acc;
-        }, {});
-    });
-
-    const currentData = useMemo(() => getCollection(selectedCollection) || [], [getCollection, selectedCollection]);
+    const [columnFilters, setColumnFilters] = useState({});
 
     useEffect(() => {
         if (selectedCollection) {
@@ -16425,47 +16430,103 @@ const ReportsGenerator = ({ glassClass }) => {
             );
             setSortKey('');
             setGroupByKey('');
-            setReportType('all'); // Reset type on collection change
+            setReportType('all');
         }
     }, [selectedCollection, filterableColumns]);
 
+    const currentData = useMemo(() => getCollection(selectedCollection) || [], [getCollection, selectedCollection]);
+
     const getColumnFilterOptions = useCallback((data, columnKey) => {
         const values = new Set(['All']);
-        data.forEach(item => {
+        (data || []).forEach((item) => {
             const value = item[columnKey];
-            if (value !== null && value !== undefined) {
-                values.add(String(value));
-            }
+            if (value !== null && value !== undefined) values.add(String(value));
         });
-        return Array.from(values).map(v => ({ label: v, value: v }));
+        return Array.from(values).map((v) => ({ label: v, value: v }));
     }, []);
 
-    const columnOptions = React.useMemo(() => {
+    const columnOptions = useMemo(() => {
         const options = {};
-        filterableColumns.forEach(col => {
+        filterableColumns.forEach((col) => {
             options[col.key] = getColumnFilterOptions(currentData, col.key);
         });
         return options;
     }, [currentData, filterableColumns, getColumnFilterOptions]);
 
-    const [searchTerm, setSearchTerm] = useState('');
-
     const filteredAndSortedData = useMemo(() => {
         let data = [...currentData];
 
-        data = data.filter(item => {
-            return (filterableColumns || []).every(col => {
+        data = data.filter((item) =>
+            (filterableColumns || []).every((col) => {
                 const filterValue = columnFilters[col.key] || '';
                 if (filterValue === 'All' || !filterValue) return true;
-                const itemValue = String(item[col.key] || '').toLowerCase();
-                return itemValue === filterValue.toLowerCase();
+                return String(item[col.key] || '').toLowerCase() === filterValue.toLowerCase();
+            })
+        );
+
+        if (statusFilter && statusFilter !== 'All') {
+            const sf = statusFilter.toLowerCase();
+            data = data.filter((item) => String(item.status || item.Status || '').toLowerCase() === sf);
+        }
+
+        const dateKeys = [
+            'date', 'posting_date', 'createdAt', 'created_at', 'payroll_process_date',
+            'process_date', 'leave_start', 'start_date', 'transaction_date', 'grv_date', 'period',
+        ];
+
+        if (dateFrom || dateTo) {
+            const fromTs = dateFrom ? new Date(dateFrom).setHours(0, 0, 0, 0) : null;
+            const toTs = dateTo ? new Date(dateTo).setHours(23, 59, 59, 999) : null;
+            data = data.filter((item) => {
+                let raw = null;
+                for (const k of dateKeys) {
+                    if (item[k] != null && String(item[k]).trim() !== '') {
+                        raw = item[k];
+                        break;
+                    }
+                }
+                if (!raw) return true;
+                const ts = new Date(raw).getTime();
+                if (isNaN(ts)) return true;
+                if (fromTs != null && ts < fromTs) return false;
+                if (toTs != null && ts > toTs) return false;
+                return true;
             });
-        });
+        }
+
+        if (reportType && reportType !== 'all') {
+            const now = new Date();
+            data = data.filter((item) => {
+                let raw = null;
+                for (const k of dateKeys) {
+                    if (item[k] != null && String(item[k]).trim() !== '') {
+                        raw = item[k];
+                        break;
+                    }
+                }
+                if (!raw) return true;
+                const d = new Date(raw);
+                if (isNaN(d.getTime())) return true;
+                if (reportType === 'daily') return d.toDateString() === now.toDateString();
+                if (reportType === 'weekly') {
+                    const weekAgo = new Date(now);
+                    weekAgo.setDate(now.getDate() - 7);
+                    return d >= weekAgo && d <= now;
+                }
+                if (reportType === 'monthly') return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+                if (reportType === 'quarterly') {
+                    const q = Math.floor(now.getMonth() / 3);
+                    return Math.floor(d.getMonth() / 3) === q && d.getFullYear() === now.getFullYear();
+                }
+                if (reportType === 'annually') return d.getFullYear() === now.getFullYear();
+                return true;
+            });
+        }
 
         if (searchTerm && searchTerm.trim()) {
             const q = searchTerm.trim().toLowerCase();
-            data = data.filter(item =>
-                Object.values(item || {}).some(v => String(v ?? '').toLowerCase().includes(q))
+            data = data.filter((item) =>
+                Object.values(item || {}).some((v) => String(v ?? '').toLowerCase().includes(q))
             );
         }
 
@@ -16473,40 +16534,33 @@ const ReportsGenerator = ({ glassClass }) => {
             data.sort((a, b) => {
                 const aVal = a[sortKey];
                 const bVal = b[sortKey];
-                if ((typeof aVal === 'number' || (!isNaN(parseFloat(aVal)) && isFinite(aVal))) &&
-                    (typeof bVal === 'number' || (!isNaN(parseFloat(bVal)) && isFinite(bVal)))) {
-                    return parseFloat(aVal) - parseFloat(bVal);
-                }
-                const stringA = String(aVal || '').toLowerCase();
-                const stringB = String(bVal || '').toLowerCase();
-                if (stringA < stringB) return -1;
-                if (stringA > stringB) return 1;
-                return 0;
+                const na = parseFloat(aVal);
+                const nb = parseFloat(bVal);
+                if (!isNaN(na) && !isNaN(nb) && isFinite(na) && isFinite(nb)) return na - nb;
+                return String(aVal || '').toLowerCase().localeCompare(String(bVal || '').toLowerCase());
             });
         }
 
         return data;
-    }, [currentData, columnFilters, sortKey, filterableColumns, searchTerm]);
+    }, [currentData, columnFilters, sortKey, filterableColumns, searchTerm, dateFrom, dateTo, reportType, statusFilter]);
 
     const groupedData = useMemo(() => {
-        if (!groupByKey) {
-            return { 'All Records': filteredAndSortedData };
-        }
+        if (!groupByKey) return { 'All Records': filteredAndSortedData };
         return filteredAndSortedData.reduce((acc, item) => {
             const key = String(item[groupByKey] || 'N/A');
-            acc[key] = acc[key] || [];
+            if (!acc[key]) acc[key] = [];
             acc[key].push(item);
             return acc;
         }, {});
     }, [filteredAndSortedData, groupByKey]);
 
-    const displayColumns = useMemo(() => (columns || []).filter(col => !col.isHidden && col.type !== 'array').slice(0, 8), [columns]);
+    const displayColumns = useMemo(
+        () => (columns || []).filter((col) => !col.isHidden && col.type !== 'array').slice(0, 8),
+        [columns]
+    );
 
     const handleFilterChange = (columnKey, value) => {
-        setColumnFilters(prevFilters => ({
-            ...prevFilters,
-            [columnKey]: value,
-        }));
+        setColumnFilters((prev) => ({ ...prev, [columnKey]: value }));
     };
 
     useEffect(() => {
@@ -16515,211 +16569,303 @@ const ReportsGenerator = ({ glassClass }) => {
         }
     }, [collectionNames, selectedCollection]);
 
-    const exportCSV = (slug) => {
-        const rows = (slug && allData[slug]) ? allData[slug] : filteredAndSortedData;
+    const exportCSV = () => {
+        const rows = filteredAndSortedData;
         if (!rows || !rows.length) return;
-        const cols = displayColumns.length ? displayColumns : Object.keys(rows[0]).map(k => ({ key: k, label: k }));
-        const headers = cols.map(c => c.label || c.key);
-        const body = rows.map(r => cols.map(c => {
-            const v = r[c.key];
-            const s = v == null ? '' : String(v).replace(/"/g, '""');
-            return `"${s}"`;
-        }).join(','));
+        const cols = displayColumns.length
+            ? displayColumns
+            : Object.keys(rows[0] || {}).map((k) => ({ key: k, label: k }));
+        const headers = cols.map((c) => c.label || c.key);
+        const body = rows.map((r) =>
+            cols
+                .map((c) => {
+                    const v = r[c.key];
+                    const s = v == null ? '' : String(v).replace(/"/g, '""');
+                    return `"${s}"`;
+                })
+                .join(',')
+        );
         const csv = [headers.join(','), ...body].join('\n');
         const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `${slug || selectedCollection || 'report'}.csv`;
+        a.download = `${selectedCollection || 'report'}.csv`;
         a.click();
         URL.revokeObjectURL(url);
     };
 
+    const partners = getCollection('FIN_PARTNERS_CRUD') || [];
+
     return (
-        <ContainerCard  Icon='FileText' glassClass={glassClass} className="h-full max-w-full min-w-0 overflow-x-hidden overflow-y-auto">
+        <ContainerCard Icon="FileText" glassClass={glassClass} className="h-full max-w-full min-w-0 overflow-x-hidden overflow-y-auto">
             <div className="space-y-3 mb-4 p-3 sm:p-4 border border-white/10 rounded-xl max-w-full min-w-0 overflow-hidden bg-black/20">
                 <h3 className="text-base font-semibold text-cyan-400 flex items-center shrink-0">
-                    <Icons.Building className="w-5 h-5 mr-2 shrink-0" />
-                    Report Configuration
+                    <Icons.FileBarChart className="w-5 h-5 mr-2 shrink-0" />
+                    Institutional Report Studio
                 </h3>
+                <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">
+                    Presets · date range · column filters · group · export
+                </p>
+
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-2">
+                    <div className="rounded-xl border border-cyan-500/20 bg-cyan-950/20 p-3">
+                        <p className="text-[9px] text-cyan-400/80 uppercase font-black">Rows</p>
+                        <p className="text-lg font-black text-white">{filteredAndSortedData.length}</p>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-black/30 p-3">
+                        <p className="text-[9px] text-gray-500 uppercase font-black">Source</p>
+                        <p className="text-xs font-bold text-white truncate">{getCollectionLabel(selectedCollection) || '—'}</p>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-black/30 p-3">
+                        <p className="text-[9px] text-gray-500 uppercase font-black">Period</p>
+                        <p className="text-xs font-bold text-white">{reportType}</p>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-black/30 p-3">
+                        <p className="text-[9px] text-gray-500 uppercase font-black">Groups</p>
+                        <p className="text-lg font-black text-white">{Object.keys(groupedData || {}).length}</p>
+                    </div>
+                </div>
 
                 <div className="w-full max-w-full min-w-0 overflow-x-auto overflow-y-visible">
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 items-end min-w-0 w-full">
-                            
-                            {/* Data Collection Select */}
-                            <div className="min-w-0 max-w-full w-full overflow-hidden">
+                        <div className="min-w-0 max-w-full w-full overflow-hidden">
+                            <Input
+                                label="Report preset"
+                                type="select"
+                                options={REPORT_PRESETS.map((p) => ({ label: p.label, value: p.id }))}
+                                value={preset}
+                                onChange={(val) => {
+                                    setPreset(val);
+                                    const hit = REPORT_PRESETS.find((p) => p.id === val);
+                                    if (hit && hit.collection && collectionNames.includes(hit.collection)) {
+                                        setSelectedCollection(hit.collection);
+                                    }
+                                }}
+                            />
+                        </div>
+
+                        <div className="min-w-0 max-w-full w-full overflow-hidden">
+                            <Input
+                                label="Data Collection"
+                                type="select"
+                                options={collectionNames.map((name) => ({ label: getCollectionLabel(name), value: name }))}
+                                value={selectedCollection}
+                                onChange={(val) => setSelectedCollection(val)}
+                                isRequired
+                            />
+                        </div>
+
+                        <div className="min-w-0 max-w-full w-full overflow-hidden">
+                            <label className="text-[10px] font-black uppercase text-gray-500 tracking-widest">Date from</label>
+                            <input
+                                type="date"
+                                value={dateFrom}
+                                onChange={(e) => setDateFrom(e.target.value)}
+                                className="w-full mt-1 bg-black/50 border border-white/15 rounded-xl px-3 py-2.5 text-white text-sm outline-none focus:ring-1 focus:ring-cyan-500/40"
+                            />
+                        </div>
+
+                        <div className="min-w-0 max-w-full w-full overflow-hidden">
+                            <label className="text-[10px] font-black uppercase text-gray-500 tracking-widest">Date to</label>
+                            <input
+                                type="date"
+                                value={dateTo}
+                                onChange={(e) => setDateTo(e.target.value)}
+                                className="w-full mt-1 bg-black/50 border border-white/15 rounded-xl px-3 py-2.5 text-white text-sm outline-none focus:ring-1 focus:ring-cyan-500/40"
+                            />
+                        </div>
+
+                        <div className="min-w-0 max-w-full w-full overflow-hidden">
+                            <Input
+                                label="Status"
+                                type="select"
+                                options={[
+                                    { label: 'All', value: 'All' },
+                                    { label: 'Draft', value: 'Draft' },
+                                    { label: 'Posted', value: 'Posted' },
+                                    { label: 'Approved', value: 'Approved' },
+                                    { label: 'Pending', value: 'Pending' },
+                                    { label: 'Active', value: 'Active' },
+                                ]}
+                                value={statusFilter}
+                                onChange={(val) => setStatusFilter(val)}
+                            />
+                        </div>
+
+                        <div className="min-w-0 max-w-full w-full overflow-hidden">
+                            <Input
+                                label="Filter by Partner/Entity"
+                                type="select"
+                                options={[
+                                    { label: 'All Entities', value: 'All' },
+                                    ...partners.map((p) => ({
+                                        label: p.partner_name || p.name || p.id,
+                                        value: p.partner_name || p.name || p.id,
+                                    })),
+                                ]}
+                                value={columnFilters.partner_name || ''}
+                                onChange={(val) => handleFilterChange('partner_name', val)}
+                            />
+                        </div>
+
+                        {(filterableColumns || []).map((col) => (
+                            <div key={col.key} className="min-w-0 max-w-full w-full overflow-hidden">
                                 <Input
-                                    label="Data Collection"
+                                    label={`Filter: ${col.label}`}
                                     type="select"
-                                    options={collectionNames.map(name => ({ label: getCollectionLabel(name), value: name }))}
-                                    value={selectedCollection}
-                                    onChange={(val) => setSelectedCollection(val)}
-                                    isRequired
+                                    options={columnOptions[col.key] || [{ label: 'All', value: 'All' }]}
+                                    value={columnFilters[col.key] || ''}
+                                    onChange={(val) => handleFilterChange(col.key, val)}
                                 />
                             </div>
+                        ))}
 
-                            {/* Dynamic Filter Selects */}
-                            
-                            {/* Entity/Partner Filter */}
-                            <div className="min-w-0 max-w-full w-full overflow-hidden">
-                                <Input
-                                    label="Filter by Partner/Entity"
-                                    type="select"
-                                    options={[{label: 'All Entities', value: 'All'}, ...getCollection('FIN_PARTNERS_CRUD').map(p => ({label: p.partner_name, value: p.partner_name}))]}
-                                    value={columnFilters['partner_name'] || ''}
-                                    onChange={(val) => handleFilterChange('partner_name', val)}
-                                />
-                            </div>
+                        <div className="min-w-0 max-w-full w-full overflow-hidden">
+                            <Input
+                                label="Report Type"
+                                type="select"
+                                options={REPORT_TYPES}
+                                value={reportType}
+                                onChange={(val) => setReportType(val)}
+                            />
+                        </div>
 
-                            {selectedCollection && (filterableColumns || []).map(col => (
-                                <div key={col.key} className="min-w-0 max-w-full w-full overflow-hidden">
-                                    <Input
-                                        label={`Filter: ${col.label}`}
-                                        type="select"
-                                        options={columnOptions[col.key] || [{ label: 'All', value: 'All' }]}
-                                        value={columnFilters[col.key] || ''}
-                                        onChange={(val) => handleFilterChange(col.key, val)}
-                                    />
-                                </div>
-                            ))}
+                        <div className="min-w-0 max-w-full w-full overflow-hidden">
+                            <Input
+                                label="Sort By"
+                                type="select"
+                                options={[
+                                    { label: 'None', value: '' },
+                                    ...(filterableColumns || []).map((c) => ({ label: c.label, value: c.key })),
+                                ]}
+                                value={sortKey}
+                                onChange={(val) => setSortKey(val)}
+                            />
+                        </div>
 
-                            {/* Report Type Select (DAILY, WEEKLY, etc) */}
-                            <div className="min-w-0 max-w-full w-full overflow-hidden">
-                                <Input
-                                    label="Report Type"
-                                    type="select"
-                                    options={REPORT_TYPES}
-                                    value={reportType}
-                                    onChange={(val) => setReportType(val)}
-                                />
-                            </div>
-
-                            {/* Sort By Select */}
-                            <div className="min-w-0 max-w-full w-full overflow-hidden">
-                                <Input
-                                    label="Sort By"
-                                    type="select"
-                                    options={[{ label: 'None', value: '' }, ...(filterableColumns || []).map(c => ({ label: c.label, value: c.key }))]}
-                                    value={sortKey}
-                                    onChange={(val) => setSortKey(val)}
-                                />
-                            </div>
-
-                            {/* Group By Select */}
-                            <div className="min-w-0 max-w-full w-full overflow-hidden">
-                                <Input
-                                    label="Group By"
-                                    type="select"
-                                    options={[{ label: 'None', value: '' }, ...(filterableColumns || []).map(c => ({ label: c.label, value: c.key }))]}
-                                    value={groupByKey}
-                                    onChange={(val) => setGroupByKey(val)}
-                                />
-                            </div>
+                        <div className="min-w-0 max-w-full w-full overflow-hidden">
+                            <Input
+                                label="Group By"
+                                type="select"
+                                options={[
+                                    { label: 'None', value: '' },
+                                    ...(filterableColumns || []).map((c) => ({ label: c.label, value: c.key })),
+                                ]}
+                                value={groupByKey}
+                                onChange={(val) => setGroupByKey(val)}
+                            />
                         </div>
                     </div>
+                </div>
 
-                    {/* Export Button Integration */}
-                    <div className="w-full pt-2 flex flex-wrap justify-end gap-2">
+                <div className="w-full pt-2 flex flex-wrap justify-end gap-2">
+                    {typeof ExportButton === 'function' ? (
                         <ExportButton
                             data={filteredAndSortedData}
                             columns={columns}
-                            filename={`${getCollectionLabel(selectedCollection)}-${reportType}-Report`}
+                            filename={selectedCollection || 'report'}
+                            isFinancial
                         />
-                    </div>
-                </div>
-            
-
-            {/* Results Table */}
-            {selectedCollection && (
-                <div className="flex-grow min-w-0 max-w-full overflow-hidden p-2 mt-2 border border-white/10 rounded-xl bg-black/20">
-                    <h3 className="text-lg font-bold text-white mb-3 px-1">
-                        Report Results: {getCollectionLabel(selectedCollection)} ({filteredAndSortedData.length} Records)
-                    </h3>
-
-                    {Object.entries(groupedData).map(([groupKey, data]) => (
-                        <div key={groupKey} className="mb-6 p-4 rounded-lg bg-gray-800/50">
-                            <h4 className="text-lg font-semibold text-gray-300 sticky top-0 bg-gray-800/80 p-2 -m-2 mb-2 z-10">
-                                {groupByKey ? `${filterableColumns.find(col => col.key === groupByKey)?.label || groupByKey}: ${groupKey} (${data.length})` : `All Records (${data.length})`}
-                            </h4>
-                            <div className="mb-4 flex flex-wrap gap-2 items-center no-print">
-                               <input
-                                    type="text"
-                                    placeholder="Search records..."
-                                    value={searchTerm}
-                                    onChange={(e) => setSearchTerm(e.target.value)}
-                                    className="border border-cyan-500/30 bg-black/50 text-white placeholder:text-gray-500 p-2 rounded-lg text-sm w-full md:w-64 outline-none focus:ring-2 focus:ring-cyan-500/40"
-                               />
-                               <button
-                                    type="button"
-                                    onClick={() => exportCSV(selectedCollection)}
-                                    className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700 transition font-semibold"
-                               >
-                                 Export to CSV
-                               </button>
-                             </div>
-                             <div className="uu-table-scroll w-full max-w-full min-w-0 overflow-x-auto overflow-y-auto max-h-[min(55vh,520px)] rounded-xl border border-white/10 bg-black/40">
-                                <table className="w-max min-w-full border-collapse table-auto">
-                                    <thead className="bg-slate-950/95 sticky top-0 z-10">
-                                        <tr className="border-b border-white/10">
-                                            {(displayColumns || []).map((col, i) => (
-                                                <th key={i} className="px-3 py-2.5 text-left text-[10px] font-black uppercase tracking-wider text-cyan-300/90 whitespace-nowrap border-r border-white/5 last:border-r-0" style={{ width: 'auto' }}>
-                                                    <span className="inline-flex items-center gap-1">
-                                                      {col.label}
-                                                      <IntelTip label={col.label} fieldKey={col.key || col.label} collection={typeof collectionName !== 'undefined' ? collectionName : undefined} />
-                                                    </span>
-                                                </th>
-                                            ))}
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-gray-800">
-                                        {data.length === 0 ? (
-                                            <tr>
-                                                <td colSpan={Math.max(displayColumns.length, 1)} className="px-4 py-8 text-center text-gray-500 text-sm">
-                                                    No rows to display
-                                                </td>
-                                            </tr>
-                                        ) : data.map((record, ri) => (
-                                            <tr
-                                                key={record.id || ri}
-                                                className={`transition duration-150 hover:bg-cyan-500/10 ${ri % 2 === 0 ? 'bg-white/[0.03]' : 'bg-transparent'}`}
-                                            >
-                                                {(displayColumns || []).map((col, j) => {
-                                                    const raw = record[col.key];
-                                                    let cell;
-                                                    if (Array.isArray(raw)) {
-                                                        cell = raw.slice(0, 2).map((entry, idx) => (
-                                                            <span key={idx} className="bg-gray-700 text-gray-200 rounded-full px-2 py-1 text-xs mr-1 inline-block">
-                                                                {typeof entry === 'object' ? Object.values(entry).join(' / ') : String(entry)}
-                                                            </span>
-                                                        ));
-                                                    } else if (raw === null || raw === undefined || raw === '') {
-                                                        cell = <span className="text-gray-500">—</span>;
-                                                    } else if (col.type === 'number' || (typeof raw === 'number') || (typeof raw === 'string' && raw !== '' && !isNaN(Number(raw)) && /salary|pay|gross|net|amount|tax|pension|basic|ot|allowance/i.test(col.key || ''))) {
-                                                        const n = Number(raw);
-                                                        cell = Number.isFinite(n)
-                                                            ? n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-                                                            : String(raw);
-                                                    } else {
-                                                        cell = String(raw);
-                                                    }
-                                                    return (
-                                                        <td key={j} className="px-4 py-3.5 whitespace-nowrap text-sm text-white font-medium">
-                                                            {cell}
-                                                        </td>
-                                                    );
-                                                })}
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                    ))}
-                    {filteredAndSortedData.length === 0 && (
-                        <p className="text-center py-8 text-gray-500">No records match the current criteria.</p>
+                    ) : (
+                        <button
+                            type="button"
+                            onClick={exportCSV}
+                            className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700 transition font-semibold"
+                        >
+                            Export CSV
+                        </button>
                     )}
                 </div>
-            )}
+            </div>
+
+            <div className="mb-4 flex flex-wrap gap-2 items-center">
+                <input
+                    type="text"
+                    placeholder="Search records..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="border border-cyan-500/30 bg-black/50 text-white placeholder:text-gray-500 p-2 rounded-lg text-sm w-full md:w-64 outline-none focus:ring-2 focus:ring-cyan-500/40"
+                />
+                <button
+                    type="button"
+                    onClick={exportCSV}
+                    className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700 transition font-semibold"
+                >
+                    Export to CSV
+                </button>
+            </div>
+
+            {Object.entries(groupedData).map(([groupName, rows]) => (
+                <div key={groupName} className="mb-6">
+                    {groupByKey ? (
+                        <h4 className="text-sm font-black text-cyan-400 uppercase tracking-widest mb-2 px-1">
+                            {groupName} · {rows.length}
+                        </h4>
+                    ) : null}
+                    <div className="uu-table-scroll w-full max-w-full min-w-0 overflow-x-auto overflow-y-auto max-h-[min(55vh,520px)] rounded-xl border border-white/10 bg-black/40">
+                        <table className="w-max min-w-full border-collapse table-auto">
+                            <thead className="bg-slate-950/95 sticky top-0 z-10">
+                                <tr className="border-b border-white/10">
+                                    {(displayColumns || []).map((col, i) => (
+                                        <th
+                                            key={i}
+                                            className="px-3 py-2.5 text-left text-[10px] font-black uppercase tracking-wider text-cyan-300/90 whitespace-nowrap border-r border-white/5 last:border-r-0"
+                                        >
+                                            {col.label}
+                                        </th>
+                                    ))}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {(rows || []).map((row, ri) => (
+                                    <tr key={row.id || ri} className="border-b border-white/5 hover:bg-white/5">
+                                        {(displayColumns || []).map((col, j) => {
+                                            const raw = row[col.key];
+                                            let cell;
+                                            if (Array.isArray(raw)) {
+                                                cell = (raw || []).slice(0, 2).map((entry, idx) => (
+                                                    <span
+                                                        key={idx}
+                                                        className="bg-gray-700 text-gray-200 rounded-full px-2 py-1 text-xs mr-1 inline-block"
+                                                    >
+                                                        {typeof entry === 'object' ? Object.values(entry).join(' / ') : String(entry)}
+                                                    </span>
+                                                ));
+                                            } else if (raw === null || raw === undefined || raw === '') {
+                                                cell = <span className="text-gray-500">—</span>;
+                                            } else if (
+                                                col.type === 'number' ||
+                                                typeof raw === 'number' ||
+                                                (typeof raw === 'string' &&
+                                                    raw !== '' &&
+                                                    !isNaN(Number(raw)) &&
+                                                    /salary|pay|gross|net|amount|tax|pension|basic|ot|allowance/i.test(col.key || ''))
+                                            ) {
+                                                const n = Number(raw);
+                                                cell = Number.isFinite(n)
+                                                    ? n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                                                    : String(raw);
+                                            } else {
+                                                cell = String(raw);
+                                            }
+                                            return (
+                                                <td key={j} className="px-4 py-3.5 whitespace-nowrap text-sm text-white font-medium">
+                                                    {cell}
+                                                </td>
+                                            );
+                                        })}
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            ))}
+
+            {filteredAndSortedData.length === 0 ? (
+                <p className="text-center py-8 text-gray-500">No records match the current criteria.</p>
+            ) : null}
         </ContainerCard>
     );
 };
@@ -19839,6 +19985,180 @@ const Sidebar = ({ currentView, setCurrentView, glassClass }) => {
 
     // ... rest of Sidebar JSX
 };
+/* —— Ethiopian (Geez) ↔ Gregorian calendar —— */
+const ethiopianMonthNames = [
+    'Meskerem', 'Tikimt', 'Hidar', 'Tahsas', 'Tir', 'Yekatit',
+    'Megabit', 'Miazia', 'Genbot', 'Sene', 'Hamle', 'Nehase', 'Pagumen'
+];
+
+const isGregorianLeap = (y) => (y % 4 === 0 && y % 100 !== 0) || (y % 400 === 0);
+const isEthiopianLeap = (y) => (y % 4) === 3;
+
+const gregorianToJDN = (year, month, day) => {
+    const a = Math.floor((14 - month) / 12);
+    const y = year + 4800 - a;
+    const m = month + 12 * a - 3;
+    return day + Math.floor((153 * m + 2) / 5) + 365 * y + Math.floor(y / 4) - Math.floor(y / 100) + Math.floor(y / 400) - 32045;
+};
+
+const jdnToGregorian = (jdn) => {
+    const a = jdn + 32044;
+    const b = Math.floor((4 * a + 3) / 146097);
+    const c = a - Math.floor((146097 * b) / 4);
+    const d = Math.floor((4 * c + 3) / 1461);
+    const e = c - Math.floor((1461 * d) / 4);
+    const m = Math.floor((5 * e + 2) / 153);
+    const day = e - Math.floor((153 * m + 2) / 5) + 1;
+    const month = m + 3 - 12 * Math.floor(m / 10);
+    const year = 100 * b + d - 4800 + Math.floor(m / 10);
+    return { year, month, day };
+};
+
+const ethiopianToJDNCore = (year, month, day) => {
+    // Standard: JDN = 1723856 + 365*(y-1) + floor(y/4) + 30*(m-1) + d
+    return 1723856 + 365 * (year - 1) + Math.floor(year / 4) + 30 * (month - 1) + day;
+};
+
+const jdnToEthiopian = (jdn) => {
+    const r = jdn - 1723855;
+    const year = Math.floor((4 * r - 1) / 1461);
+    const t = Math.floor((4 * r - 1) % 1461);
+    const n = Math.floor(t / 4);
+    const month = Math.floor(n / 30) + 1;
+    const day = (n % 30) + 1;
+    return { year, month, day };
+};
+
+const gregorianToEthiopian = (y, m, d) => jdnToEthiopian(gregorianToJDN(y, m, d));
+const ethiopianToGregorian = (y, m, d) => jdnToGregorian(ethiopianToJDNCore(y, m, d));
+
+const EthiopianCalendarPanel = ({ glassClass }) => {
+    const now = new Date();
+    const [gY, setGY] = React.useState(now.getFullYear());
+    const [gM, setGM] = React.useState(now.getMonth() + 1);
+    const [gD, setGD] = React.useState(now.getDate());
+    const ethToday = gregorianToEthiopian(now.getFullYear(), now.getMonth() + 1, now.getDate());
+    const [eY, setEY] = React.useState(ethToday.year);
+    const [eM, setEM] = React.useState(ethToday.month);
+    const [eD, setED] = React.useState(ethToday.day);
+    const [mode, setMode] = React.useState('g2e'); // g2e | e2g
+    const [calMonth, setCalMonth] = React.useState(now.getMonth() + 1);
+    const [calYear, setCalYear] = React.useState(now.getFullYear());
+
+    const g2e = gregorianToEthiopian(gY, gM, gD);
+    const e2g = ethiopianToGregorian(eY, eM, eD);
+
+    const daysInGregorianMonth = (y, m) => new Date(y, m, 0).getDate();
+    const firstWeekday = (y, m) => new Date(y, m - 1, 1).getDay();
+    const dim = daysInGregorianMonth(calYear, calMonth);
+    const start = firstWeekday(calYear, calMonth);
+    const cells = [];
+    for (let i = 0; i < start; i++) cells.push(null);
+    for (let d = 1; d <= dim; d++) cells.push(d);
+
+    return (
+        <div className={`p-6 rounded-[2.5rem] border border-amber-500/20 ${glassClass} shadow-2xl`}>
+            <div className="flex items-center gap-4 mb-6">
+                <div className="p-3 bg-amber-500/20 rounded-2xl">
+                    <Icons.Calendar className="w-6 h-6 text-amber-400" />
+                </div>
+                <div>
+                    <h2 className="text-xl font-black uppercase italic tracking-tighter text-white">Geez ↔ Gregorian</h2>
+                    <p className="text-[10px] text-amber-400/80 font-black uppercase tracking-[0.25em]">Ethiopian calendar converter</p>
+                </div>
+            </div>
+
+            <div className="flex gap-2 mb-4">
+                <button type="button" onClick={() => setMode('g2e')}
+                    className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase ${mode === 'g2e' ? 'bg-amber-500 text-black' : 'bg-white/10 text-gray-300'}`}>
+                    Gregorian → Geez
+                </button>
+                <button type="button" onClick={() => setMode('e2g')}
+                    className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase ${mode === 'e2g' ? 'bg-amber-500 text-black' : 'bg-white/10 text-gray-300'}`}>
+                    Geez → Gregorian
+                </button>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="space-y-3 p-4 rounded-2xl bg-black/30 border border-white/10">
+                    {mode === 'g2e' ? (
+                        <>
+                            <p className="text-[10px] font-black text-cyan-400 uppercase tracking-widest">Gregorian input</p>
+                            <div className="grid grid-cols-3 gap-2">
+                                <label className="text-[9px] text-gray-400 uppercase">Year<input type="number" value={gY} onChange={e => setGY(+e.target.value)} className="w-full mt-1 bg-black/50 border border-white/15 rounded-lg px-2 py-2 text-white text-sm" /></label>
+                                <label className="text-[9px] text-gray-400 uppercase">Month<input type="number" min={1} max={12} value={gM} onChange={e => setGM(+e.target.value)} className="w-full mt-1 bg-black/50 border border-white/15 rounded-lg px-2 py-2 text-white text-sm" /></label>
+                                <label className="text-[9px] text-gray-400 uppercase">Day<input type="number" min={1} max={31} value={gD} onChange={e => setGD(+e.target.value)} className="w-full mt-1 bg-black/50 border border-white/15 rounded-lg px-2 py-2 text-white text-sm" /></label>
+                            </div>
+                            <div className="mt-3 p-3 rounded-xl bg-amber-500/10 border border-amber-500/30">
+                                <p className="text-[9px] text-amber-400/80 uppercase font-black">Ethiopian (Geez)</p>
+                                <p className="text-lg font-black text-white mt-1">
+                                    {g2e.day} {ethiopianMonthNames[Math.max(0, Math.min(12, g2e.month - 1))] || g2e.month} {g2e.year}
+                                </p>
+                                <p className="text-[10px] text-gray-400 font-mono mt-1">{g2e.year}-{String(g2e.month).padStart(2,'0')}-{String(g2e.day).padStart(2,'0')}</p>
+                            </div>
+                        </>
+                    ) : (
+                        <>
+                            <p className="text-[10px] font-black text-amber-400 uppercase tracking-widest">Ethiopian input</p>
+                            <div className="grid grid-cols-3 gap-2">
+                                <label className="text-[9px] text-gray-400 uppercase">Year<input type="number" value={eY} onChange={e => setEY(+e.target.value)} className="w-full mt-1 bg-black/50 border border-white/15 rounded-lg px-2 py-2 text-white text-sm" /></label>
+                                <label className="text-[9px] text-gray-400 uppercase">Month (1–13)<input type="number" min={1} max={13} value={eM} onChange={e => setEM(+e.target.value)} className="w-full mt-1 bg-black/50 border border-white/15 rounded-lg px-2 py-2 text-white text-sm" /></label>
+                                <label className="text-[9px] text-gray-400 uppercase">Day<input type="number" min={1} max={30} value={eD} onChange={e => setED(+e.target.value)} className="w-full mt-1 bg-black/50 border border-white/15 rounded-lg px-2 py-2 text-white text-sm" /></label>
+                            </div>
+                            <div className="mt-3 p-3 rounded-xl bg-cyan-500/10 border border-cyan-500/30">
+                                <p className="text-[9px] text-cyan-400/80 uppercase font-black">Gregorian</p>
+                                <p className="text-lg font-black text-white mt-1">
+                                    {e2g.day}/{e2g.month}/{e2g.year}
+                                </p>
+                                <p className="text-[10px] text-gray-400 font-mono mt-1">{e2g.year}-{String(e2g.month).padStart(2,'0')}-{String(e2g.day).padStart(2,'0')}</p>
+                            </div>
+                        </>
+                    )}
+                </div>
+
+                <div className="p-4 rounded-2xl bg-black/30 border border-white/10">
+                    <div className="flex items-center justify-between mb-3">
+                        <p className="text-[10px] font-black text-white uppercase tracking-widest">Gregorian month</p>
+                        <div className="flex gap-1">
+                            <button type="button" className="px-2 py-1 rounded bg-white/10 text-xs text-white" onClick={() => {
+                                if (calMonth === 1) { setCalMonth(12); setCalYear(y => y - 1); }
+                                else setCalMonth(m => m - 1);
+                            }}>‹</button>
+                            <span className="text-xs text-cyan-300 font-bold px-2">{calMonth}/{calYear}</span>
+                            <button type="button" className="px-2 py-1 rounded bg-white/10 text-xs text-white" onClick={() => {
+                                if (calMonth === 12) { setCalMonth(1); setCalYear(y => y + 1); }
+                                else setCalMonth(m => m + 1);
+                            }}>›</button>
+                        </div>
+                    </div>
+                    <div className="grid grid-cols-7 gap-1 text-center text-[9px] text-gray-500 mb-1">
+                        {['Su','Mo','Tu','We','Th','Fr','Sa'].map(d => <div key={d}>{d}</div>)}
+                    </div>
+                    <div className="grid grid-cols-7 gap-1">
+                        {cells.map((d, i) => {
+                            if (!d) return <div key={'e'+i} />;
+                            const eth = gregorianToEthiopian(calYear, calMonth, d);
+                            const isToday = d === now.getDate() && calMonth === now.getMonth()+1 && calYear === now.getFullYear();
+                            return (
+                                <button
+                                    key={d}
+                                    type="button"
+                                    onClick={() => { setGY(calYear); setGM(calMonth); setGD(d); setMode('g2e'); }}
+                                    className={`rounded-lg p-1 border text-left min-h-[42px] ${isToday ? 'border-cyan-400 bg-cyan-500/20' : 'border-white/10 bg-white/5 hover:bg-white/10'}`}
+                                >
+                                    <div className="text-[11px] font-bold text-white">{d}</div>
+                                    <div className="text-[8px] text-amber-400/90 truncate">{eth.day} {ethiopianMonthNames[eth.month-1]?.slice(0,3)}</div>
+                                </button>
+                            );
+                        })}
+                    </div>
+                    <p className="text-[9px] text-gray-500 mt-3">Click a day to convert · Ethiopian month names shown under each Gregorian date.</p>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 const UICustomization = ({ glassClass }) => {
     const { uiSettings, updateUISettings, resetToDefault } = useContext(UIContext);
     const [qrText, setQrText] = useState('');
@@ -19876,6 +20196,7 @@ const UICustomization = ({ glassClass }) => {
     return (
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700">
             <FieldIntelligenceSettings glassClass={glassClass} />
+            <EthiopianCalendarPanel glassClass={glassClass} />
             {/* 1. THE ATMOSPHERIC ENGINE (Scale & Transparency Fixes) */}
             <div className={`p-6 rounded-[2.5rem] border border-white/10 ${glassClass} shadow-2xl`}>
                 <div className="flex items-center gap-4 mb-8">
@@ -23732,7 +24053,6 @@ const Navigation = ({ menuItems = [], currentView, setCurrentView, expandedFolde
         </div>
     );
 };
-
 const HrmAppContent = () => {
     const { isLoggedIn, currentView, setCurrentView, currentUser, checkPermission, logout } = useAuth();
     const { glassOpacityClass, rootStyle, uiSettings } = useUI();
@@ -23741,6 +24061,7 @@ const HrmAppContent = () => {
     // FETCH LIVE ROLES: This is the heartbeat of the April 21 logic
     const allRoles = getCollection('ROLE_CRUD') || [];
     const [showNotifications, setShowNotifications] = useState(false);
+    const [notifBadgeCount, setNotifBadgeCount] = useState(0);
     const [mobileNavOpen, setMobileNavOpen] = useState(false);
     const isMobile = useIsMobile(768); 
     const [expandedFolders, setExpandedFolders] = useState(['HR', 'SETTINGS']); 
@@ -23821,9 +24142,15 @@ const HrmAppContent = () => {
                     <button 
                         type="button"
                         onClick={() => setShowNotifications(!showNotifications)}
-                        className={`p-2 rounded-full transition-all ${showNotifications ? 'bg-cyan-500 text-white' : 'text-gray-400'}`}
+                        className={`relative p-2 rounded-full transition-all ${showNotifications ? 'bg-cyan-500 text-white' : 'text-gray-400 hover:text-white'}`}
+                        aria-label="Notifications"
                     >
                         <Icons.Bell className="w-5 h-5" />
+                        {notifBadgeCount > 0 && (
+                            <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-rose-600 text-white text-[10px] font-black border-2 border-slate-950 shadow-lg shadow-rose-900/40">
+                                {notifBadgeCount > 99 ? '99+' : notifBadgeCount}
+                            </span>
+                        )}
                     </button>
                 </div>
             </header>
@@ -23871,15 +24198,16 @@ const HrmAppContent = () => {
                     {renderView(currentView, glassClass, getCollection, checkPermission, allRoles, allData)}
                 </main>
 
-                {showNotifications && (
-                    <aside className={`w-[25%] border-l border-white/10 animate-in slide-in-from-right ${glassClass}`}>
+                <aside className={`${showNotifications ? 'w-[min(100%,320px)] sm:w-[25%] border-l border-white/10 animate-in slide-in-from-right' : 'w-0 overflow-hidden border-0'} ${glassClass} shrink-0 transition-[width] duration-200`}>
+                    <div className={showNotifications ? 'h-full' : 'h-0 overflow-hidden opacity-0 pointer-events-none'}>
                         <NotificationBar 
                             glassClass={glassClass} 
                             currentUser={currentUser} 
-                            onClose={() => setShowNotifications(false)} 
+                            onClose={() => setShowNotifications(false)}
+                            onCountChange={(n) => setNotifBadgeCount(Number(n) || 0)}
                         />
-                    </aside>
-                )}
+                    </div>
+                </aside>
             </div>
         </div>
     );
@@ -26094,7 +26422,24 @@ const UnityFinanceConsolidator = () => {
     </div>
   );
 };
-const NotificationBar = ({ glassClass, currentUser, onClose }) => {
+/** Relative time for notification rows (e.g. "1 min ago"). */
+const formatRelativeTime = (isoOrDate) => {
+    if (!isoOrDate) return '';
+    const then = new Date(isoOrDate);
+    if (isNaN(then.getTime())) return String(isoOrDate).slice(0, 16);
+    const sec = Math.round((Date.now() - then.getTime()) / 1000);
+    if (sec < 10) return 'just now';
+    if (sec < 60) return sec + ' sec ago';
+    const min = Math.floor(sec / 60);
+    if (min < 60) return min + (min === 1 ? ' min ago' : ' mins ago');
+    const hr = Math.floor(min / 60);
+    if (hr < 24) return hr + (hr === 1 ? ' hour ago' : ' hours ago');
+    const day = Math.floor(hr / 24);
+    if (day < 30) return day + (day === 1 ? ' day ago' : ' days ago');
+    return then.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+};
+
+const NotificationBar = ({ glassClass, currentUser, onClose, onCountChange }) => {
     const { getCollection, notificationTrigger, leaveUpdateTrigger, roleUpdateTrigger, allData } = useData();
     const [activeTab, setActiveTab] = useState('all');
     const [filter, setFilter] = useState('all'); // all | alert | warning | info
@@ -26327,6 +26672,13 @@ const NotificationBar = ({ glassClass, currentUser, onClose }) => {
         success: notifications.filter(n => n.severity === 'success').length,
     }), [notifications]);
 
+    useEffect(() => {
+        if (typeof onCountChange === 'function') {
+            const badge = (counts.alert || 0) + (counts.warning || 0) || counts.all || 0;
+            onCountChange(badge, counts);
+        }
+    }, [counts, onCountChange]);
+
     const sevStyle = {
         alert: 'border-rose-500/40 bg-rose-950/40 text-rose-100',
         warning: 'border-amber-500/40 bg-amber-950/30 text-amber-100',
@@ -26404,6 +26756,9 @@ const NotificationBar = ({ glassClass, currentUser, onClose }) => {
                                     <div className="flex items-center gap-2 flex-wrap">
                                         <span className="text-[9px] font-black uppercase tracking-wider opacity-80">{n.category}</span>
                                         <span className="text-[8px] uppercase opacity-50">{n.severity}</span>
+                                        <span className="text-[9px] text-white/50 ml-auto font-mono tabular-nums" title={n.time ? new Date(n.time).toLocaleString() : ''}>
+                                            {formatRelativeTime(n.time)}
+                                        </span>
                                     </div>
                                     <p className="text-[11px] font-medium mt-0.5 leading-snug">{n.message}</p>
                                 </div>
@@ -26419,7 +26774,6 @@ const NotificationBar = ({ glassClass, currentUser, onClose }) => {
         </div>
     );
 };
-
 export function FinanceApp() {
     return (
         <AuthProvider>

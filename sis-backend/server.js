@@ -8,9 +8,9 @@ const PORT = Number(process.env.PORT || 3001);
 
 // Allow Vite on localhost and LAN IPs (phone/tablet testing)
 const defaultOrigins = [
-  'http://localhost:5173',
-  'http://127.0.0.1:5173',
-  'http://192.168.1.205:5173',
+  'http://localhost:5174',
+  'http://127.0.0.1:5174',
+  'http://192.168.1.23:5174',
 ];
 const envOrigins = (process.env.CORS_ORIGIN || '')
   .split(',')
