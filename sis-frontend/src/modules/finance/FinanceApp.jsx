@@ -21914,238 +21914,234 @@ export const FIN_STATEMENTS_DISPLAY = ({ glassClass, viewId, ledgerEntries, payr
     }, [reportEngine, searchTerm]);
 
     
-    /** Full-statement print: opens dedicated preview with every line (no scroll clip). */
+    /** Full-statement print: robust iframe report for FP / P&L / Cash Flow (no popup dependency). */
     const printFullStatement = React.useCallback(() => {
         const rows = (reportEngine && Array.isArray(reportEngine.rows) && reportEngine.rows.length)
             ? reportEngine.rows
             : (activeRows || []);
+        if (!rows.length) {
+            try { alert('No statement lines to print.'); } catch (e) {}
+            return;
+        }
         const title = (reportEngine && reportEngine.title) || 'Financial Statement';
-        const subtitle = (reportEngine && reportEngine.subtitle) || 'Unity University';
+        const subtitle = (reportEngine && reportEngine.subtitle) || 'Institutional financial report';
         const periodFrom = startDate || 'Opening';
         const periodTo = endDate || new Date().toISOString().slice(0, 10);
         const printedAt = new Date().toLocaleString();
+        const stmtId = 'UU-FS-' + Date.now().toString(36).toUpperCase();
 
-        const esc = (s) => String(s ?? '')
+        const esc = (s) => String(s == null ? '' : s)
             .replace(/&/g, '&amp;')
             .replace(/</g, '&lt;')
             .replace(/>/g, '&gt;')
             .replace(/"/g, '&quot;');
 
-        const rowHtml = rows.map((r) => {
+        const money = (v) => {
+            if (v == null || v === '') return '';
+            const n = Number(v);
+            if (!Number.isFinite(n)) return '';
+            const abs = Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            return n < 0 ? ('(' + abs + ')') : abs;
+        };
+
+        let lineCount = 0;
+        let amountSum = 0;
+        rows.forEach((r) => {
+            if (r && r.amount != null && r.amount !== '' && !r.isHeader) {
+                lineCount += 1;
+                amountSum += Number(r.amount) || 0;
+            }
+        });
+
+        const rowHtml = rows.map((r, idx) => {
             const isHdr = !!r.isHeader;
             const isTot = !!(r.isTotal || r.isGrandTotal);
-            const indent = Math.max(0, Number(r.indent) || 0) * 14;
-            const amt = (r.amount != null && r.amount !== '' && !isHdr) ? fmt(r.amount) : '';
-            const labelCls = isHdr || isTot || r.isBold
-                ? 'lab bold'
-                : (r.isItalic ? 'lab ital' : 'lab');
-            const trCls = isHdr ? 'hdr' : (r.isGrandTotal ? 'grand' : (isTot ? 'tot' : ''));
+            const indent = Math.max(0, Number(r.indent) || 0);
+            const pad = 10 + indent * 16;
+            const amtCur = (!isHdr && r.amount != null && r.amount !== '') ? money(r.amount) : '';
+            const priorRaw = r.prior != null ? r.prior : (r.previous != null ? r.previous : r.amount_prior);
+            const amtPrior = (!isHdr && priorRaw != null && priorRaw !== '') ? money(priorRaw) : '';
+            const labelCls = isHdr || isTot || r.isBold ? 'lab bold' : (r.isItalic ? 'lab ital' : 'lab');
+            const trCls = isHdr ? 'hdr' : (r.isGrandTotal ? 'grand' : (isTot ? 'tot' : (idx % 2 ? 'alt' : '')));
             return (
                 '<tr class="' + trCls + '">' +
-                '<td class="' + labelCls + '" style="padding-left:' + (10 + indent) + 'px">' + esc(r.label) + '</td>' +
+                '<td class="ln">' + (isHdr ? '' : String(idx + 1)) + '</td>' +
+                '<td class="' + labelCls + '" style="padding-left:' + pad + 'px">' + esc(r.label) + '</td>' +
                 '<td class="note">' + esc(r.note || '') + '</td>' +
-                '<td class="amt">' + esc(amt) + '</td>' +
+                '<td class="amt">' + esc(amtCur) + '</td>' +
+                '<td class="amt muted">' + esc(amtPrior) + '</td>' +
                 '</tr>'
             );
         }).join('');
 
-        const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8"/>
-<title>${esc(title)} · Unity University</title>
-<style>
-  @page { size: A4 portrait; margin: 12mm 12mm 14mm 12mm; }
-  * { box-sizing: border-box; }
-  html, body {
-    margin: 0; padding: 0;
-    background: #fff;
-    color: #0f172a;
-    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
-  }
-  .sheet {
-    width: 100%;
-    max-width: 190mm;
-    margin: 0 auto;
-    padding: 0;
-  }
-  .brand {
-    text-align: center;
-    border-bottom: 2.5px solid #0e7490;
-    padding-bottom: 8px;
-    margin-bottom: 10px;
-  }
-  .brand h1 {
-    margin: 0;
-    font-size: 16pt;
-    font-weight: 800;
-    letter-spacing: 0.04em;
-    color: #0e7490;
-    font-style: italic;
-  }
-  .brand .sub {
-    margin: 3px 0 0;
-    font-size: 8.5pt;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.12em;
-    color: #334155;
-  }
-  .brand .meta {
-    margin: 4px 0 0;
-    font-size: 8pt;
-    color: #64748b;
-  }
-  h2.stmt {
-    margin: 8px 0 4px;
-    text-align: center;
-    font-size: 12.5pt;
-    font-weight: 800;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: #0f172a;
-  }
-  .period {
-    text-align: center;
-    font-size: 9pt;
-    font-weight: 600;
-    color: #475569;
-    margin-bottom: 12px;
-  }
-  table.stmt {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 9pt;
-  }
-  table.stmt thead th {
-    background: #0e7490;
-    color: #fff;
-    text-align: left;
-    padding: 6px 8px;
-    font-size: 8pt;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-  }
-  table.stmt thead th.r { text-align: right; }
-  table.stmt thead th.c { text-align: center; width: 48px; }
-  table.stmt td {
-    padding: 4px 8px;
-    border-bottom: 0.5px solid #e2e8f0;
-    vertical-align: top;
-  }
-  table.stmt tr.hdr td {
-    background: #f1f5f9;
-    font-weight: 800;
-    text-transform: uppercase;
-    font-size: 8.5pt;
-    letter-spacing: 0.04em;
-    border-top: 1px solid #94a3b8;
-    border-bottom: 1px solid #94a3b8;
-  }
-  table.stmt tr.tot td {
-    background: #ecfeff;
-    font-weight: 700;
-    border-top: 1px solid #67e8f9;
-  }
-  table.stmt tr.grand td {
-    background: #cffafe;
-    font-weight: 800;
-    border-top: 2px solid #0e7490;
-    border-bottom: 2px solid #0e7490;
-  }
-  .lab { color: #1e293b; }
-  .lab.bold { font-weight: 800; text-transform: uppercase; font-size: 8.5pt; }
-  .lab.ital { font-style: italic; color: #64748b; }
-  .note { text-align: center; color: #64748b; font-size: 8pt; width: 40px; }
-  .amt {
-    text-align: right;
-    font-variant-numeric: tabular-nums;
-    font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
-    white-space: nowrap;
-    width: 28%;
-  }
-  .foot {
-    margin-top: 18px;
-    display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
-    gap: 16px;
-    page-break-inside: avoid;
-  }
-  .sign {
-    text-align: center;
-    padding-top: 28px;
-    border-top: 1px solid #94a3b8;
-    font-size: 8pt;
-    color: #475569;
-  }
-  .sign strong {
-    display: block;
-    color: #0f172a;
-    font-size: 8.5pt;
-    margin-bottom: 2px;
-  }
-  .disclaimer {
-    margin-top: 12px;
-    font-size: 7.5pt;
-    color: #94a3b8;
-    text-align: center;
-  }
-  @media print {
-    body { margin: 0; }
-    .sheet { max-width: none; }
-    thead { display: table-header-group; }
-    tr { page-break-inside: avoid; }
-  }
-</style>
-</head>
-<body>
-  <div class="sheet">
-    <div class="brand">
-      <h1>UNITY UNIVERSITY</h1>
-      <p class="sub">Official Financial Statement</p>
-      <p class="meta">Gerji / Torhailoch · Addis Ababa · Ethiopia · ETB</p>
-    </div>
-    <h2 class="stmt">${esc(title)}</h2>
-    <p class="period">Reporting period: <strong>${esc(periodFrom)}</strong> → <strong>${esc(periodTo)}</strong></p>
-    <table class="stmt">
-      <thead>
-        <tr>
-          <th>Description / Account designation</th>
-          <th class="c">Note</th>
-          <th class="r">Amount (ETB)</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${rowHtml}
-      </tbody>
-    </table>
-    <div class="foot">
-      <div class="sign"><strong>Prepared by</strong>Finance Officer<br/>Signature / Date</div>
-      <div class="sign"><strong>Reviewed by</strong>Chief Accountant<br/>Signature / Date</div>
-      <div class="sign"><strong>Approved by</strong>Finance Director<br/>Signature / Date</div>
-    </div>
-    <p class="disclaimer">Printed ${esc(printedAt)} · ${esc(subtitle)} · Unity University SIS · Full statement (${rows.length} lines)</p>
-  </div>
-  <script>
-    window.onload = function () {
-      try { window.focus(); window.print(); } catch (e) {}
-    };
-  </script>
-</body>
-</html>`;
+        const html = '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/>' +
+'<meta name="viewport" content="width=device-width, initial-scale=1"/>' +
+'<title>' + esc(title) + ' · Unity University</title><style>' +
+'@page{size:A4 portrait;margin:12mm 10mm 14mm 10mm}' +
+'*{box-sizing:border-box}' +
+'html,body{margin:0;padding:0;background:#fff;color:#0f172a;font-family:"Segoe UI",Arial,sans-serif;' +
+'-webkit-print-color-adjust:exact;print-color-adjust:exact}' +
+'.toolbar{position:sticky;top:0;z-index:50;display:flex;flex-wrap:wrap;gap:10px;align-items:center;' +
+'justify-content:space-between;padding:12px 16px;background:#0f172a;color:#f8fafc}' +
+'.toolbar .hint{font-size:11px;color:#94a3b8;max-width:460px;line-height:1.4}' +
+'.toolbar button{border:0;border-radius:8px;padding:9px 16px;font-weight:700;font-size:12px;cursor:pointer}' +
+'.btn-print{background:#0891b2;color:#fff}.btn-close{background:#334155;color:#e2e8f0}' +
+'.sheet{max-width:190mm;margin:0 auto;padding:10mm 8mm 8mm}' +
+'.entity{display:grid;grid-template-columns:1fr auto;gap:12px;border-bottom:3px solid #0e7490;padding-bottom:10px;margin-bottom:12px}' +
+'.entity h1{margin:0;font-size:15pt;font-weight:800;color:#0e7490;text-transform:uppercase;letter-spacing:.03em}' +
+'.entity .org-sub{margin:3px 0 0;font-size:8.5pt;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#475569}' +
+'.entity .org-meta{margin:4px 0 0;font-size:8pt;color:#64748b;line-height:1.4}' +
+'.entity-badge{text-align:right;font-size:8pt;color:#64748b}' +
+'.entity-badge strong{display:block;font-size:9pt;color:#0f172a;margin-bottom:2px}' +
+'h2.stmt{margin:10px 0 2px;text-align:center;font-size:13pt;font-weight:800;text-transform:uppercase;letter-spacing:.06em}' +
+'.stmt-sub{text-align:center;font-size:8.5pt;color:#64748b;margin:0 0 8px}' +
+'.period-box{display:flex;flex-wrap:wrap;justify-content:center;gap:14px 24px;margin:0 0 12px;padding:8px 12px;' +
+'background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;font-size:9pt}' +
+'.period-box span{color:#64748b}.period-box strong{color:#0f172a}' +
+'.summary-strip{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}' +
+'.summary-strip .cell{border:1px solid #e2e8f0;border-radius:6px;padding:8px 10px;background:#f8fafc}' +
+'.summary-strip .cell label{display:block;font-size:7.5pt;text-transform:uppercase;letter-spacing:.08em;color:#64748b;margin-bottom:2px}' +
+'.summary-strip .cell strong{font-size:10pt;color:#0f172a;font-variant-numeric:tabular-nums}' +
+'table.stmt{width:100%;border-collapse:collapse;font-size:9pt}' +
+'table.stmt thead th{background:#0e7490;color:#fff;text-align:left;padding:7px 8px;font-size:7.5pt;' +
+'text-transform:uppercase;letter-spacing:.05em;border:1px solid #0e7490}' +
+'table.stmt thead th.r{text-align:right}table.stmt thead th.c{text-align:center}' +
+'table.stmt td{padding:4px 8px;border:.5px solid #e2e8f0;vertical-align:top}' +
+'table.stmt tr.alt td{background:#fafbfc}' +
+'table.stmt tr.hdr td{background:#f1f5f9;font-weight:800;text-transform:uppercase;font-size:8.5pt;' +
+'border-top:1.5px solid #94a3b8;border-bottom:1.5px solid #94a3b8}' +
+'table.stmt tr.tot td{background:#ecfeff;font-weight:700;border-top:1px solid #67e8f9}' +
+'table.stmt tr.grand td{background:#cffafe;font-weight:800;border-top:2px solid #0e7490;border-bottom:2px solid #0e7490}' +
+'.ln{width:28px;text-align:center;color:#94a3b8;font-size:7.5pt}' +
+'.lab{color:#1e293b}.lab.bold{font-weight:800;text-transform:uppercase;font-size:8.5pt}' +
+'.lab.ital{font-style:italic;color:#64748b}' +
+'.note{text-align:center;color:#64748b;font-size:8pt;width:42px}' +
+'.amt{text-align:right;font-variant-numeric:tabular-nums;font-family:ui-monospace,Consolas,monospace;white-space:nowrap;width:22%;font-size:8.5pt}' +
+'.amt.muted{color:#64748b}' +
+'.notes-block{margin-top:14px;padding:10px 12px;border:1px solid #e2e8f0;border-radius:6px;font-size:8pt;color:#475569;line-height:1.45}' +
+'.notes-block h3{margin:0 0 6px;font-size:8.5pt;text-transform:uppercase;letter-spacing:.08em;color:#0e7490}' +
+'.foot{margin-top:22px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:18px;page-break-inside:avoid}' +
+'.sign{text-align:center;padding-top:36px;border-top:1px solid #94a3b8;font-size:8pt;color:#475569}' +
+'.sign strong{display:block;color:#0f172a;font-size:8.5pt;margin-bottom:3px;text-transform:uppercase}' +
+'.disclaimer{margin-top:14px;font-size:7.5pt;color:#94a3b8;text-align:center;border-top:1px solid #e2e8f0;padding-top:8px}' +
+'@media print{.toolbar{display:none!important}.sheet{max-width:none;padding:0}' +
+'thead{display:table-header-group}tr{page-break-inside:avoid}.foot{page-break-inside:avoid}}' +
+'</style></head><body>' +
+'<div class="toolbar"><div class="hint"><strong style="color:#fff">' + esc(title) + '</strong><br/>' +
+'Full institutional statement · ' + rows.length + ' lines · Review, then Print / Save as PDF.</div>' +
+'<div><button type="button" class="btn-print" id="uuPrintBtn">Print / Save as PDF</button> ' +
+'<button type="button" class="btn-close" id="uuCloseBtn">Close</button></div></div>' +
+'<div class="sheet">' +
+'<div class="entity"><div>' +
+'<h1>Unity University</h1>' +
+'<p class="org-sub">Official Financial Statement</p>' +
+'<p class="org-meta">Gerji Head Office · Torhailoch Campus · Addis Ababa, Ethiopia<br/>' +
+'Functional currency: Ethiopian Birr (ETB) · Accrual basis</p></div>' +
+'<div class="entity-badge"><strong>Document ' + esc(stmtId) + '</strong>Printed ' + esc(printedAt) + '</div></div>' +
+'<h2 class="stmt">' + esc(title) + '</h2>' +
+'<p class="stmt-sub">' + esc(subtitle) + '</p>' +
+'<div class="period-box">' +
+'<div><span>Period from</span> <strong>' + esc(periodFrom) + '</strong></div>' +
+'<div><span>Period to</span> <strong>' + esc(periodTo) + '</strong></div>' +
+'<div><span>Currency</span> <strong>ETB</strong></div></div>' +
+'<div class="summary-strip">' +
+'<div class="cell"><label>Statement lines</label><strong>' + rows.length + '</strong></div>' +
+'<div class="cell"><label>Amount lines</label><strong>' + lineCount + '</strong></div>' +
+'<div class="cell"><label>Control sum (non-header)</label><strong>' + esc(money(amountSum)) + '</strong></div></div>' +
+'<table class="stmt"><thead><tr>' +
+'<th class="c">#</th><th>Description / Account designation</th><th class="c">Note</th>' +
+'<th class="r">Current period (ETB)</th><th class="r">Prior period (ETB)</th>' +
+'</tr></thead><tbody>' + rowHtml + '</tbody></table>' +
+'<div class="notes-block"><h3>Presentation notes</h3><div>' +
+'1. Prepared from the institutional chart of accounts and trial-balance linked amounts where available.<br/>' +
+'2. Figures in parentheses denote credit / negative movements as shown on screen.<br/>' +
+'3. Prior period column fills when comparative balances exist on the line; otherwise blank.<br/>' +
+'4. Control sum is arithmetic of non-header lines only — not a statutory total.</div></div>' +
+'<div class="foot">' +
+'<div class="sign"><strong>Prepared by</strong>Finance Officer<br/>Name / Signature / Date</div>' +
+'<div class="sign"><strong>Reviewed by</strong>Chief Accountant<br/>Name / Signature / Date</div>' +
+'<div class="sign"><strong>Approved by</strong>Finance Director<br/>Name / Signature / Date</div></div>' +
+'<p class="disclaimer">' + esc(title) + ' · Unity University SIS · Full statement (' + rows.length + ' lines) · ' +
+'Period ' + esc(periodFrom) + ' → ' + esc(periodTo) + ' · ' + esc(printedAt) + '</p>' +
+'</div>' +
+'<script>(function(){var b=document.getElementById("uuPrintBtn");var c=document.getElementById("uuCloseBtn");' +
+'if(b)b.onclick=function(){try{window.focus();window.print()}catch(e){}};' +
+'if(c)c.onclick=function(){try{window.close()}catch(e){}};' +
+'setTimeout(function(){try{window.focus()}catch(e){}},100);})();<\/script>' +
+'</body></html>';
 
-        const w = window.open('', '_blank', 'noopener,noreferrer,width=900,height=1000');
-        if (!w) {
-            // popup blocked — fall back to page print with expanded styles
-            window.print();
-            return;
+        // Prefer iframe (works when popups blocked). Fallback: new tab, then blob URL.
+        const runPrintInFrame = (doc) => {
+            try {
+                doc.open();
+                doc.write(html);
+                doc.close();
+            } catch (e) {}
+        };
+
+        let used = false;
+        try {
+            const existing = document.getElementById('uu-statement-print-frame');
+            if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+            const iframe = document.createElement('iframe');
+            iframe.id = 'uu-statement-print-frame';
+            iframe.setAttribute('title', 'Statement print');
+            iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;opacity:0;pointer-events:none;';
+            document.body.appendChild(iframe);
+            const idoc = iframe.contentDocument || (iframe.contentWindow && iframe.contentWindow.document);
+            if (idoc) {
+                runPrintInFrame(idoc);
+                used = true;
+                setTimeout(() => {
+                    try {
+                        iframe.contentWindow.focus();
+                        iframe.contentWindow.print();
+                    } catch (e) {}
+                }, 350);
+                // Also open visible preview tab when possible
+                try {
+                    const w = window.open('', '_blank', 'noopener,noreferrer,width=920,height=1100');
+                    if (w) {
+                        w.document.open();
+                        w.document.write(html);
+                        w.document.close();
+                    }
+                } catch (e2) {}
+            }
+        } catch (e) {}
+
+        if (!used) {
+            try {
+                const w = window.open('', '_blank', 'noopener,noreferrer,width=920,height=1100');
+                if (w) {
+                    w.document.open();
+                    w.document.write(html);
+                    w.document.close();
+                    setTimeout(() => { try { w.focus(); w.print(); } catch (e) {} }, 400);
+                    return;
+                }
+            } catch (e) {}
+            try {
+                const blob = new Blob([html], { type: 'text/html' });
+                const url = URL.createObjectURL(blob);
+                const w2 = window.open(url, '_blank');
+                if (!w2) {
+                    // last resort: navigate hidden link
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.target = '_blank';
+                    a.rel = 'noopener';
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                }
+                setTimeout(() => URL.revokeObjectURL(url), 60000);
+            } catch (e3) {
+                try { window.print(); } catch (e4) {}
+            }
         }
-        w.document.open();
-        w.document.write(html);
-        w.document.close();
-    }, [reportEngine, activeRows, startDate, endDate, fmt]);
+    }, [reportEngine, activeRows, startDate, endDate]);
+
 
 const exportCSV = () => {
         if (!activeRows.length) return;
@@ -22202,7 +22198,13 @@ const exportCSV = () => {
                             isFinancial={true}
                         />
                         <button type="button" onClick={printFullStatement} className="px-3 py-2 rounded-xl text-[10px] font-black uppercase bg-cyan-600/90 text-white hover:bg-cyan-500 flex items-center gap-1.5 shadow-lg shadow-cyan-900/30">
-                            <Icons.Printer className="w-3.5 h-3.5" /> Print full statement
+                        <button
+  type="button"
+  onClick={printFullStatement}
+  className="px-3 py-2 rounded-xl text-[10px] font-black uppercase bg-cyan-600/90 text-white hover:bg-cyan-500 flex items-center gap-1.5"
+>
+  <Icons.Printer className="w-3.5 h-3.5" /> Print full statement
+</button>    <Icons.Printer className="w-3.5 h-3.5" /> Print full statement
                         </button>
                     </div>
                 </div>
