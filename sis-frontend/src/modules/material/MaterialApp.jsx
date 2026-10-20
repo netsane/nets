@@ -1,16 +1,16 @@
-
 import ModuleAccessGate from '../../unity/ModuleAccessGate.jsx';
-import { attemptSharedLogin, upsertSharedUsers, getSharedUsers, resolveAssignedRole, changeSharedPassword, upsertSharedUser, saveSharedRoles, saveSharedSession, loadSharedSession, clearSharedSession, canAccessModule, getSharedRoles, mergeSharedRolesInto } from '../../unity/SharedCredentials.js';
+import { attemptSharedLogin, upsertSharedUsers, upsertSharedUser, saveSharedRoles, saveSharedSession, loadSharedSession, clearSharedSession, canAccessModule, getSharedRoles, mergeSharedRolesInto } from '../../unity/SharedCredentials.js';
 import { postMaterialToFinance as bridgePostMaterialToFinance, afterMaterialBootstrap, getMaterialCoaOptions, MAT_SOURCE_COLLECTION_MAP } from '../../unity/UnityModuleBridge.js';
 import LoginModuleSwitcher from '../../unity/LoginModuleSwitcher.jsx';
 import { MobileStyles, useIsMobile } from '../../unity/mobileCompat.js';
-import { IntelTip, IntelLabel, FieldIntelligenceSettings, FieldIntelligenceRuntime } from '../../unity/FieldIntelligence.jsx';
                
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import ReactDOM, { createPortal } from 'react-dom';
 import * as Icons from 'lucide-react';
 
 import {
+
+/* Gender helpers (hoisted early — used by mock generators and unityUniversity AI) */
+
     BarChart,
     Bar,
     XAxis,
@@ -35,6 +35,28 @@ import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import * as docx from 'docx';
 import { saveAs } from 'file-saver';
+
+/* Gender helpers (early — used by mock generators and AI) */
+const UU_FEMALE_FIRST_EARLY = new Set(['lomi','saba','tigist','eleni','hanna','aster','netsanet','sara','sarah','bethlehem','mahlet','selam','rahel','helen','meseret','hiwot','kidist','marta','martha','yeshi','almaz','tsion','beten','sosina','liya','ruth','meron','eden','abeba','tsehay','worknesh','senait','bezawit','hawi','meaza','frehiwot','genet','ayelech','mekdes','selamawit','tsehaynesh','bethel','hirut','firehiwot','yelena']);
+const UU_MALE_FIRST_EARLY = new Set(['abebe','kebede','chala','jemal','fasil','bereket','yonas','henok','kalab','tadesse','dawit','lemma','daniel','samuel','solomon','yared','mulugeta','getachew','tesfaye','hailu','mekonnen','assefa','girma','wolde','negash','bekele','yonatan','nahom','abel','kaleb','biruk','natnael','robelt','kirubel','ammanuel','amanuel','eyob','yohannes','melaku','sisay','asfaw','desta','haile','tewodros','mengistu','berhanu','gashaw','tamiru','fikadu','teklu','damte']);
+function uuGuessGenderFromName(fullName) {
+    const first = String(fullName || '').trim().split(/\s+/)[0].toLowerCase();
+    if (!first) return '';
+    if (UU_FEMALE_FIRST_EARLY.has(first)) return 'Female';
+    if (UU_MALE_FIRST_EARLY.has(first)) return 'Male';
+    return '';
+}
+function uuCorrectEmployeeGender(e) {
+    if (!e || typeof e !== 'object') return e;
+    const name = e.full_name || e.employee_name || e.name || e.Name || '';
+    const guessed = uuGuessGenderFromName(name);
+    if (!guessed) return e;
+    return Object.assign({}, e, { gender: guessed, Gender: guessed });
+}
+function uuCorrectEmployeeList(list) {
+    return Array.isArray(list) ? list.map(uuCorrectEmployeeGender) : [];
+}
+
 
 /* ===== Material ↔ Finance integration (existing modules only) ===== */
 const UU_MAT_LEDGER_KEY = 'uu_shared_material_ledger_v1';
@@ -326,7 +348,7 @@ const PERMISSIONS_MAP = {
     'MAT_PURCHASE_LOCAL_CRUD': ['admin', 'procurement_officer'],
     'MAT_PURCHASE_FOREIGN_CRUD': ['admin', 'procurement_officer'],
     'UI_CUSTOMIZATION': ['admin', 'store_manager', 'hr_manager'],
-    'MAT_GENERIC_REPORTS': ['admin', 'store_manager', 'inventory_clerk', 'procurement_officer', 'hr_manager'],
+    'MAT_GENERIC_REPORTS': ['admin', 'store_manager'],
     'ROLE_CRUD': ['admin'],
     'HR_ROLE_ASSIGNMENT_CRUD': ['admin', 'hr_manager'],
     'STAFF_SIGNUP': ['admin', 'hr_manager'],
@@ -514,174 +536,19 @@ export const AuthProvider = ({ children }) => {
     }, []);
 
     const changePassword = async (oldPassword, newPassword, getCollection, updateRecord) => {
-        try {
-            if (!currentUser || !currentUser.username) {
-                return { success: false, message: 'Not signed in.' };
-            }
-            const uName = String(currentUser.username).trim();
-            const oldP = String(oldPassword ?? '');
-            const newP = String(newPassword ?? '').trim();
-            if (!oldP) return { success: false, message: 'Current password is required.' };
-            if (!newP || newP.length < 4) {
-                return { success: false, message: 'New password must be at least 4 characters.' };
-            }
-            if (oldP === newP) {
-                return { success: false, message: 'New password must be different from the current password.' };
-            }
+        if (!getCollection || !updateRecord) return { success: false, message: 'Database failure.' };
+        const employees = getCollection('HR_EMPLOYEE_CRUD') || [];
+        const userRecord = employees.find(u => u.username === currentUser.username);
 
-            // Prefer shared helper; fall back to local implementation
-            let applyShared = null;
-            try {
-                if (typeof changeSharedPassword === 'function') applyShared = changeSharedPassword;
-            } catch (e) {}
-            if (!applyShared) {
-                applyShared = (username, o, n) => {
-                    try {
-                        const users = (typeof getSharedUsers === 'function' ? getSharedUsers() : []) || [];
-                        const found = users.find(
-                            (u) => String(u.username || '').trim().toLowerCase() === String(username).toLowerCase()
-                        );
-                        if (!found) return { success: false, message: 'User account not found.' };
-                        const stored = String(found.password ?? '');
-                        if (stored !== String(o ?? '') && stored.trim() !== String(o ?? '').trim()) {
-                            return { success: false, message: 'Current password incorrect.' };
-                        }
-                        if (typeof upsertSharedUser === 'function') {
-                            upsertSharedUser({
-                                username: found.username,
-                                password: String(n).trim(),
-                                name: found.name,
-                                role: found.role,
-                                system_role: found.system_role || found.role,
-                                role_id: found.role_id,
-                                role_name: found.role_name,
-                                modules: found.modules,
-                                id: found.id,
-                                _forceRole: true,
-                            });
-                        } else {
-                            // raw localStorage write
-                            const key = 'uu_shared_users_v1';
-                            const raw = JSON.parse(localStorage.getItem(key) || '[]');
-                            const list = Array.isArray(raw) ? raw : [];
-                            const idx = list.findIndex(
-                                (u) => String(u.username || '').toLowerCase() === String(username).toLowerCase()
-                            );
-                            const row = {
-                                ...(idx >= 0 ? list[idx] : {}),
-                                username: found.username || username,
-                                password: String(n).trim(),
-                                role: found.role,
-                                name: found.name,
-                            };
-                            if (idx >= 0) list[idx] = { ...list[idx], ...row };
-                            else list.push(row);
-                            localStorage.setItem(key, JSON.stringify(list));
-                        }
-                        return { success: true, message: 'Password updated successfully. Please sign in again.' };
-                    } catch (err) {
-                        console.error(err);
-                        return { success: false, message: 'Password change failed.' };
-                    }
-                };
-            }
-
-            let result = applyShared(uName, oldP, newP);
-
-            // If not in shared store, try matching session-only / HR employee password
-            if (!result.success && result.message === 'User account not found.') {
-                // Seed shared user from current session + provided current password
-                try {
-                    if (typeof upsertSharedUser === 'function') {
-                        // Only accept if they can prove old password against HR or we allow set
-                        let hrOk = false;
-                        if (getCollection) {
-                            const employees = getCollection('HR_EMPLOYEE_CRUD') || [];
-                            const userRecord = employees.find(
-                                (u) =>
-                                    u &&
-                                    String(u.username || u.user_name || '').toLowerCase() === uName.toLowerCase()
-                            );
-                            if (userRecord && String(userRecord.password ?? '') === oldP) hrOk = true;
-                        }
-                        // Also accept if they just logged in with this password (session active)
-                        // User is logged in — trust oldP only when HR matches OR shared gets created with verify
-                        if (hrOk) {
-                            upsertSharedUser({
-                                username: uName,
-                                password: newP,
-                                name: currentUser.name || uName,
-                                role: currentUser.role,
-                                role_id: currentUser.role_id,
-                                role_name: currentUser.role_name,
-                                _forceRole: true,
-                            });
-                            result = { success: true, message: 'Password updated successfully. Please sign in again.' };
-                        }
-                    }
-                } catch (e) {}
-            }
-
-            // HR employee password sync
-            try {
-                if (result.success && getCollection && updateRecord) {
-                    const employees = getCollection('HR_EMPLOYEE_CRUD') || [];
-                    const userRecord = employees.find(
-                        (u) =>
-                            u &&
-                            String(u.username || u.user_name || '').toLowerCase() === uName.toLowerCase()
-                    );
-                    if (userRecord && userRecord.id != null) {
-                        await updateRecord('HR_EMPLOYEE_CRUD', userRecord.id, {
-                            ...userRecord,
-                            password: newP,
-                        });
-                    }
-                }
-            } catch (e) {
-                console.warn('[changePassword] HR sync', e);
-            }
-
-            // HR-only fallback when shared said incorrect / not found
-            if (!result.success && getCollection && updateRecord) {
-                const employees = getCollection('HR_EMPLOYEE_CRUD') || [];
-                const userRecord = employees.find(
-                    (u) =>
-                        u &&
-                        String(u.username || u.user_name || '').toLowerCase() === uName.toLowerCase()
-                );
-                if (userRecord && String(userRecord.password ?? '') === oldP) {
-                    const ok = await updateRecord('HR_EMPLOYEE_CRUD', userRecord.id, {
-                        ...userRecord,
-                        password: newP,
-                    });
-                    if (ok) {
-                        try {
-                            if (typeof upsertSharedUser === 'function') {
-                                upsertSharedUser({
-                                    username: uName,
-                                    password: newP,
-                                    name: userRecord.name || userRecord.employee_name || uName,
-                                    role: currentUser.role,
-                                    _forceRole: true,
-                                });
-                            }
-                        } catch (e) {}
-                        result = {
-                            success: true,
-                            message: 'Password updated successfully. Please sign in again.',
-                        };
-                    }
-                }
-            }
-
-            return result.success
-                ? result
-                : { success: false, message: result.message || 'Current password incorrect.' };
-        } catch (err) {
-            console.error(err);
-            return { success: false, message: 'Password change failed.' };
+        if (!userRecord || userRecord.password !== oldPassword.trim()) {
+            return { success: false, message: 'Current password incorrect.' };
         }
+
+        const success = await updateRecord('HR_EMPLOYEE_CRUD', userRecord.id, { 
+            ...userRecord, 
+            password: newPassword.trim() 
+        });
+        return success ? { success: true, message: 'Updated! Please re-login.' } : { success: false };
     };
 
     /**
@@ -702,7 +569,6 @@ export const AuthProvider = ({ children }) => {
             else if (typeof getSharedRoles === 'function') roles = [...roles, ...(getSharedRoles() || [])];
         } catch (e) {}
 
-        const norm = (x) => String(x || '').trim().toLowerCase().replace(/\s+/g, '_');
         const roleDef = roles.find(
             (r) =>
                 r &&
@@ -710,11 +576,7 @@ export const AuthProvider = ({ children }) => {
                     String(r.name) === role ||
                     String(r.roleName || '') === role ||
                     String(r.id || '').toLowerCase() === role.toLowerCase() ||
-                    String(r.name || '').toLowerCase() === role.toLowerCase() ||
-                    norm(r.roleName) === norm(role) ||
-                    norm(r.name) === norm(role) ||
-                    String(r.id) === String(currentUser.role_id || '') ||
-                    norm(r.roleName) === norm(currentUser.role_name))
+                    String(r.name || '').toLowerCase() === role.toLowerCase())
         );
 
         if (roleDef) {
@@ -749,38 +611,13 @@ export const AuthProvider = ({ children }) => {
 
     const login = async (username, password, allEmployees = []) => {
         setLoading(true);
-        await new Promise((resolve) => setTimeout(resolve, 200));
-        const applyRole = (baseUser) => {
-            const uName = (baseUser && baseUser.username) || username;
-            let assigned = null;
-            try {
-                assigned = typeof resolveAssignedRole === 'function' ? resolveAssignedRole(uName) : null;
-            } catch (e) {}
-            const role = (assigned && assigned.role) || (baseUser && baseUser.role) || 'employee';
-            return {
-                ...(baseUser || {}),
-                username: uName,
-                name: (baseUser && baseUser.name) || (assigned && assigned.name) || uName,
-                role,
-                system_role: role,
-                role_id: (assigned && assigned.role_id) || (baseUser && baseUser.role_id) || null,
-                role_name: (assigned && assigned.role_name) || (baseUser && baseUser.role_name) || null,
-                modules: (baseUser && baseUser.modules) || (assigned && assigned.modules) || null,
-            };
-        };
+        await new Promise((resolve) => setTimeout(resolve, 300));
         try {
-            try {
-                const { login: apiLogin } = await import('../../unity/api.js');
-                await apiLogin(username, password);
-            } catch (apiErr) {
-                console.warn('[MAT] API login failed (CRUD may stay local-only):', apiErr && apiErr.message);
-            }
             const result = attemptSharedLogin(username, password, allEmployees || []);
             if (result.success && result.user) {
-                const user = applyRole(result.user);
-                setCurrentUser(user);
+                setCurrentUser(result.user);
                 setIsLoggedIn(true);
-                try { saveSharedSession(user); } catch (e) {}
+                try { saveSharedSession(result.user); } catch (e) {}
                 setCurrentView('MAT_DASHBOARD_VIEW');
                 setLoading(false);
                 return { success: true };
@@ -793,6 +630,7 @@ export const AuthProvider = ({ children }) => {
             return { success: false, message: 'Login error.' };
         }
     };
+
 
     const authValue = useMemo(() => ({
         isLoggedIn, currentUser, loading, login, changePassword, 
@@ -886,7 +724,7 @@ const generateMockData = (collectionName, count = 35) => {
                     // Page 2 Fields
                     id_number: `UU-${String(i).padStart(3, '0')}`,
                     name: employeeName, 
-                    gender: i % 2 === 0 ? 'Male' : 'Female',
+                    gender: uuGuessGenderFromName(typeof employeeName !== 'undefined' ? employeeName : (typeof fullName !== 'undefined' ? fullName : '')) || (i % 2 === 0 ? 'Male' : 'Female'),
                     dob_gc: dob_gc,
                     dob_ec: dob_ec,
                     age: (2026 - birthYear).toString(),
@@ -1488,8 +1326,10 @@ export const DataProvider = ({ children }) => {
     const getCollection = useCallback((collectionName) => {
         const rows = allData[collectionName];
         if (Array.isArray(rows) && rows.length > 0) return rows;
-        // Do not inject hard-coded seed over live/DB state
-        // (seed remains only as INITIAL_ALL_DATA until bootstrap)
+        const seed = typeof TYPICAL_MAT_SEED !== 'undefined' ? TYPICAL_MAT_SEED : null;
+        if (seed && Array.isArray(seed[collectionName]) && seed[collectionName].length) {
+            return seed[collectionName];
+        }
         return Array.isArray(rows) ? rows : [];
     }, [allData]);
 
@@ -1528,26 +1368,41 @@ export const DataProvider = ({ children }) => {
     };
 
     const addRecord = async (collectionName, newData) => {
-        const id = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now());
+        const id = Date.now().toString();
         const currentCollection = allData[collectionName] || [];
-        let recordToSave = { ...newData, id: newData.id || id };
+        
+        let recordToSave = { ...newData, id };
 
-        // Material item aliases
-        if (collectionName === 'MAT_ITEM_CRUD' || collectionName === 'MAT_INVENTORY_CRUD') {
-            const nm = recordToSave.name || recordToSave.item_name || '';
-            recordToSave.name = nm;
-            recordToSave.item_name = nm;
-            if (recordToSave.qty_on_hand == null && recordToSave.quantity != null) recordToSave.qty_on_hand = recordToSave.quantity;
-            if (recordToSave.quantity == null && recordToSave.qty_on_hand != null) recordToSave.quantity = recordToSave.qty_on_hand;
-            if (recordToSave.unit_cost == null && recordToSave.unit_price != null) recordToSave.unit_cost = recordToSave.unit_price;
+        // 1. Auto-ID logic for Employees (UU-001 format)
+        if (collectionName === 'HR_EMPLOYEE_CRUD') {
+            const lastNum = currentCollection.reduce((max, emp) => {
+                const num = parseInt(emp.id_number?.split('-')[1]) || 0;
+                return Math.max(max, num);
+            }, 0);
+            recordToSave.id_number = `UU-${String(lastNum + 1).padStart(3, '0')}`;
         }
 
+        // 2. Auto-ID logic for Vacancies (VAC-1 format)
+        if (collectionName === 'HR_VACANCY_CRUD') {
+            const lastNum = currentCollection.reduce((max, vac) => {
+                // Splits "VAC-12" or "VAC-2026-12" and gets the numeric part at the end
+                const parts = vac.vacancy_no?.split('-');
+                const numStr = parts ? parts[parts.length - 1] : "0";
+                const num = parseInt(numStr) || 0;
+                return Math.max(max, num);
+            }, 0);
+            recordToSave.vacancy_no = `VAC-${lastNum + 1}`;
+        }
+        
+        // Update the state using the correct state setter
         setAllData(prev => ({
             ...prev,
-            [collectionName]: [recordToSave, ...(prev[collectionName] || [])],
+            [collectionName]: [recordToSave, ...currentCollection]
         }));
 
-        try { postMatToFinIfNeeded(collectionName, recordToSave); } catch (e) {}
+        // Material → Finance (GRV / GIV / PO / Robbing)
+        postMatToFinIfNeeded(collectionName, recordToSave);
+
         try {
             if (['HR_EMPLOYEE_CRUD', 'EMPLOYEE_CRUD', 'SYS_USERS_CRUD', 'USERS_CRUD', 'HR_USER_CRUD'].includes(collectionName)) {
                 upsertSharedUser({ ...recordToSave, modules: recordToSave.modules || ['material'] });
@@ -1558,59 +1413,98 @@ export const DataProvider = ({ children }) => {
             }
         } catch (e) {}
 
-        // PostgreSQL — same pattern as Finance
-        try {
-            const mod = await import('../../unity/api.js').catch(() => import('../../unity/api'));
-            if (mod && typeof mod.createRecord === 'function') {
-                await mod.createRecord(collectionName, recordToSave);
-                console.info('[MAT addRecord] DB ok', collectionName, recordToSave.id);
-            }
-        } catch (apiErr) {
-            console.warn('[MAT addRecord] API persist skipped', collectionName, apiErr?.message || apiErr);
-            setMessage({ text: 'Saved in Material; DB: ' + (apiErr?.message || apiErr), type: 'error' });
-        }
-
-        return true;
+        
+        return true; // Important for FormModal to know it finished
     };
 
-    
-const updateRecord = useCallback(async (collectionName, id, updatedFields) => {
-        let fields = { ...updatedFields };
-        if (collectionName === 'MAT_ITEM_CRUD' || collectionName === 'MAT_INVENTORY_CRUD') {
-            const nm = fields.name || fields.item_name;
-            if (nm) { fields.name = nm; fields.item_name = nm; }
-            if (fields.qty_on_hand == null && fields.quantity != null) fields.qty_on_hand = fields.quantity;
-            if (fields.quantity == null && fields.qty_on_hand != null) fields.quantity = fields.qty_on_hand;
-            if (fields.unit_cost == null && fields.unit_price != null) fields.unit_cost = fields.unit_price;
-        }
-
-        setAllData(prev => {
-            const list = prev[collectionName] || [];
-            const updatedList = list.map(r =>
-                String(r.id) === String(id) || String(r.sku || '') === String(id)
-                    ? { ...r, ...fields }
-                    : r
-            );
-            return { ...prev, [collectionName]: updatedList };
-        });
-
+    const updateRecord = useCallback(async (collectionName, id, updatedFields) => {
         try {
-            const mod = await import('../../unity/api.js').catch(() => import('../../unity/api'));
-            if (mod && typeof mod.updateRecord === 'function') {
-                await mod.updateRecord(collectionName, id, fields);
-                console.info('[MAT updateRecord] DB ok', collectionName, id);
-            }
-        } catch (apiErr) {
-            console.warn('[MAT updateRecord] API persist skipped', collectionName, apiErr?.message || apiErr);
-            setMessage({ text: 'Updated in Material; DB: ' + (apiErr?.message || apiErr), type: 'error' });
-        }
+            setAllData(prev => {
+                let newData = { ...prev };
+                const original = prev[collectionName]?.find(r => r.id === id);
+                
+                // 1. Apply the update to the current list
+                newData[collectionName] = prev[collectionName].map(r => 
+                    r.id === id ? { ...r, ...updatedFields } : r
+                );
 
-        setMessage({ text: 'System Synchronized Successfully', type: 'success' });
-        return true;
+                if (!original) return newData;
+
+                // IDENTITY DETECTION: Capture the employee's identity from the record being edited
+                const empName = original.employee_name || original.name;
+                const empId = original.employee_id || original.staff_national_id || original.id_number;
+
+                // ---------------------------------------------------------
+                // SYNC RULE 1: COMPETENCE MATRIX SCORE -> APPRAISAL SCORE
+                // ---------------------------------------------------------
+                if (collectionName === 'HR_COMPETENCE_CRUD' && updatedFields.score) {
+                    console.log(`Syncing Score: ${updatedFields.score} for ${empName}`);
+                    
+                    if (newData['HR_APPRAISAL_CRUD']) {
+                        newData['HR_APPRAISAL_CRUD'] = newData['HR_APPRAISAL_CRUD'].map(app => {
+                            const matches = (app.employee_name === empName) || 
+                                            (app.name === empName) || 
+                                            (app.employee_id === empId) || 
+                                            (app.staff_national_id === empId);
+
+                            if (matches) {
+                                return { 
+                                    ...app, 
+                                    score: updatedFields.score,
+                                    manager_feedback: `Updated via Competence Sync: ${new Date().toLocaleDateString()}`
+                                };
+                            }
+                            return app;
+                        });
+        // Material → Finance on update
+        try {
+            const mergedRow = { ...(allData[collectionName] || []).find(r => r.id === id), ...updatedFields, id };
+            postMatToFinIfNeeded(collectionName, mergedRow);
+        } catch (e) {}
+
+                    }
+                }
+
+                // ---------------------------------------------------------
+                // SYNC RULE 2: GLOBAL EMPLOYEE MASTER SYNC
+                // ---------------------------------------------------------
+                if (collectionName === 'HR_EMPLOYEE_CRUD') {
+                    const oldName = original.name;
+                    const oldId = original.id_number;
+
+                    Object.keys(newData).forEach(colKey => {
+                        if (colKey === 'HR_EMPLOYEE_CRUD' || colKey === 'ROLE_CRUD') return;
+                        
+                        newData[colKey] = newData[colKey].map(item => {
+                            const isMatch = item.employee_name === oldName || item.name === oldName || 
+                                            item.employee_id === oldId || item.staff_national_id === oldId;
+                            if (isMatch) {
+                                return {
+                                    ...item,
+                                    ...(item.employee_name !== undefined && { employee_name: updatedFields.name || item.employee_name }),
+                                    ...(item.name !== undefined && { name: updatedFields.name || item.name }),
+                                    ...(item.employee_id !== undefined && { employee_id: updatedFields.id_number || item.employee_id }),
+                                    ...(item.staff_national_id !== undefined && { staff_national_id: updatedFields.id_number || item.staff_national_id }),
+                                    ...(item.department !== undefined && { department: updatedFields.department || item.department })
+                                };
+                            }
+                            return item;
+                        });
+                    });
+                }
+
+                return newData;
+            });
+
+            setMessage({ text: "System Synchronized Successfully", type: 'success' });
+            return true;
+        } catch (e) {
+            console.error("Update Sync Error: ", e);
+            return false;
+        }
     }, []);
 
-    
-const deleteRecord = useCallback(async (collectionName, id) => {
+    const deleteRecord = useCallback(async (collectionName, id) => {
         if (!collectionName || !id) {
             setMessage({ text: `Data missing to delete record from ${collectionName}.`, type: 'error' });
             return false;
@@ -1619,21 +1513,11 @@ const deleteRecord = useCallback(async (collectionName, id) => {
         try {
             setAllData(prev => ({
                 ...prev,
-                [collectionName]: (prev[collectionName] || []).filter(record => String(record.id) !== String(id))
+                [collectionName]: prev[collectionName].filter(record => record.id !== id)
             }));
 
             if (collectionName === 'HR_LEAVE_CRUD') {
                 setLeaveUpdateTrigger(prev => prev + 1);
-            }
-
-            try {
-                const mod = await import('../../unity/api.js').catch(() => import('../../unity/api'));
-                if (mod && typeof mod.deleteRecord === 'function') {
-                    await mod.deleteRecord(collectionName, id);
-                    console.info('[MAT deleteRecord] DB ok', collectionName, id);
-                }
-            } catch (apiErr) {
-                console.warn('[MAT deleteRecord] API persist skipped', collectionName, apiErr?.message || apiErr);
             }
 
             setMessage({ text: `${collectionName} record deleted successfully!`, type: 'success' });
@@ -1845,199 +1729,100 @@ const getIcon = (name) => Icons[name] || Icons.File;
 /* --- FIXED INPUT COMPONENT (SELECT + DUAL CALENDARS + REDIRECT) --- */
 
 /** Dark in-app select (filters + forms) — never uses OS white picker on mobile */
-/** Dark in-app select — opens above nearby UI (filters, tables, cards) */
-/** Dark select — full readable width for long labels (campus, COA, employee, etc.) */
-/** Dark select — menu portaled to document.body so it always stacks above tables/modals */
-const UUSelect = ({ value, onChange, options = [], allLabel = 'All', className = '', compact = false, placeholder }) => {
+const UUSelect = ({ value, onChange, options = [], allLabel = 'All', className = '', compact = false }) => {
     const [open, setOpen] = useState(false);
-    const [menuBox, setMenuBox] = useState(null);
     const ref = useRef(null);
-    const btnRef = useRef(null);
     const list = Array.isArray(options) ? options : [];
-
-    const placeMenu = React.useCallback(() => {
-        const el = btnRef.current;
-        if (!el) return;
-        const r = el.getBoundingClientRect();
-        const gap = 4;
-        const maxH = 320;
-        const spaceBelow = window.innerHeight - r.bottom - gap;
-        const spaceAbove = r.top - gap;
-        const openUp = spaceBelow < 160 && spaceAbove > spaceBelow;
-        const height = Math.min(maxH, openUp ? spaceAbove : spaceBelow, maxH);
-        const width = Math.min(Math.max(r.width, 260), Math.min(window.innerWidth - 16, 520));
-        let left = r.left;
-        if (left + width > window.innerWidth - 8) left = Math.max(8, window.innerWidth - width - 8);
-        if (left < 8) left = 8;
-        const top = openUp ? Math.max(8, r.top - gap - height) : r.bottom + gap;
-        setMenuBox({ top, left, width, maxHeight: height, openUp });
-    }, []);
 
     useEffect(() => {
         if (!open) return undefined;
-        placeMenu();
         const onDoc = (e) => {
-            if (ref.current && !ref.current.contains(e.target)
-                && !(e.target && e.target.closest && e.target.closest('[data-uu-select-menu]'))) {
-                setOpen(false);
-            }
+            if (ref.current && !ref.current.contains(e.target)) setOpen(false);
         };
-        const onReposition = () => placeMenu();
         document.addEventListener('mousedown', onDoc);
         document.addEventListener('touchstart', onDoc);
-        window.addEventListener('resize', onReposition);
-        window.addEventListener('scroll', onReposition, true);
         return () => {
             document.removeEventListener('mousedown', onDoc);
             document.removeEventListener('touchstart', onDoc);
-            window.removeEventListener('resize', onReposition);
-            window.removeEventListener('scroll', onReposition, true);
         };
-    }, [open, placeMenu]);
+    }, [open]);
 
     const labelFor = (v) => {
-        if (v === 'ALL' || v === 'All' || v === 'all') return allLabel;
-        return String(v ?? '');
+        if (v === 'ALL' || v === 'All') return allLabel;
+        return String(v);
     };
-    const currentLabel = (value === '' || value == null || value === 'ALL' || value === 'All')
-        ? (placeholder || allLabel || '-- SELECT --')
-        : labelFor(value);
-
-    const portalFn = (typeof createPortal === 'function')
-        ? createPortal
-        : (typeof ReactDOM !== 'undefined' && ReactDOM.createPortal ? ReactDOM.createPortal : null);
-
-    const menu = (open && menuBox) ? (
-        <div
-            data-uu-select-menu="1"
-            role="listbox"
-            className="overflow-y-auto rounded-xl border border-white/25 bg-slate-900 shadow-2xl shadow-black/80 text-white"
-            style={{
-                position: 'fixed',
-                top: menuBox.top,
-                left: menuBox.left,
-                width: menuBox.width,
-                maxHeight: menuBox.maxHeight,
-                zIndex: 2147483646,
-            }}
-        >
-            {list.length === 0 ? (
-                <div className="px-4 py-3 text-sm text-white/50">No options</div>
-            ) : list.map((s) => {
-                const val = (s && typeof s === 'object') ? (s.value ?? s.id ?? s.name) : s;
-                const lab = (s && typeof s === 'object') ? (s.label ?? s.name ?? String(val)) : labelFor(s);
-                const selected = String(value) === String(val);
-                return (
-                    <button
-                        key={String(val)}
-                        type="button"
-                        role="option"
-                        aria-selected={selected}
-                        className={`w-full text-left px-4 py-3.5 min-h-[48px] text-sm border-b border-white/10 last:border-b-0
-                                    flex items-center justify-between gap-3
-                                    ${selected ? 'bg-cyan-600/40 text-white' : 'text-white hover:bg-white/10'}`}
-                        style={{ fontSize: 15, lineHeight: 1.4 }}
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => { onChange(val); setOpen(false); }}
-                    >
-                        <span className="whitespace-normal break-words text-left pr-2">{lab}</span>
-                        <span className={`w-4 h-4 rounded-full border-2 shrink-0 ${selected ? 'border-cyan-300 bg-cyan-400' : 'border-white/40'}`} />
-                    </button>
-                );
-            })}
-        </div>
-    ) : null;
-
-    const menuNode = menu && portalFn && typeof document !== 'undefined' && document.body
-        ? portalFn(menu, document.body)
-        : menu;
+    const currentLabel = labelFor(value);
 
     return (
-        <div
-            className={`relative ${className || ''}`}
-            ref={ref}
-            style={{
-                zIndex: open ? 50 : 2,
-                isolation: 'isolate',
-                minWidth: compact ? 200 : 260,
-                maxWidth: '100%',
-                width: compact ? undefined : '100%',
-            }}
-        >
+        <div className={`relative ${className}`} ref={ref}>
             <button
-                ref={btnRef}
                 type="button"
                 onClick={() => setOpen((o) => !o)}
-                className={`w-full flex items-center justify-between gap-2 bg-slate-900/90 border border-white/20 rounded-xl
+                className={`w-full flex items-center justify-between gap-2 bg-black/50 border border-white/10 rounded-xl
                             text-white outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/40
-                            ${compact ? 'px-3 py-2.5 text-sm min-h-[44px]' : 'px-4 py-3 text-base min-h-[48px]'}`}
-                style={{ fontSize: compact ? 14 : 15 }}
+                            ${compact ? 'px-3 py-2 text-xs min-h-[40px] max-w-[180px]' : 'px-3.5 py-3 text-base min-h-[48px]'}`}
+                style={{ fontSize: compact ? undefined : 16 }}
                 aria-haspopup="listbox"
                 aria-expanded={open}
             >
-                <span
-                    className={`text-left flex-1 min-w-0 ${(!value || value === 'ALL' || value === 'All') ? 'text-white/55' : 'text-white'}`}
-                    style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                >
-                    {currentLabel}
-                </span>
-                <span className="text-cyan-400 text-xs shrink-0 ml-2">{open ? '▲' : '▼'}</span>
+                <span className="truncate">{currentLabel}</span>
+                <span className="text-cyan-400/80 text-[10px] shrink-0">{open ? '▲' : '▼'}</span>
             </button>
-            {menuNode}
+            {open && (
+                <div
+                    className="absolute left-0 right-0 top-full mt-1 z-[10050] min-w-[160px] max-h-56 overflow-y-auto
+                               rounded-xl border border-white/20 bg-slate-900 shadow-2xl shadow-black/60"
+                    role="listbox"
+                >
+                    {list.map((s) => {
+                        const val = s;
+                        const selected = String(value) === String(val);
+                        return (
+                            <button
+                                key={String(val)}
+                                type="button"
+                                role="option"
+                                aria-selected={selected}
+                                className={`w-full text-left px-4 py-3 min-h-[44px] text-sm
+                                            border-b border-white/10 last:border-b-0
+                                            flex items-center justify-between gap-2
+                                            ${selected ? 'bg-cyan-600/35 text-cyan-100' : 'text-white hover:bg-white/5 active:bg-cyan-500/20'}`}
+                                style={{ fontSize: 16 }}
+                                onClick={() => {
+                                    onChange(val);
+                                    setOpen(false);
+                                }}
+                            >
+                                <span className="truncate">{labelFor(val)}</span>
+                                <span className={`w-4 h-4 rounded-full border-2 shrink-0 flex items-center justify-center
+                                    ${selected ? 'border-cyan-400 bg-cyan-500' : 'border-white/30'}`}>
+                                    {selected ? <span className="w-1.5 h-1.5 rounded-full bg-white" /> : null}
+                                </span>
+                            </button>
+                        );
+                    })}
+                </div>
+            )}
         </div>
     );
 };
 
 
-
-
-
-
-
-const Input = ({ label, type, value, onChange, placeholder, isRequired = false, options = [], hint, fieldKey, intelModule, intelCollection }) => {
+const Input = ({ label, type, value, onChange, placeholder, isRequired = false, options = [] }) => {
     const id = React.useId();
     const [showECPicker, setShowECPicker] = useState(false);
     const [selectOpen, setSelectOpen] = useState(false);
-    const [selectMenuBox, setSelectMenuBox] = useState(null);
     const selectRootRef = useRef(null);
-    const selectBtnRef = useRef(null);
     useEffect(() => {
-        if (!selectOpen) {
-            setSelectMenuBox(null);
-            return undefined;
-        }
-        const place = () => {
-            const el = selectBtnRef.current;
-            if (!el) return;
-            const r = el.getBoundingClientRect();
-            const gap = 4;
-            const maxH = 320;
-            const spaceBelow = window.innerHeight - r.bottom - gap;
-            const spaceAbove = r.top - gap;
-            const openUp = spaceBelow < 160 && spaceAbove > spaceBelow;
-            const height = Math.min(maxH, Math.max(120, openUp ? spaceAbove : spaceBelow));
-            const width = Math.min(Math.max(r.width, 220), Math.min(window.innerWidth - 16, 480));
-            let left = r.left;
-            if (left + width > window.innerWidth - 8) left = Math.max(8, window.innerWidth - width - 8);
-            if (left < 8) left = 8;
-            const top = openUp ? Math.max(8, r.top - gap - height) : r.bottom + gap;
-            setSelectMenuBox({ top, left, width, maxHeight: height });
-        };
-        place();
+        if (!selectOpen) return undefined;
         const onDoc = (e) => {
-            if (selectRootRef.current && selectRootRef.current.contains(e.target)) return;
-            if (e.target && e.target.closest && e.target.closest('[data-uu-input-select-menu]')) return;
-            setSelectOpen(false);
+            if (selectRootRef.current && !selectRootRef.current.contains(e.target)) setSelectOpen(false);
         };
         document.addEventListener('mousedown', onDoc);
         document.addEventListener('touchstart', onDoc);
-        window.addEventListener('resize', place);
-        window.addEventListener('scroll', place, true);
         return () => {
             document.removeEventListener('mousedown', onDoc);
             document.removeEventListener('touchstart', onDoc);
-            window.removeEventListener('resize', place);
-            window.removeEventListener('scroll', place, true);
         };
     }, [selectOpen]);
 
@@ -2088,47 +1873,37 @@ const Input = ({ label, type, value, onChange, placeholder, isRequired = false, 
         const current = normalized.find((o) => o.value === String(value ?? '')) || null;
 
         return (
-            <div className="flex flex-col space-y-1.5 mb-0 group relative min-w-0 max-w-full w-full overflow-visible" ref={selectRootRef}>
+            <div className="flex flex-col space-y-2 mb-4 group relative" ref={selectRootRef}>
                 {label && (
                 <label 
                     onClick={handleLabelClick}
-                    className="text-[9px] font-black uppercase tracking-[0.12em] text-white/50 group-focus-within:text-cyan-400 flex items-center gap-1 max-w-full cursor-help"
-                    title={label}
+                    className="text-[10px] font-black uppercase tracking-[0.2em] text-white/50 group-focus-within:text-cyan-400"
                 >
-                    <span className="truncate">{label}{isRequired ? <span className="text-red-500"> *</span> : null}</span>
-                    <IntelTip label={label} fieldKey={fieldKey || label} module={intelModule} collection={intelCollection} help={hint} />
+                    {label} {isRequired && <span className="text-red-500">*</span>}
                 </label>
                 )}
                 <button
                     type="button"
                     id={id}
-                    ref={selectBtnRef}
                     onClick={() => setSelectOpen((o) => !o)}
-                    className="w-full max-w-full min-w-0 min-h-[42px] flex items-center justify-between gap-2
-                               px-3 py-2.5 rounded-xl bg-black/60 border border-white/20 text-left
-                               text-white text-sm focus:ring-2 focus:ring-cyan-500/50 outline-none
-                               hover:bg-black/80 transition-all cursor-pointer box-border"
-                    style={{ fontSize: 14 }}
+                    className="w-full min-h-[48px] flex items-center justify-between gap-2
+                               p-3.5 rounded-xl bg-black/60 border border-white/20 text-left
+                               text-white text-base focus:ring-2 focus:ring-cyan-500/50 outline-none
+                               hover:bg-black/80 transition-all cursor-pointer"
+                    style={{ fontSize: 16 }}
                     aria-haspopup="listbox"
                     aria-expanded={selectOpen}
                 >
-                    <span className={current ? 'text-white' : 'text-white/50'} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <span className={current ? 'text-white truncate' : 'text-white/40'}>
                         {current ? current.label : (placeholder || '-- SELECT --')}
                     </span>
                     <span className="text-cyan-400/80 text-xs shrink-0">{selectOpen ? '▲' : '▼'}</span>
                 </button>
-                {selectOpen && selectMenuBox && createPortal(
+                {selectOpen && (
                     <div
-                        data-uu-input-select-menu="1"
-                        className="overflow-y-auto rounded-xl border border-white/25 bg-slate-900 shadow-2xl shadow-black/80"
-                        style={{
-                            position: 'fixed',
-                            top: selectMenuBox.top,
-                            left: selectMenuBox.left,
-                            width: selectMenuBox.width,
-                            maxHeight: selectMenuBox.maxHeight,
-                            zIndex: 2147483646,
-                        }}
+                        className="absolute left-0 right-0 top-full mt-1 z-[10050]
+                                   max-h-56 overflow-y-auto rounded-xl
+                                   border border-white/20 bg-slate-900 shadow-2xl shadow-black/60"
                         role="listbox"
                     >
                         <button
@@ -2166,8 +1941,7 @@ const Input = ({ label, type, value, onChange, placeholder, isRequired = false, 
                                 </button>
                             );
                         })}
-                    </div>,
-                    document.body
+                    </div>
                 )}
             </div>
         );
@@ -2180,11 +1954,10 @@ const Input = ({ label, type, value, onChange, placeholder, isRequired = false, 
             {label && (
                 <label 
                     onClick={handleLabelClick}
-                    className={`text-[10px] font-black uppercase tracking-[0.2em] transition-all flex items-center gap-1 max-w-full cursor-help
+                    className={`text-[10px] font-black uppercase tracking-[0.2em] transition-all
                         ${(label.toLowerCase().includes('experience') || label.toLowerCase().includes('beneficiary')) ? 'text-cyan-400 cursor-pointer hover:underline' : 'text-white/50'}`}
                 >
-                    <span className="truncate">{label}{isRequired ? <span className="text-red-500"> *</span> : null}</span>
-                    <IntelTip label={label} fieldKey={fieldKey || label} module={intelModule} collection={intelCollection} help={hint} />
+                    {label} {isRequired && <span className="text-red-500">*</span>}
                 </label>
             )}
 
@@ -2209,7 +1982,7 @@ const Input = ({ label, type, value, onChange, placeholder, isRequired = false, 
                 {isEC && showECPicker && (
                     <div className="absolute top-full left-0 mt-2 p-4 bg-slate-900 border border-cyan-500/50 rounded-xl shadow-2xl z-[999] w-72 backdrop-blur-2xl">
                         <div className="flex justify-between items-center mb-4">
-                            <span className="text-[11px] font-black text-white uppercase italic">Ethiopian Calendar</span>
+                            <span className="text-[11px] font-black text-white uppercase italic">Power Geez · Ethiopian Calendar</span>
                             <button onClick={() => setShowECPicker(false)}><Icons.X size={16} className="text-red-400"/></button>
                         </div>
                         
@@ -2244,75 +2017,49 @@ const Input = ({ label, type, value, onChange, placeholder, isRequired = false, 
 
 
 // Component for Generic Reports (Only available to Admins/Managers/Staff)
-const ContainerCard = ({ children, className = '', title, subtitle, actions }) => (
-    <div className={`rounded-[1.75rem] border border-white/10 bg-black/40 backdrop-blur-md shadow-xl ${className}`}>
-        {(title || actions) && (
-            <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 border-b border-white/10">
-                <div>
-                    {title ? <h3 className="text-sm font-black uppercase tracking-widest text-white">{title}</h3> : null}
-                    {subtitle ? <p className="text-[10px] text-gray-500 mt-0.5">{subtitle}</p> : null}
-                </div>
-                {actions ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : null}
-            </div>
-        )}
-        <div className="p-5">{children}</div>
-    </div>
-);
-
 const ReportsGenerator = ({ glassClass }) => {
-    const { allData, getCollection } = useData();
+    const { allData, getCollection } = useData(); 
     const { currentUser, checkPermission } = useAuth();
 
+    // New constants for Report Type
     const REPORT_TYPES = [
         { label: 'All Time', value: 'all' },
         { label: 'Daily', value: 'daily' },
         { label: 'Weekly', value: 'weekly' },
         { label: 'Monthly', value: 'monthly' },
         { label: 'Quarterly', value: 'quarterly' },
-        { label: 'Annually', value: 'annually' },
-    ];
-
-    const REPORT_PRESETS = [
-        { id: '', label: 'Custom selection' },
-        { id: 'MAT_ITEM', label: 'Material · Inventory Master', collection: 'MAT_ITEM_CRUD' },
-        { id: 'MAT_GRV', label: 'Material · GRV', collection: 'MAT_GRV_CRUD' },
-        { id: 'MAT_GIV', label: 'Material · GIV', collection: 'MAT_GIV_CRUD' },
-        { id: 'MAT_ROB', label: 'Material · Robbing', collection: 'MAT_ROBBING_CRUD' },
-        { id: 'MAT_LPO', label: 'Material · Local Purchase', collection: 'MAT_PURCHASE_LOCAL_CRUD' },
-        { id: 'MAT_FPO', label: 'Material · Foreign Purchase', collection: 'MAT_PURCHASE_FOREIGN_CRUD' },
+        { label: 'Annually', value: 'annually' }
     ];
 
     const getCollectionLabel = useCallback((name) => {
-        if (!name || typeof name !== 'string') return '';
+        if (!name) return '';
+        if (typeof name !== 'string') return ''; 
         return name.replace(/_/g, ' ').replace('CRUD', '(Data)').trim();
     }, []);
 
-    const collectionNames = useMemo(() => Object.keys(allData || {}).sort(), [allData]);
-    const initialSelected = collectionNames.length > 0 ? collectionNames[0] : '';
-
-    const [selectedCollection, setSelectedCollection] = useState(initialSelected);
-    useEffect(() => {
-        if (!selectedCollection && collectionNames.length) {
-            setSelectedCollection(collectionNames[0]);
-        }
-    }, [collectionNames, selectedCollection]);
+    const collectionNames = useMemo(() => Object.keys(allData).sort(), [allData]);
+    const initialSelectedCollectionName = collectionNames.length > 0 ? collectionNames[0] : '';
+    
+    const [selectedCollection, setSelectedCollection] = useState(initialSelectedCollectionName);
     const [sortKey, setSortKey] = useState('');
     const [groupByKey, setGroupByKey] = useState('');
-    const [reportType, setReportType] = useState('all');
-    const [dateFrom, setDateFrom] = useState('');
-    const [dateTo, setDateTo] = useState('');
-    const [preset, setPreset] = useState('');
-    const [statusFilter, setStatusFilter] = useState('All');
-    const [searchTerm, setSearchTerm] = useState('');
+    const [reportType, setReportType] = useState('all'); // New State for Type
 
-    const columns = useMemo(() => (typeof COLUMN_CONFIG !== 'undefined' ? (COLUMN_CONFIG[selectedCollection] || []) : []), [selectedCollection]);
+    const columns = useMemo(() => COLUMN_CONFIG[selectedCollection] || [], [selectedCollection]);
 
-    const filterableColumns = useMemo(
-        () => (columns || []).filter((col) => !col.isHidden && col.type !== 'array'),
+    const filterableColumns = useMemo(() =>
+        columns.filter(col => !col.isHidden && col.type !== 'array'),
         [columns]
     );
 
-    const [columnFilters, setColumnFilters] = useState({});
+    const [columnFilters, setColumnFilters] = useState(() => {
+        return filterableColumns.reduce((acc, col) => {
+            acc[col.key] = '';  
+            return acc;
+        }, {});
+    });
+
+    const currentData = useMemo(() => getCollection(selectedCollection) || [], [getCollection, selectedCollection]);
 
     useEffect(() => {
         if (selectedCollection) {
@@ -2324,24 +2071,24 @@ const ReportsGenerator = ({ glassClass }) => {
             );
             setSortKey('');
             setGroupByKey('');
-            setReportType('all');
+            setReportType('all'); // Reset type on collection change
         }
     }, [selectedCollection, filterableColumns]);
 
-    const currentData = useMemo(() => getCollection(selectedCollection) || [], [getCollection, selectedCollection]);
-
     const getColumnFilterOptions = useCallback((data, columnKey) => {
         const values = new Set(['All']);
-        (data || []).forEach((item) => {
+        data.forEach(item => {
             const value = item[columnKey];
-            if (value !== null && value !== undefined) values.add(String(value));
+            if (value !== null && value !== undefined) {
+                values.add(String(value));
+            }
         });
-        return Array.from(values).map((v) => ({ label: v, value: v }));
+        return Array.from(values).map(v => ({ label: v, value: v }));
     }, []);
 
-    const columnOptions = useMemo(() => {
+    const columnOptions = React.useMemo(() => {
         const options = {};
-        filterableColumns.forEach((col) => {
+        filterableColumns.forEach(col => {
             options[col.key] = getColumnFilterOptions(currentData, col.key);
         });
         return options;
@@ -2350,111 +2097,55 @@ const ReportsGenerator = ({ glassClass }) => {
     const filteredAndSortedData = useMemo(() => {
         let data = [...currentData];
 
-        data = data.filter((item) =>
-            (filterableColumns || []).every((col) => {
+        data = data.filter(item => {
+            return filterableColumns.every(col => {
                 const filterValue = columnFilters[col.key] || '';
-                if (filterValue === 'All' || !filterValue) return true;
-                return String(item[col.key] || '').toLowerCase() === filterValue.toLowerCase();
-            })
-        );
-
-        if (statusFilter && statusFilter !== 'All') {
-            const sf = statusFilter.toLowerCase();
-            data = data.filter((item) => String(item.status || item.Status || '').toLowerCase() === sf);
-        }
-
-        const dateKeys = [
-            'date', 'posting_date', 'createdAt', 'created_at', 'payroll_process_date',
-            'process_date', 'leave_start', 'start_date', 'transaction_date', 'grv_date', 'period',
-        ];
-
-        if (dateFrom || dateTo) {
-            const fromTs = dateFrom ? new Date(dateFrom).setHours(0, 0, 0, 0) : null;
-            const toTs = dateTo ? new Date(dateTo).setHours(23, 59, 59, 999) : null;
-            data = data.filter((item) => {
-                let raw = null;
-                for (const k of dateKeys) {
-                    if (item[k] != null && String(item[k]).trim() !== '') {
-                        raw = item[k];
-                        break;
-                    }
+                if (filterValue === 'All' || !filterValue) {
+                    return true;
                 }
-                if (!raw) return true;
-                const ts = new Date(raw).getTime();
-                if (isNaN(ts)) return true;
-                if (fromTs != null && ts < fromTs) return false;
-                if (toTs != null && ts > toTs) return false;
-                return true;
+                const itemValue = String(item[col.key] || '').toLowerCase();
+                const filterValueLower = filterValue.toLowerCase();
+                return itemValue === filterValueLower;
             });
-        }
-
-        if (reportType && reportType !== 'all') {
-            const now = new Date();
-            data = data.filter((item) => {
-                let raw = null;
-                for (const k of dateKeys) {
-                    if (item[k] != null && String(item[k]).trim() !== '') {
-                        raw = item[k];
-                        break;
-                    }
-                }
-                if (!raw) return true;
-                const d = new Date(raw);
-                if (isNaN(d.getTime())) return true;
-                if (reportType === 'daily') return d.toDateString() === now.toDateString();
-                if (reportType === 'weekly') {
-                    const weekAgo = new Date(now);
-                    weekAgo.setDate(now.getDate() - 7);
-                    return d >= weekAgo && d <= now;
-                }
-                if (reportType === 'monthly') return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-                if (reportType === 'quarterly') {
-                    const q = Math.floor(now.getMonth() / 3);
-                    return Math.floor(d.getMonth() / 3) === q && d.getFullYear() === now.getFullYear();
-                }
-                if (reportType === 'annually') return d.getFullYear() === now.getFullYear();
-                return true;
-            });
-        }
-
-        if (searchTerm && searchTerm.trim()) {
-            const q = searchTerm.trim().toLowerCase();
-            data = data.filter((item) =>
-                Object.values(item || {}).some((v) => String(v ?? '').toLowerCase().includes(q))
-            );
-        }
+        });
 
         if (sortKey) {
             data.sort((a, b) => {
                 const aVal = a[sortKey];
                 const bVal = b[sortKey];
-                const na = parseFloat(aVal);
-                const nb = parseFloat(bVal);
-                if (!isNaN(na) && !isNaN(nb) && isFinite(na) && isFinite(nb)) return na - nb;
-                return String(aVal || '').toLowerCase().localeCompare(String(bVal || '').toLowerCase());
+                if ((typeof aVal === 'number' || (!isNaN(parseFloat(aVal)) && isFinite(aVal))) && (typeof bVal === 'number' || (!isNaN(parseFloat(bVal)) && isFinite(bVal)))) {
+                    return parseFloat(aVal) - parseFloat(bVal);
+                }
+                const stringA = String(aVal || '').toLowerCase();
+                const stringB = String(bVal || '').toLowerCase();
+                if (stringA < stringB) return -1;
+                if (stringA > stringB) return 1;
+                return 0;
             });
         }
 
         return data;
-    }, [currentData, columnFilters, sortKey, filterableColumns, searchTerm, dateFrom, dateTo, reportType, statusFilter]);
+    }, [currentData, columnFilters, sortKey, filterableColumns]);
 
     const groupedData = useMemo(() => {
-        if (!groupByKey) return { 'All Records': filteredAndSortedData };
+        if (!groupByKey) {
+            return { 'All Records': filteredAndSortedData };
+        }
         return filteredAndSortedData.reduce((acc, item) => {
             const key = String(item[groupByKey] || 'N/A');
-            if (!acc[key]) acc[key] = [];
+            acc[key] = acc[key] || [];
             acc[key].push(item);
             return acc;
         }, {});
     }, [filteredAndSortedData, groupByKey]);
 
-    const displayColumns = useMemo(
-        () => (columns || []).filter((col) => !col.isHidden && col.type !== 'array').slice(0, 8),
-        [columns]
-    );
+    const displayColumns = useMemo(() => columns.filter(col => !col.isHidden && col.type !== 'array').slice(0, 8), [columns]);
 
     const handleFilterChange = (columnKey, value) => {
-        setColumnFilters((prev) => ({ ...prev, [columnKey]: value }));
+        setColumnFilters(prevFilters => ({
+            ...prevFilters,
+            [columnKey]: value,
+        }));
     };
 
     useEffect(() => {
@@ -2463,406 +2154,253 @@ const ReportsGenerator = ({ glassClass }) => {
         }
     }, [collectionNames, selectedCollection]);
 
-    const exportCSV = () => {
-        const rows = filteredAndSortedData;
-        if (!rows || !rows.length) return;
-        const cols = displayColumns.length
-            ? displayColumns
-            : Object.keys(rows[0] || {}).map((k) => ({ key: k, label: k }));
-        const headers = cols.map((c) => c.label || c.key);
-        const body = rows.map((r) =>
-            cols
-                .map((c) => {
-                    const v = r[c.key];
-                    const s = v == null ? '' : String(v).replace(/"/g, '""');
-                    return `"${s}"`;
-                })
-                .join(',')
-        );
-        const csv = [headers.join(','), ...body].join('\n');
-        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${selectedCollection || 'report'}.csv`;
-        a.click();
-        URL.revokeObjectURL(url);
-    };
-
-    const partners = (typeof getCollection === 'function' ? (getCollection('FIN_PARTNERS_CRUD') || getCollection('HR_PARTNERS_CRUD') || []) : []);
-
     return (
-        <ContainerCard Icon="FileText" glassClass={glassClass} className="h-full max-w-full min-w-0 overflow-x-hidden overflow-y-auto">
-            <div className="space-y-3 mb-4 p-3 sm:p-4 border border-white/10 rounded-xl max-w-full min-w-0 overflow-hidden bg-black/20">
-                <h3 className="text-base font-semibold text-cyan-400 flex items-center shrink-0">
-                    <Icons.FileBarChart className="w-5 h-5 mr-2 shrink-0" />
-                    Institutional Report Studio
+        <ContainerCard  Icon='FileText' glassClass={glassClass} className="h-full min-h-0 flex flex-col">
+            <div className="space-y-4 mb-6 p-4 border border-gray-700/50 rounded-xl">
+                <h3 className="text-lg font-semibold text-cyan-400 flex items-center">
+                    <Icons.Building className="w-5 h-5 mr-2" />
+                    Report Configuration
                 </h3>
-                <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">
-                    Presets · date range · column filters · group · export
-                </p>
 
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-2">
-                    <div className="rounded-xl border border-cyan-500/20 bg-cyan-950/20 p-3">
-                        <p className="text-[9px] text-cyan-400/80 uppercase font-black">Rows</p>
-                        <p className="text-lg font-black text-white">{filteredAndSortedData.length}</p>
-                    </div>
-                    <div className="rounded-xl border border-white/10 bg-black/30 p-3">
-                        <p className="text-[9px] text-gray-500 uppercase font-black">Source</p>
-                        <p className="text-xs font-bold text-white truncate">{getCollectionLabel(selectedCollection) || '—'}</p>
-                    </div>
-                    <div className="rounded-xl border border-white/10 bg-black/30 p-3">
-                        <p className="text-[9px] text-gray-500 uppercase font-black">Period</p>
-                        <p className="text-xs font-bold text-white">{reportType}</p>
-                    </div>
-                    <div className="rounded-xl border border-white/10 bg-black/30 p-3">
-                        <p className="text-[9px] text-gray-500 uppercase font-black">Groups</p>
-                        <p className="text-lg font-black text-white">{Object.keys(groupedData || {}).length}</p>
-                    </div>
-                </div>
-
-                <div className="w-full max-w-full min-w-0 overflow-x-auto overflow-y-visible">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 items-end min-w-0 w-full">
-                        <div className="min-w-0 max-w-full w-full overflow-hidden">
-                            <Input
-                                label="Report preset"
-                                type="select"
-                                options={REPORT_PRESETS.map((p) => ({ label: p.label, value: p.id }))}
-                                value={preset}
-                                onChange={(val) => {
-                                    setPreset(val);
-                                    const hit = REPORT_PRESETS.find((p) => p.id === val);
-                                    if (hit && hit.collection && collectionNames.includes(hit.collection)) {
-                                        setSelectedCollection(hit.collection);
-                                    }
-                                }}
-                            />
-                        </div>
-
-                        <div className="min-w-0 max-w-full w-full overflow-hidden">
-                            <Input
-                                label="Data Collection"
-                                type="select"
-                                options={collectionNames.map((name) => ({ label: getCollectionLabel(name), value: name }))}
-                                value={selectedCollection}
-                                onChange={(val) => setSelectedCollection(val)}
-                                isRequired
-                            />
-                        </div>
-
-                        <div className="min-w-0 max-w-full w-full overflow-hidden">
-                            <label className="text-[10px] font-black uppercase text-gray-500 tracking-widest">Date from</label>
-                            <input
-                                type="date"
-                                value={dateFrom}
-                                onChange={(e) => setDateFrom(e.target.value)}
-                                className="w-full mt-1 bg-black/50 border border-white/15 rounded-xl px-3 py-2.5 text-white text-sm outline-none focus:ring-1 focus:ring-cyan-500/40"
-                            />
-                        </div>
-
-                        <div className="min-w-0 max-w-full w-full overflow-hidden">
-                            <label className="text-[10px] font-black uppercase text-gray-500 tracking-widest">Date to</label>
-                            <input
-                                type="date"
-                                value={dateTo}
-                                onChange={(e) => setDateTo(e.target.value)}
-                                className="w-full mt-1 bg-black/50 border border-white/15 rounded-xl px-3 py-2.5 text-white text-sm outline-none focus:ring-1 focus:ring-cyan-500/40"
-                            />
-                        </div>
-
-                        <div className="min-w-0 max-w-full w-full overflow-hidden">
-                            <Input
-                                label="Status"
-                                type="select"
-                                options={[
-                                    { label: 'All', value: 'All' },
-                                    { label: 'Draft', value: 'Draft' },
-                                    { label: 'Posted', value: 'Posted' },
-                                    { label: 'Approved', value: 'Approved' },
-                                    { label: 'Pending', value: 'Pending' },
-                                    { label: 'Active', value: 'Active' },
-                                ]}
-                                value={statusFilter}
-                                onChange={(val) => setStatusFilter(val)}
-                            />
-                        </div>
-
-                        <div className="min-w-0 max-w-full w-full overflow-hidden">
-                            <Input
-                                label="Filter by Partner/Entity"
-                                type="select"
-                                options={[
-                                    { label: 'All Entities', value: 'All' },
-                                    ...partners.map((p) => ({
-                                        label: p.partner_name || p.name || p.id,
-                                        value: p.partner_name || p.name || p.id,
-                                    })),
-                                ]}
-                                value={columnFilters.partner_name || ''}
-                                onChange={(val) => handleFilterChange('partner_name', val)}
-                            />
-                        </div>
-
-                        {(filterableColumns || []).map((col) => (
-                            <div key={col.key} className="min-w-0 max-w-full w-full overflow-hidden">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                    <div className="col-span-full">
+                        <div className="flex flex-wrap gap-4 justify-start items-end">
+                            
+                            {/* Data Collection Select */}
+                            <div className="flex-grow min-w-[200px]">
                                 <Input
-                                    label={`Filter: ${col.label}`}
+                                    label="Data Collection"
                                     type="select"
-                                    options={columnOptions[col.key] || [{ label: 'All', value: 'All' }]}
-                                    value={columnFilters[col.key] || ''}
-                                    onChange={(val) => handleFilterChange(col.key, val)}
+                                    options={collectionNames.map(name => ({ label: getCollectionLabel(name), value: name }))}
+                                    value={selectedCollection}
+                                    onChange={(val) => setSelectedCollection(val)}
+                                    isRequired
                                 />
                             </div>
-                        ))}
 
-                        <div className="min-w-0 max-w-full w-full overflow-hidden">
-                            <Input
-                                label="Report Type"
-                                type="select"
-                                options={REPORT_TYPES}
-                                value={reportType}
-                                onChange={(val) => setReportType(val)}
-                            />
-                        </div>
+                            {/* Dynamic Filter Selects */}
+                            {selectedCollection && filterableColumns.map(col => (
+                                <div key={col.key} className="flex-grow min-w-[200px]">
+                                    <Input
+                                        label={`Filter: ${col.label}`}
+                                        type="select"
+                                        options={columnOptions[col.key] || [{ label: 'All', value: 'All' }]}
+                                        value={columnFilters[col.key] || ''}
+                                        onChange={(val) => handleFilterChange(col.key, val)}
+                                    />
+                                </div>
+                            ))}
 
-                        <div className="min-w-0 max-w-full w-full overflow-hidden">
-                            <Input
-                                label="Sort By"
-                                type="select"
-                                options={[
-                                    { label: 'None', value: '' },
-                                    ...(filterableColumns || []).map((c) => ({ label: c.label, value: c.key })),
-                                ]}
-                                value={sortKey}
-                                onChange={(val) => setSortKey(val)}
-                            />
-                        </div>
+                            {/* Report Type Select (DAILY, WEEKLY, etc) */}
+                            <div className="flex-grow min-w-[200px]">
+                                <Input
+                                    label="Report Type"
+                                    type="select"
+                                    options={REPORT_TYPES}
+                                    value={reportType}
+                                    onChange={(val) => setReportType(val)}
+                                />
+                            </div>
 
-                        <div className="min-w-0 max-w-full w-full overflow-hidden">
-                            <Input
-                                label="Group By"
-                                type="select"
-                                options={[
-                                    { label: 'None', value: '' },
-                                    ...(filterableColumns || []).map((c) => ({ label: c.label, value: c.key })),
-                                ]}
-                                value={groupByKey}
-                                onChange={(val) => setGroupByKey(val)}
-                            />
+                            {/* Sort By Select */}
+                            <div className="flex-grow min-w-[200px]">
+                                <Input
+                                    label="Sort By"
+                                    type="select"
+                                    options={[{ label: 'None', value: '' }, ...filterableColumns.map(c => ({ label: c.label, value: c.key }))]}
+                                    value={sortKey}
+                                    onChange={(val) => setSortKey(val)}
+                                />
+                            </div>
+
+                            {/* Group By Select */}
+                            <div className="flex-grow min-w-[200px]">
+                                <Input
+                                    label="Group By"
+                                    type="select"
+                                    options={[{ label: 'None', value: '' }, ...filterableColumns.map(c => ({ label: c.label, value: c.key }))]}
+                                    value={groupByKey}
+                                    onChange={(val) => setGroupByKey(val)}
+                                />
+                            </div>
                         </div>
                     </div>
-                </div>
 
-                <div className="w-full pt-2 flex flex-wrap justify-end gap-2">
-                    {typeof ExportButton === 'function' ? (
+                    {/* Export Button Integration */}
+                    <div className="col-span-full pt-4 flex justify-end">
                         <ExportButton
                             data={filteredAndSortedData}
                             columns={columns}
-                            filename={selectedCollection || 'report'}
-                            isFinancial
+                            filename={`${getCollectionLabel(selectedCollection)}-${reportType}-Report`}
                         />
-                    ) : (
-                        <button
-                            type="button"
-                            onClick={exportCSV}
-                            className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700 transition font-semibold"
-                        >
-                            Export CSV
-                        </button>
-                    )}
-                </div>
-            </div>
-
-            <div className="mb-4 flex flex-wrap gap-2 items-center">
-                <input
-                    type="text"
-                    placeholder="Search records..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="border border-cyan-500/30 bg-black/50 text-white placeholder:text-gray-500 p-2 rounded-lg text-sm w-full md:w-64 outline-none focus:ring-2 focus:ring-cyan-500/40"
-                />
-                <button
-                    type="button"
-                    onClick={exportCSV}
-                    className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700 transition font-semibold"
-                >
-                    Export to CSV
-                </button>
-            </div>
-
-            {Object.entries(groupedData).map(([groupName, rows]) => (
-                <div key={groupName} className="mb-6">
-                    {groupByKey ? (
-                        <h4 className="text-sm font-black text-cyan-400 uppercase tracking-widest mb-2 px-1">
-                            {groupName} · {rows.length}
-                        </h4>
-                    ) : null}
-                    <div className="uu-table-scroll w-full max-w-full min-w-0 overflow-x-auto overflow-y-auto max-h-[min(55vh,520px)] rounded-xl border border-white/10 bg-black/40">
-                        <table className="w-max min-w-full border-collapse table-auto">
-                            <thead className="bg-slate-950/95 sticky top-0 z-10">
-                                <tr className="border-b border-white/10">
-                                    {(displayColumns || []).map((col, i) => (
-                                        <th
-                                            key={i}
-                                            className="px-3 py-2.5 text-left text-[10px] font-black uppercase tracking-wider text-cyan-300/90 whitespace-nowrap border-r border-white/5 last:border-r-0"
-                                        >
-                                            {col.label}
-                                        </th>
-                                    ))}
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {(rows || []).map((row, ri) => (
-                                    <tr key={row.id || ri} className="border-b border-white/5 hover:bg-white/5">
-                                        {(displayColumns || []).map((col, j) => {
-                                            const raw = row[col.key];
-                                            let cell;
-                                            if (Array.isArray(raw)) {
-                                                cell = (raw || []).slice(0, 2).map((entry, idx) => (
-                                                    <span
-                                                        key={idx}
-                                                        className="bg-gray-700 text-gray-200 rounded-full px-2 py-1 text-xs mr-1 inline-block"
-                                                    >
-                                                        {typeof entry === 'object' ? Object.values(entry).join(' / ') : String(entry)}
-                                                    </span>
-                                                ));
-                                            } else if (raw === null || raw === undefined || raw === '') {
-                                                cell = <span className="text-gray-500">—</span>;
-                                            } else if (
-                                                col.type === 'number' ||
-                                                typeof raw === 'number' ||
-                                                (typeof raw === 'string' &&
-                                                    raw !== '' &&
-                                                    !isNaN(Number(raw)) &&
-                                                    /salary|pay|gross|net|amount|tax|pension|basic|ot|allowance/i.test(col.key || ''))
-                                            ) {
-                                                const n = Number(raw);
-                                                cell = Number.isFinite(n)
-                                                    ? n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-                                                    : String(raw);
-                                            } else {
-                                                cell = String(raw);
-                                            }
-                                            return (
-                                                <td key={j} className="px-4 py-3.5 whitespace-nowrap text-sm text-white font-medium">
-                                                    {cell}
-                                                </td>
-                                            );
-                                        })}
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
                     </div>
                 </div>
-            ))}
+            </div>
 
-            {filteredAndSortedData.length === 0 ? (
-                <p className="text-center py-8 text-gray-500">No records match the current criteria.</p>
-            ) : null}
+            {/* Results Table — single scrollport so header + rows stay aligned */}
+            {selectedCollection && (
+                <div className="mt-4 flex flex-col min-h-0 flex-1 border border-white/10 rounded-xl overflow-hidden bg-black/30">
+                    <div className="shrink-0 px-4 py-3 border-b border-white/10 bg-slate-950/90">
+                        <h3 className="text-lg sm:text-xl font-bold text-white">
+                            Report Results: {getCollectionLabel(selectedCollection)}{' '}
+                            <span className="text-cyan-400">({filteredAndSortedData.length} Records)</span>
+                        </h3>
+                    </div>
+
+                    {filteredAndSortedData.length === 0 ? (
+                        <p className="text-center py-12 text-gray-500 text-sm">No records match the current criteria.</p>
+                    ) : (
+                        <div className="flex-1 min-h-[240px] max-h-[min(60vh,560px)] overflow-auto custom-scrollbar">
+                            {Object.entries(groupedData).map(([groupKey, data]) => (
+                                <div key={groupKey} className="min-w-0">
+                                    <div className="sticky top-0 z-20 px-4 py-2 text-[11px] font-black uppercase tracking-widest text-cyan-300 bg-slate-900 border-b border-cyan-500/20">
+                                        {groupByKey
+                                            ? `${filterableColumns.find(col => col.key === groupByKey)?.label || groupByKey}: ${groupKey} (${data.length})`
+                                            : `All Records (${data.length})`}
+                                    </div>
+                                    <table className="w-max min-w-full border-collapse text-left border border-white/15">
+                                        <thead className="sticky top-9 z-10">
+                                            <tr className="bg-slate-900/95">
+                                                {displayColumns.map((col, i) => (
+                                                    <th
+                                                        key={col.key || i}
+                                                        className="px-3 py-2.5 text-[9px] font-black uppercase tracking-widest text-cyan-300/90 border-b border-white/10 border-r border-white/5 whitespace-nowrap bg-slate-900/95"
+                                                        style={{ minWidth: col.type === 'number' ? 100 : 130, maxWidth: 260 }}
+                                                    >
+                                                        {col.label}
+                                                    </th>
+                                                ))}
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {data.map((record) => (
+                                                <tr key={record.id} className="border-b border-white/5 hover:bg-cyan-500/10 transition-colors">
+                                                    {displayColumns.map((col, j) => (
+                                                        <td
+                                                            key={col.key || j}
+                                                            className="px-3 py-2.5 text-[11px] text-gray-200 border-r border-white/5"
+                                                            style={{ minWidth: col.type === 'number' ? 100 : 130, maxWidth: 260 }}
+                                                        >
+                                                            <div className="truncate" title={String(record[col.key] ?? '')}>
+                                                                {Array.isArray(record[col.key])
+                                                                    ? record[col.key].slice(0, 2).map((entry, idx) => (
+                                                                        <span key={idx} className="bg-gray-700/50 text-gray-300 rounded-full px-2 py-0.5 text-[10px] mr-1 inline-block">
+                                                                            {typeof entry === 'object' ? Object.values(entry).join(' / ') : String(entry)}
+                                                                        </span>
+                                                                    ))
+                                                                    : (record[col.key] !== undefined && record[col.key] !== null && record[col.key] !== ''
+                                                                        ? String(record[col.key])
+                                                                        : <span className="text-white/20 italic">—</span>)}
+                                                            </div>
+                                                        </td>
+                                                    ))}
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            )}
         </ContainerCard>
     );
 };
 
 
-/* --- HARDENED MULTIENTRYFIELD (add-modal sub-forms) --- */
+/* --- FULLY MODIFIED MULTIENTRYFIELD COMPONENT --- */
 const MultiEntryField = ({ label, entries, fieldConfig, onChange, glassClass }) => {
-    const safeConfig = Array.isArray(fieldConfig) ? fieldConfig.filter(Boolean) : [];
     const safeEntries = Array.isArray(entries) ? entries : [];
-    const emptyRow = () => safeConfig.reduce((acc, f) => {
-        if (f && f.key) acc[f.key] = '';
-        return acc;
-    }, {});
-
-    const [newEntry, setNewEntry] = React.useState(() => emptyRow());
-
-    React.useEffect(() => {
-        setNewEntry(emptyRow());
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [label]);
+    const [newEntry, setNewEntry] = React.useState(
+        fieldConfig?.reduce((acc, field) => ({ ...acc, [field.key]: '' }), {}) || {}
+    );
 
     const handleAdd = () => {
-        if (!safeConfig.length) {
-            alert('No fields configured for this sub-form.');
-            return;
-        }
-        const isComplete = safeConfig.every((f) => f.isReadOnly || String(newEntry[f.key] ?? '').trim());
+        // Validation: ensures all fields except readOnly ones are filled
+        const isComplete = fieldConfig.every(field => field.isReadOnly || newEntry[field.key]?.toString().trim());
+        
         if (isComplete) {
-            onChange([...(safeEntries || []), { ...newEntry }]);
-            setNewEntry(emptyRow());
+            onChange([...safeEntries, newEntry]);
+            setNewEntry(fieldConfig.reduce((acc, field) => ({ ...acc, [field.key]: '' }), {})); 
         } else {
-            alert('Please complete the entry form below.');
+            alert(`Please complete the entry form below.`);
         }
     };
 
     return (
-        <div className={`p-6 sm:p-8 rounded-[2rem] space-y-6 border border-white/10 ${glassClass || ''} mb-8 bg-black/40 shadow-2xl scroll-mt-20`}>
+        <div className={`p-8 rounded-[2rem] space-y-6 border border-white/10 ${glassClass} mb-8 bg-black/40 shadow-2xl scroll-mt-20`}>
             <label className="block text-[14px] font-black text-cyan-400 border-b border-cyan-500/30 pb-4 uppercase italic tracking-widest">
-                {label || 'Entries'}
+                {label}
             </label>
+
+            {/* List Table */}
             <div className="space-y-3 max-h-80 overflow-y-auto pr-2 custom-scrollbar">
                 {safeEntries.length > 0 ? (
                     safeEntries.map((entry, index) => (
                         <div key={index} className="flex justify-between items-start p-5 rounded-2xl bg-white/5 border border-white/10 hover:bg-cyan-900/20 transition-all">
                             <div className="grid grid-cols-2 lg:grid-cols-4 gap-6 w-full text-[11px]">
-                                {safeConfig.map((f) => (
+                                {fieldConfig.map(f => (
                                     <div key={f.key} className="flex flex-col">
                                         <span className="text-cyan-500 font-black uppercase text-[9px] mb-1">{f.label}:</span>
                                         <span className="text-white font-medium break-words">
-                                            {entry?.[f.key] ?? '—'}
+                                            {f.key === 'digital_stamp' ? (
+                                                <code className="bg-cyan-500/10 px-1 rounded text-[8px] tracking-tighter">{entry[f.key]}</code>
+                                            ) : entry[f.key]}
                                         </span>
                                     </div>
                                 ))}
                             </div>
-                            <button
-                                type="button"
-                                onClick={() => onChange(safeEntries.filter((_, i) => i !== index))}
-                                className="ml-4 text-red-500 hover:text-red-400 p-2"
-                            >
+                            <button type="button" onClick={() => onChange(safeEntries.filter((_, i) => i !== index))} className="ml-4 text-red-500 hover:text-red-400 p-2 transition-transform active:scale-90">
                                 <Icons.Trash2 size={20} />
                             </button>
                         </div>
                     ))
                 ) : (
-                    <p className="text-[10px] text-white/20 italic p-6 text-center border-2 border-dashed border-white/5 rounded-2xl uppercase tracking-widest font-black">
-                        Awaiting entry input...
-                    </p>
+                    <p className="text-[10px] text-white/20 italic p-6 text-center border-2 border-dashed border-white/5 rounded-2xl uppercase tracking-widest font-black">Awaiting entry input...</p>
                 )}
             </div>
-            <div className="pt-8 border-t border-white/10 space-y-6">
+
+            {/* SPACIOUS Input Form */}
+            <div className="pt-10 border-t border-white/10 space-y-8">
                 <p className="text-[10px] font-black text-cyan-400/50 uppercase tracking-[0.3em]">Data Entry Interface:</p>
-                <div className="grid grid-cols-1 gap-y-6 bg-black/60 p-6 sm:p-8 rounded-[2rem] border border-white/5">
-                    {safeConfig.map((f) => {
-                        if (!f || !f.key) return null;
-                        const opts = Array.isArray(f.options) ? f.options : [];
-                        const isSelect = f.type === 'select' || opts.length > 0;
+                <div className="grid grid-cols-1 gap-y-8 bg-black/60 p-8 rounded-[2rem] border border-white/5 shadow-inner shadow-black">
+                    {fieldConfig.map(field => {
+                        const isSelect = field.type === 'select' || (field.options && field.options.length > 0);
+                        
                         return (
-                            <div key={f.key} className="flex flex-col space-y-2">
-                                <label className="text-[11px] font-black text-gray-400 uppercase ml-1 tracking-widest">
-                                    {f.label || f.key}
+                            <div key={field.key} className="flex flex-col space-y-3">
+                                <label className="text-[11px] font-black text-gray-400 uppercase ml-2 tracking-widest">
+                                    {field.label}
                                 </label>
                                 {isSelect ? (
                                     <select
-                                        value={newEntry[f.key] || ''}
-                                        onChange={(e) => setNewEntry((prev) => ({ ...prev, [f.key]: e.target.value }))}
-                                        className="w-full p-4 rounded-2xl bg-black border border-white/10 text-white text-sm focus:border-cyan-500 outline-none"
+                                        value={newEntry[field.key] || ''}
+                                        onChange={(e) => setNewEntry(prev => ({ ...prev, [field.key]: e.target.value }))}
+                                        className="w-full p-5 rounded-2xl bg-black border border-white/10 text-white text-sm focus:border-cyan-500 outline-none appearance-none"
                                     >
-                                        <option value="">Select {f.label || f.key}...</option>
-                                        {opts.map((opt) => {
-                                            const val = typeof opt === 'object' ? (opt.value ?? opt.label ?? '') : opt;
-                                            const lab = typeof opt === 'object' ? (opt.label ?? opt.value ?? '') : opt;
-                                            return <option key={String(val)} value={String(val)}>{String(lab)}</option>;
-                                        })}
+                                        <option value="">Select {field.label}...</option>
+                                        {field.options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
                                     </select>
                                 ) : (
                                     <input
-                                        type={f.type || 'text'}
-                                        autoComplete="off"
-                                        readOnly={!!f.isReadOnly}
-                                        value={newEntry[f.key] || ''}
-                                        onChange={(e) => setNewEntry((prev) => ({ ...prev, [f.key]: e.target.value }))}
-                                        className={`w-full p-4 rounded-2xl bg-black border border-white/10 text-white text-sm focus:border-cyan-500 ${f.isReadOnly ? 'opacity-40 cursor-not-allowed' : ''}`}
-                                        placeholder={f.isReadOnly ? 'Generated' : `Provide ${f.label || f.key}...`}
+                                        type={field.type || 'text'}
+                                        autoComplete="off" 
+                                        readOnly={field.isReadOnly}
+                                        value={newEntry[field.key] || ''}
+                                        onChange={(e) => {
+                                            const val = e.target.value;
+                                            setNewEntry(prev => {
+                                                const updated = { ...prev, [field.key]: val };
+                                                // AUTO-STAMP Generation Logic
+                                                if (field.key === 'member_name' && val.length > 1) {
+                                                    updated.digital_stamp = `AUTH-${val.toUpperCase().substring(0,3)}-${Date.now().toString().slice(-4)}`;
+                                                }
+                                                return updated;
+                                            });
+                                        }}
+                                        className={`w-full p-5 rounded-2xl bg-black border border-white/10 text-white text-sm focus:border-cyan-500 transition-all ${field.isReadOnly ? 'opacity-40 cursor-not-allowed border-dashed' : ''}`}
+                                        placeholder={field.isReadOnly ? 'Securely generated' : `Provide ${field.label}...`}
                                     />
                                 )}
                             </div>
@@ -2872,105 +2410,87 @@ const MultiEntryField = ({ label, entries, fieldConfig, onChange, glassClass }) 
                 <button
                     type="button"
                     onClick={handleAdd}
-                    className="w-full py-4 rounded-2xl bg-cyan-600/90 hover:bg-cyan-500 text-white text-xs font-black uppercase tracking-widest"
+                    className="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-black py-6 rounded-3xl text-[12px] uppercase tracking-widest transition-all shadow-2xl shadow-cyan-900/60 active:scale-95"
                 >
-                    + Add Entry
+                    + Append New Record To List
                 </button>
             </div>
         </div>
     );
 };
 
-/** Viewport-fixed glass modal — always centered on screen, not next to table rows */
-/** Viewport-fixed glass modal — portaled to document.body so it is never stuck mid-table */
-/** Content-sized glass modal — page stays visible behind; does not stretch full viewport */
-/** Always viewport-centered via portal to document.body — never next to table/button */
+// New Component: ContainerCard
+const ContainerCard = ({ title, Icon, children, glassClass, className = '' }) => {
+    const CardIcon = Icon ? getIcon(Icon) : Icons.File;
+    return (
+        <div className={`p-5 rounded-xl ${glassClass} shadow-xl backdrop-blur-sm ${className}`}>
+            <h2 className="flex items-center text-xl font-bold text-cyan-400 mb-4 border-b border-cyan-400/50 pb-2">
+                <CardIcon className="w-6 h-6 mr-2" />
+                {title}
+            </h2>
+            <div className="text-white">
+                {children}
+            </div>
+        </div>
+    );
+};
 const Modal = ({ isOpen, onClose, title, children, glassClass = '', footer }) => {
     if (!isOpen) return null;
 
-    const panel = (
+    return (
         <div
-            className={`w-full max-w-lg sm:max-w-xl md:max-w-2xl max-h-[min(88dvh,720px)] flex flex-col
-                        overflow-hidden rounded-2xl border border-white/25 bg-slate-900/95 backdrop-blur-xl
-                        text-white shadow-[0_20px_60px_rgba(0,0,0,0.55)] ring-1 ring-cyan-400/20
-                        ${glassClass || ''}`}
-            role="dialog"
-            aria-modal="true"
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => e.stopPropagation()}
-        >
-            <div className="h-1 w-full shrink-0 bg-gradient-to-r from-cyan-500 via-sky-400 to-violet-500" />
-            <div className="shrink-0 flex items-center justify-between gap-3 px-4 py-3 border-b border-white/15 bg-white/5">
-                <h3 className="text-sm sm:text-base font-black uppercase tracking-wide text-cyan-300 truncate">{title}</h3>
-                <button type="button" onClick={onClose}
-                    className="p-2 rounded-xl border border-white/20 bg-white/5 min-h-[40px] min-w-[40px]
-                               flex items-center justify-center text-gray-300 hover:text-red-300"
-                    aria-label="Close">
-                    <Icons.X className="w-5 h-5" />
-                </button>
-            </div>
-            <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-4 py-4 overscroll-contain custom-scrollbar">
-                {children}
-            </div>
-            <div className="shrink-0 flex flex-wrap justify-end gap-2 px-4 py-3 border-t border-white/15 bg-slate-900/95
-                            pb-[max(0.5rem,env(safe-area-inset-bottom))]">
-                {footer}
-                <button type="button" onClick={onClose}
-                    className="px-4 py-2.5 rounded-xl text-xs font-bold uppercase border border-white/20
-                               bg-white/5 text-gray-200 min-h-[40px]">
-                    Cancel
-                </button>
-            </div>
-        </div>
-    );
-
-    const shell = (
-        <div
-            style={{
-                position: 'fixed',
-                top: 0,
-                left: 0,
-                right: 0,
-                bottom: 0,
-                zIndex: 2147483000,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                padding: '12px',
-                boxSizing: 'border-box',
-            }}
+            className="fixed inset-0 z-[9999] flex items-end sm:items-center justify-center
+                       p-0 sm:p-5 bg-slate-950/50 backdrop-blur-md"
             role="presentation"
         >
             <div
-                style={{
-                    position: 'absolute',
-                    inset: 0,
-                    background: 'rgba(2, 6, 23, 0.35)',
-                    backdropFilter: 'blur(2px)',
-                    WebkitBackdropFilter: 'blur(2px)',
-                }}
-                aria-hidden="true"
-            />
-            <div style={{ position: 'relative', zIndex: 1, width: '100%', maxWidth: '42rem', display: 'flex', justifyContent: 'center' }}>
-                {panel}
+                className={`relative z-[10000] w-full sm:max-w-2xl max-h-[92dvh] flex flex-col
+                            overflow-hidden rounded-t-2xl sm:rounded-2xl
+                            border-2 border-white/25 bg-slate-900/95 backdrop-blur-xl text-white
+                            shadow-[0_25px_80px_rgba(0,0,0,0.65)] ring-1 ring-cyan-400/25
+                            ${glassClass || ''}`}
+                role="dialog"
+                aria-modal="true"
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => e.stopPropagation()}
+            >
+                <div className="h-1 w-full shrink-0 bg-gradient-to-r from-cyan-500 via-sky-400 to-violet-500" />
+
+                <div className="shrink-0 flex items-center justify-between gap-3 px-4 py-3 border-b border-white/15 bg-white/5">
+                    <h3 className="text-sm sm:text-lg font-black uppercase tracking-wide text-cyan-300 truncate">
+                        {title}
+                    </h3>
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        className="p-2.5 rounded-xl border border-white/20 bg-white/5 min-h-[44px] min-w-[44px]
+                                   flex items-center justify-center text-gray-300 hover:text-red-300"
+                        aria-label="Close"
+                    >
+                        <Icons.X className="w-5 h-5" />
+                    </button>
+                </div>
+
+                <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-4 py-4 overscroll-contain">
+                    {children}
+                </div>
+
+                <div className="shrink-0 flex flex-wrap justify-end gap-2 px-4 py-3 border-t border-white/15 bg-slate-900/95
+                                pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+                    {footer}
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        className="px-4 py-3 rounded-xl text-xs font-bold uppercase border border-white/20
+                                   bg-white/5 text-gray-200 min-h-[44px] flex-1 sm:flex-none"
+                    >
+                        Cancel
+                    </button>
+                </div>
             </div>
         </div>
     );
-
-    const portalFn = (typeof createPortal === 'function')
-        ? createPortal
-        : (typeof ReactDOM !== 'undefined' && ReactDOM.createPortal ? ReactDOM.createPortal : null);
-
-    if (portalFn && typeof document !== 'undefined' && document.body) {
-        return portalFn(shell, document.body);
-    }
-    return shell;
 };
-
-
-
-
-
 
 
 // New Component: Export Helpers
@@ -3152,48 +2672,8 @@ const convertToDOCX = async (data, columns, filename) => {
 
 const ExportButton = ({ data, columns, filename, chartRef, isFinancial = false }) => {
     const [isOpen, setIsOpen] = useState(false);
-    const btnRef = useRef(null);
-    const [menuBox, setMenuBox] = useState(null);
-
     const getFilename = () => String(filename || 'Unity_Export').replace(/\s+/g, '_');
-    const visibleCols = () => (columns || []).filter((c) => c && !c.isHidden && c.type !== 'array');
-
-    const placeExportMenu = React.useCallback(() => {
-        const el = btnRef.current;
-        if (!el) return;
-        const r = el.getBoundingClientRect();
-        const width = 256;
-        let left = r.right - width;
-        if (left < 8) left = 8;
-        if (left + width > window.innerWidth - 8) left = Math.max(8, window.innerWidth - width - 8);
-        const gap = 8;
-        const spaceBelow = window.innerHeight - r.bottom - gap;
-        const openUp = spaceBelow < 220 && r.top > spaceBelow;
-        const maxHeight = Math.min(360, openUp ? r.top - gap : Math.max(spaceBelow, 180));
-        const top = openUp ? Math.max(8, r.top - gap - maxHeight) : r.bottom + gap;
-        setMenuBox({ top, left, width, maxHeight });
-    }, []);
-
-    useEffect(() => {
-        if (!isOpen) return undefined;
-        placeExportMenu();
-        const onDoc = (e) => {
-            if (btnRef.current && btnRef.current.contains(e.target)) return;
-            if (e.target && e.target.closest && e.target.closest('[data-uu-export-menu]')) return;
-            setIsOpen(false);
-        };
-        const onRepo = () => placeExportMenu();
-        document.addEventListener('mousedown', onDoc);
-        document.addEventListener('touchstart', onDoc);
-        window.addEventListener('resize', onRepo);
-        window.addEventListener('scroll', onRepo, true);
-        return () => {
-            document.removeEventListener('mousedown', onDoc);
-            document.removeEventListener('touchstart', onDoc);
-            window.removeEventListener('resize', onRepo);
-            window.removeEventListener('scroll', onRepo, true);
-        };
-    }, [isOpen, placeExportMenu]);
+    const visibleCols = () => (columns || []).filter(c => c && !c.isHidden && c.type !== 'array');
 
     const handleAction = async (type) => {
         setIsOpen(false);
@@ -3208,25 +2688,17 @@ const ExportButton = ({ data, columns, filename, chartRef, isFinancial = false }
                 return;
             }
             if (type === 'XLSX') {
-                if (typeof exportTableWorkbook === 'function') {
-                    await exportTableWorkbook(rows, cols.length ? cols : (columns || []), filename || fname, {
-                        sheetName: String(filename || 'Data').slice(0, 31),
-                    });
-                } else if (typeof generateRobustWorkbook === 'function' && isFinancial) {
-                    await generateRobustWorkbook(rows, filename || fname);
-                } else {
-                    alert('Excel export is not available in this module.');
-                }
+                await exportTableWorkbook(rows, cols.length ? cols : (columns || []), filename || fname, {
+                    sheetName: String(filename || 'Data').slice(0, 31)
+                });
                 return;
             }
             if (type === 'PDF') {
-                if (typeof convertToPDF === 'function') convertToPDF(rows, cols, filename || fname);
-                else alert('PDF export is not available.');
+                convertToPDF(rows, cols, filename || fname);
                 return;
             }
             if (type === 'DOCX') {
-                if (typeof convertToDOCX === 'function') await convertToDOCX(rows, cols, filename || fname);
-                else alert('Word export is not available.');
+                await convertToDOCX(rows, cols, filename || fname);
                 return;
             }
             if (type === 'CSV') {
@@ -3236,10 +2708,10 @@ const ExportButton = ({ data, columns, filename, chartRef, isFinancial = false }
                     String(filename || 'Export').toUpperCase() + ' (Official Record)',
                     `Generated ${new Date().toLocaleString()} · ${rows.length} records`,
                     '',
-                    cols.map((c) => esc(c.label || c.key)).join(','),
-                    ...rows.map((r) => cols.map((c) => esc(r[c.key])).join(',')),
+                    cols.map(c => esc(c.label || c.key)).join(','),
+                    ...rows.map(r => cols.map(c => esc(r[c.key])).join(',')),
                     '',
-                    'Unity University · Official system export · Confidential',
+                    'Unity University · Official system export · Confidential'
                 ];
                 saveAs(new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8' }), `${fname}_${new Date().toISOString().slice(0, 10)}.csv`);
             }
@@ -3249,60 +2721,26 @@ const ExportButton = ({ data, columns, filename, chartRef, isFinancial = false }
         }
     };
 
-    const menuItems = (
-        <div className="p-2 grid grid-cols-1 gap-1">
-            <button type="button" onClick={() => handleAction('XLSX')} className="w-full text-left px-4 py-3 text-[11px] font-bold text-emerald-400 hover:bg-white/5 transition flex items-center gap-3 rounded-xl"><Icons.FileSpreadsheet size={16}/> Excel Spreadsheet</button>
-            <button type="button" onClick={() => handleAction('DOCX')} className="w-full text-left px-4 py-3 text-[11px] font-bold text-blue-400 hover:bg-white/5 transition flex items-center gap-3 rounded-xl"><Icons.FileBox size={16}/> Word Document</button>
-            <button type="button" onClick={() => handleAction('PDF')} className="w-full text-left px-4 py-3 text-[11px] font-bold text-rose-400 hover:bg-white/5 transition flex items-center gap-3 rounded-xl"><Icons.FileText size={16}/> PDF Document</button>
-            <button type="button" onClick={() => handleAction('CSV')} className="w-full text-left px-4 py-3 text-[11px] font-bold text-gray-400 hover:bg-white/5 transition flex items-center gap-3 rounded-xl"><Icons.Filter size={16}/> CSV (Raw Data)</button>
-            <hr className="border-white/5 mx-2 my-1" />
-            <button type="button" onClick={() => handleAction('PNG')} className="w-full text-left px-4 py-3 text-[11px] font-bold text-cyan-400 hover:bg-white/5 transition flex items-center gap-3 rounded-xl"><Icons.Camera size={16}/> Image Capture (PNG)</button>
-        </div>
-    );
-
     return (
-        <div className="relative inline-block text-left shrink-0">
-            <button
-                ref={btnRef}
-                type="button"
-                onClick={() => setIsOpen((v) => !v)}
-                className="bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-2.5 px-6 rounded-xl flex items-center gap-2 shadow-lg transition-all active:scale-95 text-[11px] uppercase tracking-widest border border-white/20"
-            >
+        <div className="relative inline-block text-left z-30">
+            <button type="button" onClick={() => setIsOpen(!isOpen)} className="bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-2.5 px-6 rounded-xl flex items-center gap-2 shadow-lg transition-all active:scale-95 text-[11px] uppercase tracking-widest border border-white/20">
                 <Icons.Download size={16}/> Export Options
             </button>
-            {(() => {
-                if (!isOpen || !menuBox) return null;
-                const menu = (
-                    <div
-                        data-uu-export-menu="1"
-                        className="rounded-2xl bg-slate-900 border border-white/15 shadow-2xl overflow-hidden backdrop-blur-xl"
-                        style={{
-                            position: 'fixed',
-                            top: menuBox.top,
-                            left: menuBox.left,
-                            width: menuBox.width,
-                            maxHeight: menuBox.maxHeight,
-                            zIndex: 2147483646,
-                            overflowY: 'auto',
-                        }}
-                        onMouseDown={(e) => e.stopPropagation()}
-                    >
-                        {menuItems}
+            {isOpen && (
+                <div className="absolute right-0 top-full mt-2 w-64 rounded-2xl bg-slate-900 border border-white/10 shadow-2xl overflow-hidden backdrop-blur-xl z-[10001]">
+                    <div className="p-2 grid grid-cols-1 gap-1">
+                        <button type="button" onClick={() => handleAction('XLSX')} className="w-full text-left px-4 py-3 text-[11px] font-bold text-emerald-400 hover:bg-white/5 transition flex items-center gap-3 rounded-xl"><Icons.FileSpreadsheet size={16}/> Excel Spreadsheet</button>
+                        <button type="button" onClick={() => handleAction('DOCX')} className="w-full text-left px-4 py-3 text-[11px] font-bold text-blue-400 hover:bg-white/5 transition flex items-center gap-3 rounded-xl"><Icons.FileBox size={16}/> Word Document</button>
+                        <button type="button" onClick={() => handleAction('PDF')} className="w-full text-left px-4 py-3 text-[11px] font-bold text-rose-400 hover:bg-white/5 transition flex items-center gap-3 rounded-xl"><Icons.FileText size={16}/> PDF Document</button>
+                        <button type="button" onClick={() => handleAction('CSV')} className="w-full text-left px-4 py-3 text-[11px] font-bold text-gray-400 hover:bg-white/5 transition flex items-center gap-3 rounded-xl"><Icons.Filter size={16}/> CSV (Official)</button>
+                        <hr className="border-white/5 mx-2 my-1" />
+                        <button type="button" onClick={() => handleAction('PNG')} className="w-full text-left px-4 py-3 text-[11px] font-bold text-cyan-400 hover:bg-white/5 transition flex items-center gap-3 rounded-xl"><Icons.Camera size={16}/> Image Capture (PNG)</button>
                     </div>
-                );
-                const portalFn = (typeof createPortal === 'function')
-                    ? createPortal
-                    : (typeof ReactDOM !== 'undefined' && ReactDOM.createPortal ? ReactDOM.createPortal : null);
-                if (portalFn && typeof document !== 'undefined' && document.body) {
-                    return portalFn(menu, document.body);
-                }
-                return menu;
-            })()}
+                </div>
+            )}
         </div>
     );
 };
-
-
 
 const DataTable = ({ collectionName, data, columns, glassClass, title, getCollection }) => {
     const { deleteRecord, updateRecord, postMaterialToFinance, postAllMaterialToFinance } = useData();
@@ -3495,7 +2933,7 @@ const DataTable = ({ collectionName, data, columns, glassClass, title, getCollec
 
                 <div className="flex flex-col xl:flex-row flex-wrap gap-2 items-stretch xl:items-center justify-between">
                     <div className="flex flex-wrap gap-2 items-center flex-1 min-w-0">
-                        <div className="relative min-w-[220px] flex-1 max-w-sm">
+                        <div className="relative min-w-[160px] flex-1 max-w-sm">
                             <Icons.Search className="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                             <input
                                 type="text"
@@ -3807,27 +3245,9 @@ const COLUMN_CONFIG = {
    8. NOTIFICATION & UTILITY BAR (Standard)
    ---------------------------------------------------------------------- */
 
-/** Relative time for notification rows (e.g. "1 min ago"). */
-const formatRelativeTime = (isoOrDate) => {
-    if (!isoOrDate) return '';
-    const then = new Date(isoOrDate);
-    if (isNaN(then.getTime())) return String(isoOrDate).slice(0, 16);
-    const sec = Math.round((Date.now() - then.getTime()) / 1000);
-    if (sec < 10) return 'just now';
-    if (sec < 60) return sec + ' sec ago';
-    const min = Math.floor(sec / 60);
-    if (min < 60) return min + (min === 1 ? ' min ago' : ' mins ago');
-    const hr = Math.floor(min / 60);
-    if (hr < 24) return hr + (hr === 1 ? ' hour ago' : ' hours ago');
-    const day = Math.floor(hr / 24);
-    if (day < 30) return day + (day === 1 ? ' day ago' : ' days ago');
-    return then.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
-};
-
-const NotificationBar = ({ glassClass, currentUser, onClose, onCountChange }) => {
-    const { getCollection, notificationTrigger, leaveUpdateTrigger, roleUpdateTrigger, allData } = useData();
-    const [activeTab, setActiveTab] = useState('all');
-    const [filter, setFilter] = useState('all'); // all | alert | warning | info
+const NotificationBar = ({ glassClass, currentUser, onClose }) => {
+    const { getCollection, notificationTrigger } = useData();
+    const [activeTab, setActiveTab] = useState('notifications');
 
     const today = useMemo(() => {
         const d = new Date();
@@ -3835,330 +3255,996 @@ const NotificationBar = ({ glassClass, currentUser, onClose, onCountChange }) =>
         return d;
     }, []);
 
-    const daysUntil = (dateStr) => {
-        if (!dateStr) return null;
-        const t = new Date(String(dateStr).slice(0, 10));
-        if (isNaN(t.getTime())) return null;
-        t.setHours(0, 0, 0, 0);
-        return Math.round((t - today) / 86400000);
+    /** Next 3 holidays from today, only within the current calendar year */
+    const upcomingHolidays = useMemo(() => {
+        const year = today.getFullYear();
+        const yearEnd = new Date(year, 11, 31);
+        yearEnd.setHours(0, 0, 0, 0);
+
+        // Fixed + major Ethiopian / public holidays (month is 0-based in Date)
+        const catalog = [
+            { name: 'Ethiopian Christmas (Genna)', m: 1, d: 7 },
+            { name: 'Timkat (Epiphany)', m: 1, d: 19 },
+            { name: 'Adwa Victory Day', m: 3, d: 2 },
+            { name: 'International Labour Day', m: 5, d: 1 },
+            { name: 'Patriots Victory Day', m: 5, d: 5 },
+            { name: 'Downfall of Derg', m: 5, d: 28 },
+            { name: 'Ethiopian New Year (Enkutatash)', m: 9, d: 11 },
+            { name: 'Meskel (Finding of the True Cross)', m: 9, d: 27 },
+            { name: 'Christmas (Gregorian)', m: 12, d: 25 },
+        ];
+
+        const list = catalog
+            .map(h => {
+                const date = new Date(year, h.m - 1, h.d);
+                date.setHours(0, 0, 0, 0);
+                return { name: h.name, date, iso: date.toISOString().slice(0, 10) };
+            })
+            .filter(h => h.date >= today && h.date <= yearEnd)
+            .sort((a, b) => a.date - b.date)
+            .slice(0, 3);
+
+        return list;
+    }, [today]);
+
+    const items = getCollection('MAT_ITEM_CRUD') || [];
+    const grv = getCollection('MAT_GRV_CRUD') || [];
+    const giv = getCollection('MAT_GIV_CRUD') || [];
+    const robbing = getCollection('MAT_ROBBING_CRUD') || [];
+    const localPO = getCollection('MAT_PURCHASE_LOCAL_CRUD') || [];
+    const foreignPO = getCollection('MAT_PURCHASE_FOREIGN_CRUD') || [];
+
+    const n = (v) => Number(v) || 0;
+    const withinDays = (dateStr, days) => {
+        if (!dateStr) return false;
+        const d = new Date(dateStr);
+        if (isNaN(d.getTime())) return false;
+        d.setHours(0, 0, 0, 0);
+        const diff = (d.getTime() - today.getTime()) / (1000 * 60 * 60 * 24);
+        return diff >= 0 && diff <= days;
+    };
+    const isPast = (dateStr) => {
+        if (!dateStr) return false;
+        const d = new Date(dateStr);
+        if (isNaN(d.getTime())) return false;
+        d.setHours(0, 0, 0, 0);
+        return d.getTime() < today.getTime();
     };
 
     const notifications = useMemo(() => {
         const list = [];
-        const push = (sev, cat, message, meta = {}) => {
+
+        // —— UPCOMING HOLIDAYS (next 3 in current year only) ——
+        list.push({ type: 'Title', message: `UPCOMING HOLIDAYS · ${today.getFullYear()}` });
+        if (upcomingHolidays.length === 0) {
             list.push({
-                id: `${cat}-${list.length}-${String(message).slice(0, 24)}`,
-                severity: sev, // alert | warning | info | success
-                category: cat,
-                message,
-                time: meta.time || new Date().toISOString(),
-                ...meta
+                type: 'Info',
+                message: `No remaining holidays in ${today.getFullYear()} after today.`,
+                color: 'bg-gray-800/30',
             });
-        };
-
-        // ——— Collections ———
-        const txs = getCollection('transactions') || [];
-        const journals = getCollection('dayJournals') || [];
-        const coa = getCollection('chartsOfAccounts') || getCollection('FIN_COA_CRUD') || [];
-        const partners = getCollection('FIN_PARTNERS_CRUD') || [];
-        const process = getCollection('PAY_PROCESS_CRUD') || [];
-        const master = getCollection('PAY_MASTER_CRUD') || [];
-        const ot = getCollection('PAY_OVERTIME_CRUD') || [];
-        const ad = getCollection('PAY_AD_CRUD') || [];
-        const recon = getCollection('PAY_RECON_CRUD') || [];
-        const employees = getCollection('HR_EMPLOYEE_CRUD') || [];
-        const leave = getCollection('HR_LEAVE_CRUD') || [];
-        const vacancies = getCollection('HR_VACANCY_CRUD') || [];
-        const recruitment = getCollection('HR_RECRUITMENT_CRUD') || [];
-        const attrition = getCollection('HR_STAFF_ATTRITION_CRUD') || [];
-        const retirement = getCollection('RETIREMENT_CRUD') || [];
-        const resignation = getCollection('RESIGNATION_CRUD') || [];
-        const training = getCollection('HR_TRAINING_CRUD') || [];
-        const appraisal = getCollection('HR_APPRAISAL_CRUD') || [];
-        const insurance = getCollection('HR_INSURANCE_CRUD') || [];
-        const penalties = getCollection('HR_PENALTY_CRUD') || [];
-        const awards = getCollection('HR_AWARD_CRUD') || getCollection('HR_AWARD_CRUD_HR') || [];
-        const depts = getCollection('DEPARTMENTS_CRUD') || [];
-        const hiring = getCollection('DEPARTMENTS_HIRING_REQUESTS_CRUD') || [];
-        const roles = getCollection('ROLE_CRUD') || [];
-
-        // ——— FINANCE / BOOKS ———
-        let tb = [];
-        try {
-            if (typeof calculateTrialBalance === 'function') {
-                tb = calculateTrialBalance(txs, coa) || [];
-            }
-        } catch (e) { /* ignore */ }
-        const totalD = tb.reduce((s, r) => s + Number(r.debit || 0), 0);
-        const totalC = tb.reduce((s, r) => s + Number(r.credit || 0), 0);
-        const gap = Math.abs(totalD - totalC);
-        if (gap > 0.05) {
-            push('alert', 'Finance', `Trial Balance unbalanced by ${gap.toLocaleString(undefined, { minimumFractionDigits: 2 })} ETB. Review journals and single transactions.`);
-        } else if (totalD > 0) {
-            push('success', 'Finance', `Books balanced · Σ Dr/Cr ${totalD.toLocaleString(undefined, { minimumFractionDigits: 2 })} ETB.`);
         } else {
-            push('info', 'Finance', 'No posted ledger activity yet. Record single transactions or journals.');
+            upcomingHolidays.forEach(h => {
+                const label = h.date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+                const days = Math.round((h.date.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+                list.push({
+                    type: 'Info',
+                    message: `📅 ${h.name} — ${label}${days === 0 ? ' · Today' : days === 1 ? ' · Tomorrow' : ` · in ${days} days`}`,
+                    color: 'bg-emerald-900/30',
+                });
+            });
         }
 
-        const draftJournals = journals.filter(j => !['posted', 'verified'].includes(String(j.status || '').toLowerCase()));
-        if (draftJournals.length) {
-            push('warning', 'Finance', `${draftJournals.length} day journal(s) not Posted/Verified.`);
+        // —— STOCK ALERTS ——
+        list.push({ type: 'Title', message: 'STOCK ALERTS' });
+        const oos = items.filter(i => n(i.quantity) <= 0);
+        const low = items.filter(i => {
+            const q = n(i.quantity);
+            const rl = n(i.reorder_level) || 15;
+            return q > 0 && q <= rl;
+        });
+        const reserved = items.filter(i => /reserved|robbing/i.test(String(i.status || '')));
+        const obsolete = items.filter(i => /obsolete|quarantine/i.test(String(i.status || '')));
+
+        if (oos.length) {
+            oos.slice(0, 8).forEach(i => {
+                list.push({
+                    type: 'Warning',
+                    message: `Out of stock: ${i.sku || i.name || 'Item'} · ${i.location || '—'}`,
+                    color: 'bg-rose-900/40',
+                });
+            });
+            if (oos.length > 8) list.push({ type: 'Info', message: `+${oos.length - 8} more out-of-stock SKUs`, color: 'bg-rose-900/20' });
+        } else {
+            list.push({ type: 'Info', message: 'No out-of-stock items.', color: 'bg-gray-800/30' });
         }
-        const unbalancedTxn = txs.filter(t => {
-            const d = Number(t.debit || 0), c = Number(t.credit || 0);
-            const a = Number(t.amount || 0);
-            if (String(t.is_balanced || '').toLowerCase() === 'no') return true;
-            return false;
-        });
-        if (unbalancedTxn.length) {
-            push('alert', 'Finance', `${unbalancedTxn.length} transaction leg(s) marked not balanced.`);
+        if (low.length) {
+            low.slice(0, 6).forEach(i => {
+                list.push({
+                    type: 'Warning',
+                    message: `Low stock (≤ reorder): ${i.name || i.sku} · qty ${n(i.quantity)} · ${i.location || ''}`,
+                    color: 'bg-amber-900/40',
+                });
+            });
         }
-        const matLegs = txs.filter(t => String(t.module || '').toUpperCase() === 'MATERIAL' || String(t.source || '').startsWith('MAT_'));
-        if (matLegs.length) {
-            push('info', 'Finance', `${matLegs.length} material-linked ledger leg(s) in books (GRV/GIV/PO).`);
+        if (reserved.length) {
+            list.push({
+                type: 'Info',
+                message: `${reserved.length} item(s) reserved / held for robbing`,
+                color: 'bg-orange-900/30',
+            });
+        }
+        if (obsolete.length) {
+            list.push({
+                type: 'Info',
+                message: `${obsolete.length} item(s) marked obsolete or quarantine`,
+                color: 'bg-slate-800/40',
+            });
         }
 
-        // Partners
-        const inactiveP = partners.filter(p => String(p.status || '').toLowerCase() === 'inactive');
-        const highAR = partners.filter(p => Number(p.outstanding_balance || 0) > 100000 && String(p.partner_type || '').toLowerCase().includes('customer'));
-        const highAP = partners.filter(p => Number(p.outstanding_balance || 0) > 50000 && String(p.partner_type || '').toLowerCase().includes('supplier'));
-        if (highAR.length) push('warning', 'Partners', `${highAR.length} customer(s) with AR outstanding over 100,000 ETB.`);
-        if (highAP.length) push('warning', 'Partners', `${highAP.length} supplier(s) with AP outstanding over 50,000 ETB.`);
-        if (inactiveP.length) push('info', 'Partners', `${inactiveP.length} inactive partner record(s).`);
-        if (!partners.length) push('warning', 'Partners', 'Partner master is empty — single transactions cannot autofill entities.');
-
-        // ——— PAYROLL ———
-        const draftPay = process.filter(r => ['draft', 'pending'].includes(String(r.status || '').toLowerCase()));
-        const committedPay = process.filter(r => String(r.status || '').toLowerCase() === 'committed');
-        const postedPay = process.filter(r => String(r.status || '').toLowerCase().includes('post'));
-        if (draftPay.length) push('warning', 'Payroll', `${draftPay.length} payroll process row(s) still Draft/Pending — commit to post to finance.`);
-        if (committedPay.length && !postedPay.length) {
-            push('info', 'Payroll', `${committedPay.length} committed process row(s). Confirm ledger legs on Trial Balance.`);
+        // —— GOODS RECEIVING ——
+        list.push({ type: 'Title', message: 'GOODS RECEIVING (GRV)' });
+        const grvPending = grv.filter(g => /pending|partial|inspect/i.test(String(g.status || '')));
+        const grvRejected = grv.filter(g => /reject|return/i.test(String(g.status || '')));
+        if (grvPending.length) {
+            grvPending.slice(0, 6).forEach(g => {
+                list.push({
+                    type: 'Warning',
+                    message: `GRV ${g.grv_no || g.id}: ${g.item_name || 'item'} · ${g.status} · ${g.supplier || ''}`,
+                    color: 'bg-violet-900/35',
+                });
+            });
+        } else {
+            list.push({ type: 'Info', message: 'No GRVs pending inspection.', color: 'bg-gray-800/30' });
         }
-        const missingMaster = process.filter(r => {
-            const name = r.employee_name;
-            return name && !(master || []).some(m => m.employee_name === name);
-        });
-        if (missingMaster.length) push('alert', 'Payroll', `${missingMaster.length} process row(s) without salary master match.`);
-        if (ot.length) {
-            const openOt = ot.filter(r => !['approved', 'posted', 'closed'].includes(String(r.status || '').toLowerCase()));
-            if (openOt.length) push('info', 'Payroll', `${openOt.length} overtime record(s) awaiting approval/close.`);
+        if (grvRejected.length) {
+            list.push({
+                type: 'Warning',
+                message: `${grvRejected.length} GRV line(s) rejected / returned to vendor`,
+                color: 'bg-rose-900/30',
+            });
         }
-        if (ad.length) push('info', 'Payroll', `${ad.length} allowance/deduction master line(s) on file.`);
-        const openRecon = recon.filter(r => String(r.status || '').toLowerCase() !== 'closed' && Math.abs(Number(r.net_balance || 0)) > 0.05);
-        if (openRecon.length) push('warning', 'Payroll', `${openRecon.length} payroll reconciliation(s) with non-zero net balance.`);
-        if (!process.length) push('info', 'Payroll', 'No payroll process rows this period.');
 
-        // ——— HR: Leave ———
-        const pendingLeave = leave.filter(r => ['pending', 'submitted', 'requested'].includes(String(r.status || '').toLowerCase()));
-        if (pendingLeave.length) push('warning', 'HR Leave', `${pendingLeave.length} leave request(s) pending approval.`);
-        const onLeaveNow = leave.filter(r => {
-            const st = String(r.status || '').toLowerCase();
-            if (!(st.includes('approv') || st === 'active' || st === 'ongoing')) return false;
-            const a = daysUntil(r.start_date || r.from_date);
-            const b = daysUntil(r.end_date || r.to_date);
-            if (a == null || b == null) return false;
-            return a <= 0 && b >= 0;
+        // —— GOODS ISSUING ——
+        list.push({ type: 'Title', message: 'GOODS ISSUING (GIV)' });
+        const givPending = giv.filter(g => /pending|partial/i.test(String(g.status || '')));
+        if (givPending.length) {
+            givPending.slice(0, 6).forEach(g => {
+                list.push({
+                    type: 'Warning',
+                    message: `GIV ${g.giv_no || g.id}: ${g.item_name || 'item'} → ${g.department || 'dept'} · ${g.status}`,
+                    color: 'bg-sky-900/35',
+                });
+            });
+        } else {
+            list.push({ type: 'Info', message: 'No GIVs awaiting approval.', color: 'bg-gray-800/30' });
+        }
+
+        // —— PROCUREMENT ——
+        list.push({ type: 'Title', message: 'PROCUREMENT' });
+        const openLocal = localPO.filter(p => /order|transit|pending|partial|draft/i.test(String(p.status || '')));
+        const openForeign = foreignPO.filter(p => /order|transit|pending|partial|draft/i.test(String(p.status || '')));
+        const overdueLocal = localPO.filter(p => p.expected_date && isPast(p.expected_date) && !/received|closed|cancel/i.test(String(p.status || '')));
+        const arrivingSoon = foreignPO.filter(p => withinDays(p.arrival_date, 14) && !/received|closed|cancel/i.test(String(p.status || '')));
+
+        openLocal.slice(0, 5).forEach(p => {
+            list.push({
+                type: 'Info',
+                message: `LPO ${p.lpo_no || p.id}: ${p.item_name || ''} · ${p.status} · ETB ${n(p.total_value).toLocaleString()}`,
+                color: 'bg-emerald-900/30',
+            });
         });
-        if (onLeaveNow.length) push('info', 'HR Leave', `${onLeaveNow.length} staff currently on approved leave.`);
-        const leaveSoon = leave.filter(r => {
-            const d = daysUntil(r.start_date || r.from_date);
-            return d != null && d > 0 && d <= 7 && String(r.status || '').toLowerCase().includes('approv');
+        if (!openLocal.length) list.push({ type: 'Info', message: 'No open local POs.', color: 'bg-gray-800/30' });
+        if (overdueLocal.length) {
+            list.push({
+                type: 'Warning',
+                message: `${overdueLocal.length} local PO(s) past expected delivery`,
+                color: 'bg-rose-900/35',
+            });
+        }
+        openForeign.slice(0, 5).forEach(p => {
+            list.push({
+                type: 'Info',
+                message: `Import ${p.import_ref || p.id}: ${p.item_name || ''} · ${p.status} · ${p.country || ''}`,
+                color: 'bg-indigo-900/30',
+            });
         });
-        if (leaveSoon.length) push('info', 'HR Leave', `${leaveSoon.length} approved leave starting within 7 days.`);
-
-        // ——— HR: Headcount / masters ———
-        if (!employees.length) push('alert', 'HR', 'Employee master is empty.');
-        else push('success', 'HR', `${employees.length} employee record(s) · ${depts.length} department(s).`);
-        const noDept = employees.filter(e => !e.department && !e.dept);
-        if (noDept.length) push('warning', 'HR', `${noDept.length} employee(s) missing department.`);
-        const inactiveEmp = employees.filter(e => ['inactive', 'terminated', 'resigned'].includes(String(e.status || '').toLowerCase()));
-        if (inactiveEmp.length) push('info', 'HR', `${inactiveEmp.length} inactive/terminated employee flag(s).`);
-
-        // Vacancies / recruitment / hiring
-        const openVac = vacancies.filter(v => ['open', 'published', 'active'].includes(String(v.status || '').toLowerCase()));
-        if (openVac.length) push('info', 'Recruitment', `${openVac.length} open vacancy(ies).`);
-        const pendingRec = recruitment.filter(r => !['hired', 'rejected', 'closed'].includes(String(r.status || '').toLowerCase()));
-        if (pendingRec.length) push('warning', 'Recruitment', `${pendingRec.length} recruitment case(s) in progress.`);
-        const openHiring = hiring.filter(h => ['pending', 'submitted', 'open'].includes(String(h.status || '').toLowerCase()));
-        if (openHiring.length) push('warning', 'Recruitment', `${openHiring.length} department hiring request(s) pending.`);
-
-        // Attrition / retirement / resignation
-        if (attrition.length) push('info', 'HR Exit', `${attrition.length} attrition record(s) on file.`);
-        const retireSoon = (retirement.length ? retirement : employees).filter(r => {
-            const d = daysUntil(r.retirement_date || r.expected_date);
-            return d != null && d >= 0 && d <= 90;
+        arrivingSoon.forEach(p => {
+            list.push({
+                type: 'Warning',
+                message: `Arrival due: ${p.import_ref || p.item_name} on ${p.arrival_date}`,
+                color: 'bg-cyan-900/35',
+            });
         });
-        if (retireSoon.length) push('warning', 'HR Exit', `${retireSoon.length} retirement(s) within 90 days.`);
-        const openRes = resignation.filter(r => !['processed', 'completed', 'closed'].includes(String(r.status || '').toLowerCase()));
-        if (openRes.length) push('warning', 'HR Exit', `${openRes.length} resignation(s) not fully processed.`);
 
-        // Training / appraisal / insurance / discipline / awards
-        const openTrain = training.filter(t => !['completed', 'cancelled'].includes(String(t.status || '').toLowerCase()));
-        if (openTrain.length) push('info', 'HR Dev', `${openTrain.length} training item(s) open.`);
-        const dueAppraisal = appraisal.filter(a => {
-            const d = daysUntil(a.due_date || a.appraisal_date);
-            return d != null && d <= 14;
-        });
-        if (dueAppraisal.length) push('warning', 'HR Dev', `${dueAppraisal.length} appraisal(s) due within 14 days.`);
-        const insExpire = insurance.filter(i => {
-            const d = daysUntil(i.expiry_date || i.end_date);
-            return d != null && d >= 0 && d <= 30;
-        });
-        if (insExpire.length) push('alert', 'HR', `${insExpire.length} insurance policy(ies) expiring within 30 days.`);
-        const openPen = penalties.filter(p => !['closed', 'resolved'].includes(String(p.status || '').toLowerCase()));
-        if (openPen.length) push('warning', 'HR', `${openPen.length} open disciplinary case(s).`);
-        if (awards.length) push('success', 'HR', `${awards.length} award record(s) registered.`);
+        // —— PARTS ROBBING ——
+        list.push({ type: 'Title', message: 'PARTS ROBBING (CANNIBALIZATION)' });
+        const robOpen = robbing.filter(r => /plan|progress|fitted|awaiting/i.test(String(r.status || r.recipient_status_after || '')));
+        const robDone = robbing.filter(r => /restored|decommission|scrap/i.test(String(r.status || '')));
+        if (robOpen.length) {
+            robOpen.slice(0, 6).forEach(r => {
+                list.push({
+                    type: 'Warning',
+                    message: `Robbing ${r.robbing_no || r.id}: ${r.part_taken || 'part'} · ${r.donor_item || '?'} → ${r.recipient_item || '?'} · ${r.status || ''}`,
+                    color: 'bg-amber-900/35',
+                });
+            });
+        } else {
+            list.push({ type: 'Info', message: 'No open robbing vouchers.', color: 'bg-gray-800/30' });
+        }
+        if (robDone.length) {
+            list.push({
+                type: 'Info',
+                message: `${robDone.length} completed / closed robbing voucher(s) on file`,
+                color: 'bg-gray-800/30',
+            });
+        }
 
-        // Roles
-        if (!roles.length) push('warning', 'Security', 'ROLE_CRUD empty — relying on default permission map.');
-        else push('info', 'Security', `${roles.length} role definition(s) loaded.`);
-
-        // Holidays
-        const holidays = [
-            { name: 'Genna (Ethiopian Christmas)', date: '2026-01-07' },
-            { name: 'Timkat (Epiphany)', date: '2026-01-19' },
-            { name: 'Adwa Victory Day', date: '2026-03-02' },
-            { name: 'Siklet (Good Friday)', date: '2026-04-10' },
-            { name: 'Fasika (Easter)', date: '2026-04-12' },
-            { name: 'Labour Day', date: '2026-05-01' },
-            { name: 'Ethiopian New Year', date: '2026-09-11' },
-            { name: 'Meskel', date: '2026-09-27' },
+        // —— FINANCE POSTING ——
+        list.push({ type: 'Title', message: 'FINANCE POSTING' });
+        const unposted = [
+            ...grv.filter(r => !r.posted_to_finance),
+            ...giv.filter(r => !r.posted_to_finance),
+            ...localPO.filter(r => !r.posted_to_finance),
+            ...foreignPO.filter(r => !r.posted_to_finance),
+            ...robbing.filter(r => !r.posted_to_finance),
         ];
-        holidays.forEach(h => {
-            const d = daysUntil(h.date);
-            if (d != null && d >= 0 && d <= 45) {
-                push(d <= 7 ? 'warning' : 'info', 'Calendar', `${h.name} in ${d} day(s) (${h.date}).`);
-            }
+        if (unposted.length) {
+            list.push({
+                type: 'Warning',
+                message: `${unposted.length} document(s) not yet posted to Finance (GRV/GIV/PO/Robbing)`,
+                color: 'bg-emerald-900/40',
+            });
+        } else {
+            list.push({ type: 'Info', message: 'All material docs flagged posted (or empty).', color: 'bg-gray-800/30' });
+        }
+
+        // —— VALUE SNAPSHOT ——
+        list.push({ type: 'Title', message: 'INVENTORY SNAPSHOT' });
+        const totalVal = items.reduce((s, i) => s + (n(i.total_value) || n(i.quantity) * n(i.unit_cost)), 0);
+        list.push({
+            type: 'Info',
+            message: `SKUs ${items.length} · Stock value ~ ETB ${totalVal.toLocaleString(undefined, { maximumFractionDigits: 0 })}`,
+            color: 'bg-cyan-900/25',
+        });
+        list.push({
+            type: 'Info',
+            message: `GRV ${grv.length} · GIV ${giv.length} · LPO ${localPO.length} · Import ${foreignPO.length} · Robbing ${robbing.length}`,
+            color: 'bg-cyan-900/20',
         });
 
-        // Compliance reminders
-        push('info', 'Compliance', 'VAT / withholding calendar: confirm monthly filing with Finance (Ato Eyob).');
-        push('info', 'Compliance', 'Payroll statutory (tax & pension) must match process totals before bank advice.');
-
-        // Sort: alerts first
-        const order = { alert: 0, warning: 1, info: 2, success: 3 };
-        list.sort((a, b) => (order[a.severity] ?? 9) - (order[b.severity] ?? 9));
         return list;
-    }, [getCollection, notificationTrigger, leaveUpdateTrigger, roleUpdateTrigger, today]);
+    }, [items, grv, giv, robbing, localPO, foreignPO, today, upcomingHolidays, notificationTrigger]);
 
-    const filtered = useMemo(() => {
-        let rows = notifications;
-        if (filter !== 'all') rows = rows.filter(n => n.severity === filter);
-        if (activeTab !== 'all') rows = rows.filter(n => String(n.category || '').toLowerCase().includes(activeTab.toLowerCase()));
-        return rows;
-    }, [notifications, filter, activeTab]);
+    const activityLog = useMemo(() => {
+        const stamp = (r, label) => ({
+            id: r.id,
+            label,
+            title: r.grv_no || r.giv_no || r.lpo_no || r.import_ref || r.robbing_no || r.sku || r.name || r.id,
+            sub: r.item_name || r.part_taken || r.supplier || r.department || r.status || '',
+            date: r.date || r.last_updated || r.arrival_date || r.expected_date || '',
+            posted: !!r.posted_to_finance,
+        });
+        const pool = [
+            ...grv.map(r => stamp(r, 'GRV')),
+            ...giv.map(r => stamp(r, 'GIV')),
+            ...localPO.map(r => stamp(r, 'LPO')),
+            ...foreignPO.map(r => stamp(r, 'IMP')),
+            ...robbing.map(r => stamp(r, 'ROB')),
+            ...items.slice(0, 10).map(r => stamp(r, 'SKU')),
+        ];
+        return pool
+            .sort((a, b) => String(b.date).localeCompare(String(a.date)))
+            .slice(0, 20);
+    }, [grv, giv, localPO, foreignPO, robbing, items]);
 
-    const counts = useMemo(() => ({
-        all: notifications.length,
-        alert: notifications.filter(n => n.severity === 'alert').length,
-        warning: notifications.filter(n => n.severity === 'warning').length,
-        info: notifications.filter(n => n.severity === 'info').length,
-        success: notifications.filter(n => n.severity === 'success').length,
-    }), [notifications]);
-
-    useEffect(() => {
-        if (typeof onCountChange === 'function') {
-            const badge = (counts.alert || 0) + (counts.warning || 0) || counts.all || 0;
-            onCountChange(badge, counts);
-        }
-    }, [counts, onCountChange]);
-
-    const sevStyle = {
-        alert: 'border-rose-500/40 bg-rose-950/40 text-rose-100',
-        warning: 'border-amber-500/40 bg-amber-950/30 text-amber-100',
-        info: 'border-cyan-500/30 bg-cyan-950/30 text-cyan-100',
-        success: 'border-emerald-500/30 bg-emerald-950/30 text-emerald-100',
-    };
-    const sevIcon = { alert: 'AlertTriangle', warning: 'AlertCircle', info: 'Info', success: 'CheckCircle2' };
-
-    const tabs = [
-        { id: 'all', label: 'All' },
-        { id: 'Finance', label: 'Finance' },
-        { id: 'Payroll', label: 'Payroll' },
-        { id: 'HR', label: 'HR' },
-        { id: 'Partners', label: 'Partners' },
-        { id: 'Security', label: 'Security' },
-        { id: 'Calendar', label: 'Calendar' },
-    ];
+    const badgeCount = useMemo(() => {
+        return notifications.filter(x => x.type === 'Warning').length;
+    }, [notifications]);
 
     return (
-        <div className={`h-full flex flex-col ${glassClass} border-l border-white/10`}>
-            <div className="p-4 border-b border-white/10 flex items-center justify-between gap-2">
+        <div className={`w-full max-w-md ${glassClass} border border-white/10 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]`}>
+            <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 bg-slate-950/80">
                 <div>
-                    <h3 className="text-sm font-black text-white uppercase tracking-widest flex items-center gap-2">
-                        <Icons.Bell className="w-4 h-4 text-cyan-400" /> Notifications
-                    </h3>
-                    <p className="text-[9px] text-gray-500 mt-0.5">
-                        {counts.alert} alert · {counts.warning} warning · {counts.info} info · signed in as {currentUser?.username || 'user'}
+                    <h3 className="text-sm font-black uppercase tracking-widest text-white">Material Alerts</h3>
+                    <p className="text-[10px] text-cyan-400/80 font-bold uppercase tracking-wider mt-0.5">
+                        {badgeCount} attention · Unity Stores
                     </p>
                 </div>
-                <button type="button" onClick={onClose} className="p-2 rounded-lg hover:bg-white/10 text-gray-400">
-                    <Icons.X className="w-4 h-4" />
+                <button type="button" onClick={onClose} className="text-gray-400 hover:text-white p-1">
+                    <Icons.X className="w-5 h-5" />
                 </button>
             </div>
 
-            <div className="px-3 py-2 flex flex-wrap gap-1.5 border-b border-white/5">
-                {['all', 'alert', 'warning', 'info', 'success'].map(f => (
-                    <button
-                        key={f}
-                        type="button"
-                        onClick={() => setFilter(f)}
-                        className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase ${
-                            filter === f ? 'bg-cyan-600 text-white' : 'bg-white/5 text-gray-400 hover:bg-white/10'
-                        }`}
-                    >
-                        {f}{f !== 'all' ? ` (${counts[f] || 0})` : ` (${counts.all})`}
-                    </button>
-                ))}
+            <div className="flex border-b border-white/10">
+                <button
+                    type="button"
+                    onClick={() => setActiveTab('notifications')}
+                    className={`flex-1 p-2.5 text-[10px] font-black uppercase tracking-widest transition-all ${
+                        activeTab === 'notifications' ? 'bg-cyan-600 text-white border-b-2 border-white' : 'bg-gray-800/40 text-gray-400'
+                    }`}
+                >
+                    Notifications {badgeCount > 0 && <span className="ml-1 text-amber-300">({badgeCount})</span>}
+                </button>
+                <button
+                    type="button"
+                    onClick={() => setActiveTab('activity')}
+                    className={`flex-1 p-2.5 text-[10px] font-black uppercase tracking-widest transition-all ${
+                        activeTab === 'activity' ? 'bg-cyan-600 text-white border-b-2 border-white' : 'bg-gray-800/40 text-gray-400'
+                    }`}
+                >
+                    Activity
+                </button>
             </div>
 
-            <div className="px-3 py-2 flex flex-wrap gap-1 border-b border-white/5">
-                {tabs.map(t => (
-                    <button
-                        key={t.id}
-                        type="button"
-                        onClick={() => setActiveTab(t.id)}
-                        className={`px-2 py-1 rounded-md text-[9px] font-bold uppercase ${
-                            activeTab === t.id ? 'bg-white/15 text-cyan-300' : 'text-gray-500 hover:text-gray-300'
-                        }`}
-                    >
-                        {t.label}
-                    </button>
-                ))}
-            </div>
-
-            <div className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-2">
-                {!filtered.length ? (
-                    <p className="text-center text-gray-500 text-xs py-10">No notifications for this filter.</p>
-                ) : filtered.map(n => {
-                    const Icon = Icons[sevIcon[n.severity]] || Icons.Bell;
-                    return (
-                        <div key={n.id} className={`rounded-xl border p-3 ${sevStyle[n.severity] || sevStyle.info}`}>
-                            <div className="flex items-start gap-2">
-                                <Icon className="w-4 h-4 shrink-0 mt-0.5 opacity-90" />
-                                <div className="min-w-0 flex-1">
-                                    <div className="flex items-center gap-2 flex-wrap">
-                                        <span className="text-[9px] font-black uppercase tracking-wider opacity-80">{n.category}</span>
-                                        <span className="text-[8px] uppercase opacity-50">{n.severity}</span>
-                                        <span className="text-[9px] text-white/50 ml-auto font-mono tabular-nums" title={n.time ? new Date(n.time).toLocaleString() : ''}>
-                                            {formatRelativeTime(n.time)}
-                                        </span>
-                                    </div>
-                                    <p className="text-[11px] font-medium mt-0.5 leading-snug">{n.message}</p>
-                                </div>
+            <div className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-2 min-h-0">
+                {activeTab === 'notifications' ? (
+                    notifications.map((item, index) => (
+                        item.type === 'Title' ? (
+                            <div key={index} className="pt-2 pb-1 text-[10px] font-black uppercase tracking-[0.2em] text-cyan-400/90 border-b border-white/5">
+                                {item.message}
+                            </div>
+                        ) : (
+                            <div key={index} className={`rounded-xl px-3 py-2 text-[11px] text-gray-200 border border-white/5 ${item.color || 'bg-black/30'}`}>
+                                {item.message}
+                            </div>
+                        )
+                    ))
+                ) : (
+                    activityLog.length ? activityLog.map((row, i) => (
+                        <div key={row.id || i} className="rounded-xl px-3 py-2 border border-white/5 bg-black/30 flex gap-2 items-start">
+                            <span className="text-[9px] font-black uppercase text-cyan-400 shrink-0 w-8 pt-0.5">{row.label}</span>
+                            <div className="min-w-0 flex-1">
+                                <p className="text-[11px] font-semibold text-white truncate">{row.title}</p>
+                                <p className="text-[10px] text-gray-500 truncate">{row.sub}</p>
+                                <p className="text-[9px] text-gray-600 mt-0.5">{row.date || '—'}{row.posted ? ' · Posted to Finance' : ''}</p>
                             </div>
                         </div>
-                    );
-                })}
-            </div>
-
-            <div className="p-3 border-t border-white/10 text-[9px] text-gray-500 text-center">
-                Live from HR · Finance · Payroll masters · refresh on data change
+                    )) : (
+                        <p className="text-center text-gray-500 text-xs py-8">No recent material activity.</p>
+                    )
+                )}
             </div>
         </div>
     );
 };
+
+/* ----------------------------------------------------------------------
+   9. VIEW COMPONENTS (Standard)
+   ---------------------------------------------------------------------- */
+
+
+const AuthScreen = ({ glassClass }) => {
+    const { login } = useAuth();
+    const { getCollection } = useData();
+    // ADDED: Get the logo from UI Context
+    const { uiSettings } = useUI(); 
+    
+    const [username, setUsername] = useState('');
+    const [password, setPassword] = useState('');
+    const [error, setError] = useState('');
+    const [isSubmitting, setIsSubmitting] = useState(false);
+
+    const handleSignIn = async (e) => {
+        e.preventDefault();
+        setError('');
+        setIsSubmitting(true);
+        try {
+            const allEmployees = getCollection('HR_EMPLOYEE_CRUD') || [];
+            const result = await login(username, password, allEmployees);
+            if (!result.success) {
+                setError(result.message || 'Invalid username or password.');
+            }
+        } catch (err) {
+            setError('An unexpected error occurred.');
+            console.error("Login Error:", err);
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    return (
+        <div className="h-full w-full min-h-0 flex items-center justify-center p-4 bg-slate-950 overflow-y-auto">
+            <div className={`max-w-md w-full p-8 rounded-3xl shadow-2xl border border-white/10 ${glassClass} transform transition-all`}>
+                
+                <div className="flex flex-col items-center mb-8">
+                    {/* FIXED: Conditional Logo Logic */}
+                    <div className="mb-4">
+                        {uiSettings?.logoURL ? (
+                            // Show your UPLOADED logo if it exists
+                            <img 
+                                src={uiSettings.logoURL} 
+                                alt="University Logo" 
+                                className="w-20 h-20 object-contain drop-shadow-lg"
+                            />
+                        ) : (
+                            // Fallback to the icon if no logo is set in UICustomization
+                            <div className="p-4 bg-cyan-500/20 rounded-2xl shadow-inner">
+                                <Icons.Monitor className="w-12 h-12 text-cyan-400" />
+                            </div>
+                        )}
+                    </div>
+                    
+                    <h1 className="text-3xl font-black text-white tracking-tighter italic uppercase text-center">
+                        Material Management - Unity University
+                    </h1>
+                    <p className="text-gray-400 mt-2 text-sm font-medium">Material Management Terminal</p>
+                </div>
+
+                <form onSubmit={handleSignIn} className="space-y-5">
+                    {error && (
+                        <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/50 text-red-400 text-xs flex items-center animate-shake">
+                            <Icons.AlertCircle className="w-4 h-4 mr-2 flex-shrink-0" />
+                            {error}
+                        </div>
+                    )}
+
+                    <div className="space-y-1">
+                        <Input 
+                            label="Username"
+                            value={username}
+                            onChange={(val) => setUsername(val)}
+                            placeholder="Enter your username"
+                            isRequired
+                        />
+                    </div>
+
+                    <div className="space-y-1">
+                        <Input 
+                            label="Password"
+                            type="password"
+                            placeholder="Password"
+                            autoComplete="current-password"
+                            value={password}
+                            onChange={(val) => setPassword(val)}
+                            isRequired
+                        />
+                    </div>
+
+                    <button 
+                        type="submit"
+                        disabled={isSubmitting}
+                        className={`w-full py-4 rounded-2xl font-bold text-white transition-all flex items-center justify-center text-lg
+                            ${isSubmitting 
+                                ? 'bg-gray-700 cursor-not-allowed' 
+                                : 'bg-cyan-600 hover:bg-cyan-500 active:scale-[0.97] shadow-xl shadow-cyan-900/40'
+                            }`}
+                    >
+                        {isSubmitting ? (
+                            <Icons.Loader2 className="w-6 h-6 animate-spin" />
+                        ) : (
+                            <>
+                                <Icons.LogIn className="w-5 h-5 mr-2" />
+                                Sign In
+                            </>
+                        )}
+                    </button>
+                
+                    
+
+                
+                    <LoginModuleSwitcher current="material" />
+                </form>
+
+                <div className="mt-8 pt-6 border-t border-white/5 text-center">
+                    
+                    
+
+                    <p className="text-[10px] text-gray-500 uppercase tracking-[0.2em] font-bold opacity-60">
+                        Secure Access Terminal
+                    </p>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+
+/* ----------------------------------------------------------------------
+   MODIFIED HR DASHBOARD COMPONENT (With Custom Analytics & PNG Export)
+   ---------------------------------------------------------------------- */
+/* ----------------------------------------------------------------------
+   MODIFIED HR DASHBOARD COMPONENT (With Explaining Text)
+   ---------------------------------------------------------------------- */
+/* ----------------------------------------------------------------------
+   MODIFIED HR DASHBOARD COMPONENT (With Explaining Text)
+   ---------------------------------------------------------------------- */
+
+
+const HrDashboard = ({ glassClass }) => {
+    const { getCollection } = useData();
+    const employees = getCollection('HR_EMPLOYEE_CRUD') || [];
+    const appraisals = getCollection('HR_APPRAISAL_CRUD') || [];
+    const leaves = getCollection('HR_LEAVE_CRUD') || [];
+    const [dataSource, setDataSource] = useState('Insurance');
+    const [chartType, setChartType] = useState('bar');
+    const chartRef = useRef(null);
+
+    const COLORS = ['#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
+    const DEPARTMENTS = ['Finance', 'Engineering', 'HR', 'Marketing', 'Operations'];
+
+    const deptAnalytics = DEPARTMENTS.map(dept => {
+        const deptEmps = employees.filter(e => e.department === dept);
+        return {
+            name: dept,
+            insUnivShare: deptEmps.length * 1200,
+            appQuality: (Math.random() * 5).toFixed(2),
+            recVolume: Math.floor(Math.random() * 15),
+            lveDays: deptEmps.reduce((a, e) => a + (leaves.filter(l => l.employee_name === e.name && l.status === 'Approved').length * 3), 0)
+        };
+    });
+
+    const chartExplanations = {
+        'Insurance': 'Institution-funded insurance contributions aggregated by department showing the total financial commitment.',
+        'Recruitment': 'Number of successful hires and completed recruitment requests per department for workforce planning.',
+        'Appraisal': 'Average performance scores based on competency assessments and appraisal ratings across departments.',
+        'Leave': 'Total workdays consumed by approved leave requests (annual, sick, emergency) per department.'
+    };
+
+    const activeData = dataSource === 'Insurance' ? deptAnalytics.map(d => ({ name: d.name, value: d.insUnivShare })) :
+                       dataSource === 'Recruitment' ? deptAnalytics.map(d => ({ name: d.name, value: d.recVolume })) :
+                       dataSource === 'Appraisal' ? deptAnalytics.map(d => ({ name: d.name, value: parseFloat(d.appQuality) })) :
+                       deptAnalytics.map(d => ({ name: d.name, value: d.lveDays }));
+
+    return (
+        <div className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                <KPI  
+                    title="University Pay"
+                    value={`${deptAnalytics.reduce((a, b) => a + b.insUnivShare, 0).toLocaleString()} Br`} 
+                    iconName="ShieldCheck" 
+                    colorClass="text-cyan-400" 
+                    trend="Univ. Pay" 
+                    glassClass={glassClass} 
+                    explanation="Total institution-funded insurance contribution for the current staff roster."
+                />
+                <KPI  
+                    title="Avg Appraisal"
+                    value={(deptAnalytics.reduce((a, b) => a + b.appQuality, 0) / DEPARTMENTS.length).toFixed(2)} 
+                    iconName="Star" 
+                    colorClass="text-yellow-400" 
+                    trend="Appraisal" 
+                    glassClass={glassClass} 
+                    explanation="Performance index across departments based on average staff competency scores."
+                />
+                <KPI  
+                    title="Recruitment"
+                    value={deptAnalytics.reduce((a, b) => a + b.recVolume, 0)} 
+                    iconName="UserPlus" 
+                    colorClass="text-green-400" 
+                    trend="Success Rate" 
+                    glassClass={glassClass} 
+                    explanation="Count of successful candidate placements and hiring request completions."
+                />
+                <KPI  
+                    title="Leaves Taken"
+                    value={`${deptAnalytics.reduce((a, b) => a + b.lveDays, 0)} Days`} 
+                    iconName="Clock" 
+                    colorClass="text-purple-400" 
+                    trend="Total Volume" 
+                    glassClass={glassClass} 
+                    explanation="Aggregation of total workdays lost to annual, sick, and emergency leave."
+                />
+            </div>
+
+            {/* CHART CONTROL SECTION WITH EXPLAINING TEXT */}
+            <ContainerCard Icon={Icons.Activity} glassClass={glassClass} title={`${dataSource} Trend Analysis`}>
+                <div className="mb-6 p-4 rounded-xl bg-cyan-500/5 border border-cyan-500/20">
+                    <p className="text-xs text-cyan-100 italic leading-relaxed">
+                        <Icons.Info className="inline w-3 h-3 mr-2 mb-0.5" />
+                        {chartExplanations[dataSource]}
+                    </p>
+                </div>
+
+                <div className="flex flex-wrap items-end justify-between gap-4 mb-8">
+                    <div className="flex gap-4 items-end">
+                        <div className="flex flex-col">
+                            <label className="text-[10px] text-gray-400 mb-1 font-bold uppercase">Metric Analytics</label>
+                            <select 
+                                className="bg-black/40 border border-white/10 text-white text-xs rounded p-2 outline-none focus:border-cyan-500"
+                                value={dataSource} 
+                                onChange={(e) => setDataSource(e.target.value)}
+                            >
+                                <option value="Insurance">Insurance (Quantity/Money)</option>
+                                <option value="Recruitment">Recruitment (Volume/Success)</option>
+                                <option value="Appraisal">Performance (Quality Score)</option>
+                                <option value="Leave">Leave Taken (Average Days)</option>
+                            </select>
+                        </div>
+                        <div className="flex flex-col">
+                            <label className="text-[10px] text-gray-400 mb-1 font-bold uppercase">Visual Method</label>
+                            <select 
+                                className="bg-black/40 border border-white/10 text-white text-xs rounded p-2 outline-none focus:border-cyan-500"
+                                value={chartType} 
+                                onChange={(e) => setChartType(e.target.value)}
+                            >
+                                <option value="bar">Bar Analysis</option>
+                                <option value="line">Trend Analysis</option>
+                                <option value="pie">Proportional Analysis</option>
+                            </select>
+                        </div>
+
+                        <div className="pb-[1px]">
+                            <ExportButton 
+                                data={activeData} 
+                                columns={[{ label: 'Department', key: 'name' }, { label: 'Value', key: 'value' }]} 
+                                filename={`HR_LIVE_${dataSource}`}
+                                chartRef={chartRef} 
+                            />
+                        </div>
+                    </div>
+                </div>
+
+                {/* DYNAMIC REAL-TIME CHART */}
+                <div ref={chartRef} className="h-80 w-full bg-black/20 rounded-2xl p-4 border border-white/5">
+                    <ResponsiveContainer width="100%" height="100%">
+                        {chartType === 'pie' ? (
+                            <PieChart>
+                                <Pie data={activeData} cx="50%" cy="50%" innerRadius={60} outerRadius={100} paddingAngle={5} dataKey="value">
+                                    {activeData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                                </Pie>
+                                <Legend />
+                                <Tooltip contentStyle={{backgroundColor: '#000', border: '1px solid #333'}} />
+                            </PieChart>
+                        ) : chartType === 'line' ? (
+                            <LineChart data={activeData}>
+                                <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
+                                <XAxis dataKey="name" stroke="#6b7280" fontSize={10} />
+                                <YAxis stroke="#6b7280" fontSize={10} />
+                                <Tooltip contentStyle={{backgroundColor: '#000', border: '1px solid #333'}} />
+                                <Line type="monotone" dataKey="value" stroke="#06b6d4" strokeWidth={4} dot={{ r: 6, fill: '#06b6d4' }} animationDuration={300} />
+                            </LineChart>
+                        ) : (
+                            <BarChart data={activeData}>
+                                <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
+                                <XAxis dataKey="name" stroke="#6b7280" fontSize={10} />
+                                <YAxis stroke="#6b7280" fontSize={10} />
+                                <Tooltip contentStyle={{backgroundColor: '#000', border: '1px solid #333'}} />
+                                <Bar dataKey="value" fill="#06b6d4" radius={[6, 6, 0, 0]} barSize={40} animationDuration={300} />
+                            </BarChart>
+                        )}
+                    </ResponsiveContainer>
+                </div>
+            </ContainerCard>
+        </div>
+    );
+};
+// Internal KPI Component Updated to show Explanations
+const KPI = ({ title, value, iconName, glassClass, colorClass, explanation }) => {
+    const IconComponent = Icons[iconName] || Icons.Activity;
+
+    return (
+        <div className={`p-4 rounded-2xl flex flex-col justify-between ${glassClass} border border-white/5 shadow-xl h-28 hover:border-cyan-500/50 transition-all`}>
+            <div className="flex items-center justify-between w-full">
+                <div className="flex-1">
+                    <p className="text-[9px] font-black text-gray-400 uppercase tracking-[0.2em]">{title}</p>
+                    <p className="text-sm font-black text-white mt-1 tabular-nums tracking-tighter uppercase">
+                        {value}
+                    </p>
+                </div>
+                <div className={`p-2 rounded-xl bg-white/5 ${colorClass}`}>
+                    <IconComponent className="w-5 h-5" />
+                </div>
+            </div>
+            {/* Added Explaining Text here */}
+            <div className="mt-2 pt-2 border-t border-white/10">
+                <p className="text-[8px] leading-tight text-gray-500 italic">
+                    {explanation}
+                </p>
+            </div>
+        </div>
+    );
+};
+// // Internal KPI Component with text-sm
+// const KPI = ({ title, value, iconName, glassClass, colorClass, trend }) => {
+//     const IconComponent = Icons[iconName] || Icons.Activity;
+//     const TrendIcon = trend === 'up' ? Icons.ArrowUp : trend === 'down' ? Icons.ArrowDown : Icons.Minus;
+//     const trendColor = trend === 'up' ? 'text-green-500' : trend === 'down' ? 'text-red-500' : 'text-gray-400';
+
+//     return (
+//         <div className={`p-4 rounded-2xl flex items-center justify-between ${glassClass} border border-white/5 shadow-xl h-24`}>
+//             <div className="flex-1">
+//                 <p className="text-[9px] font-bold text-gray-500 uppercase tracking-widest">{title}</p>
+//                 <p className="text-sm font-black text-white mt-1 tabular-nums tracking-tighter uppercase">
+//                     {value}
+//                 </p>
+//                 {/* {trend !== 'none' && (
+//                     <div className={`flex items-center text-[8px] font-black mt-1 ${trendColor} uppercase`}>
+//                         <TrendIcon className="w-2.5 h-2.5 mr-1" />
+//                         Live
+//                     </div>
+//                 )} */}
+//             </div>
+//             <div className={`p-2 rounded-xl bg-white/5 ${colorClass}`}>
+//                 <IconComponent className="w-5 h-5" />
+//             </div>
+//         </div>
+//     );
+// };
+/* ----------------------------------------------------------------------
+   FIXED STAT CARD COMPONENT
+   ---------------------------------------------------------------------- */
+const StatCard = ({ label, value, Icon, color, glassClass }) => {
+    // If Icon is passed as a component from the Icons object (e.g. Icons.Clock)
+    // We must ensure it is rendered as a JSX tag <Icon />
+    return (
+        <div className={`p-4 rounded-xl ${glassClass} border border-white/10 flex items-center space-x-4`}>
+            <div className={`p-3 rounded-lg bg-gray-800/50 ${color}`}>
+                {/* This is where the error happens if Icon is undefined */}
+                {Icon && <Icon className="w-6 h-6" />}
+            </div>
+            <div>
+                <p className="text-xs text-gray-400 font-medium uppercase tracking-wider">{label}</p>
+                <p className="text-xl font-bold text-white">{value}</p>
+            </div>
+        </div>
+    );
+};
+// This component uses the existing XLSX, jsPDF, and docx libraries from your file [cite: 380, 381]
+const ChartExportButton = ({ data, chartTitle, glassClass }) => {
+    
+    // Handler for XLSX (Excel) [cite: 380]
+    const handleExcelExport = () => {
+        const worksheet = XLSX.utils.json_to_sheet(data);
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, "Chart Data");
+        XLSX.writeFile(workbook, `${chartTitle}_Data.xlsx`);
+    };
+
+    // Handler for PDF using jsPDF [cite: 381]
+    const handlePDFExport = () => {
+        const doc = new jsPDF();
+        doc.text(chartTitle, 14, 15);
+        // Extracts keys for headers and values for rows [cite: 403-405]
+        const headers = [Object.keys(data[0])];
+        const rows = data.map(item => Object.values(item));
+        
+        doc.autoTable({
+            head: headers,
+            body: rows,
+            startY: 20,
+        });
+        doc.save(`${chartTitle}.pdf`);
+    };
+
+    return (
+        <div className="flex space-x-2 mb-4">
+            {/* CSV Export using existing react-csv link [cite: 380] */}
+            <CSVLink 
+                data={data} 
+                filename={`${chartTitle}.csv`}
+                className={`flex items-center px-3 py-1 rounded-md bg-cyan-600 text-white text-xs font-bold hover:bg-cyan-500 transition`}
+            >
+                <Icons.Download className="w-4 h-4 mr-1" /> Export CSV
+            </CSVLink>
+
+            <button onClick={handleExcelExport} className="flex items-center px-3 py-1 rounded-md bg-green-600 text-white text-xs font-bold hover:bg-green-500">
+                <Icons.FileSpreadsheet className="w-4 h-4 mr-1" /> Excel
+            </button>
+
+            <button onClick={handlePDFExport} className="flex items-center px-3 py-1 rounded-md bg-red-600 text-white text-xs font-bold hover:bg-red-500">
+                <Icons.FileText className="w-4 h-4 mr-1" /> PDF
+            </button>
+        </div>
+    );
+};
+const RoleManagement = ({ glassClass }) => {
+    const { getCollection, addRecord, updateRecord, deleteRecord } = useData();
+    const [roleName, setRoleName] = useState(''); // This state holds the display name
+    const [permissions, setPermissions] = useState({});
+    const [editingId, setEditingId] = useState(null);
+
+    // Get all available permissions from MENU_ITEMS
+    const allAvailablePermissions = useMemo(() => {
+        const ids = [];
+        const extract = (items) => {
+            items.forEach(item => {
+                // Filter out navigation items that are not meant to be permissions (e.g., 'AUTH')
+                if (item.id && item.id !== 'AUTH' && !item.children) { // Ensure it's a leaf node that represents a permission
+                    ids.push({ id: item.id, label: item.label });
+                }
+                if (item.children) {
+                    extract(item.children);
+                }
+            });
+        };
+        extract(MENU_ITEMS);
+        return ids;
+    }, []);
+
+    // FIX: Ensure all menu items have valid IDs before mapping
+    const uniquePermissions = useMemo(() => {
+        const unique = {};
+        allAvailablePermissions.forEach(p => {
+            if (p.id) unique[p.id] = p;
+        });
+        return Object.values(unique).sort((a, b) => a.label.localeCompare(b.label));
+    }, [allAvailablePermissions]);
+
+    // FIX: Define the required CRUD Action IDs used by DataTable
+    const crudActions = [
+        { id: 'CAN_ADD_RECORD', label: 'Allow Creating Records', color: 'text-green-400' },
+        { id: 'CAN_EDIT_RECORD', label: 'Allow Editing Records', color: 'text-yellow-400' },
+        { id: 'CAN_DELETE_RECORD', label: 'Allow Deleting Records', color: 'text-red-400' }
+    ];
+
+    const currentRoles = getCollection('ROLE_CRUD') || []; // Get current roles for checks
+
+    const handleSave = async () => {
+        const trimmedRoleName = roleName.trim();
+        if (!trimmedRoleName) return alert("Enter role name");
+
+        // Combine selected page IDs AND selected action IDs
+        const activePermissions = Object.keys(permissions).filter(k => permissions[k] === true);
+
+        if (activePermissions.length === 0) {
+            return alert("Please select at least one permission or action.");
+        }
+
+        // FIX: Prepare roleData to include the 'name' field as expected by COLUMN_CONFIG
+        const roleData = {
+            name: trimmedRoleName, // Use 'name' field for the role's display name
+            roleName: trimmedRoleName, // Also keep roleName for potential backward compatibility or other uses if any.
+                                      // However, 'name' is the primary key expected by DataTable.
+            permissions: activePermissions,
+            updatedAt: new Date().toISOString()
+        };
+        
+        try {
+            // ADDED: Check for duplicate role names (using 'name' which is now canonical)
+            if (!editingId && currentRoles.some(role => role.name?.toLowerCase() === trimmedRoleName.toLowerCase())) {
+                return alert(`Role "${trimmedRoleName}" already exists.`);
+            }
+
+            if (editingId) {
+                await updateRecord('ROLE_CRUD', editingId, roleData);
+                alert("Role Updated Successfully!");
+            } else {
+                // For add, ensure 'id' is unique. 'name' can be used as ID if it's guaranteed unique.
+                // We'll keep 'id' generation for safety, but can optimize if 'name' is always intended as unique ID.
+                const newId = `role_${Date.now()}_${trimmedRoleName.toLowerCase().replace(/\s+/g, '-')}`;
+                await addRecord('ROLE_CRUD', { ...roleData, id: newId });
+                alert("New Role Created!");
+            }
+            // Clear state after save
+            setRoleName('');
+            setPermissions({});
+            setEditingId(null);
+        } catch (error) {
+            console.error("Save error:", error);
+            alert(`Failed to save role: ${error.message}`);
+        }
+    };
+
+    const handleEdit = (role) => {
+        // Ensure we are using role.name for consistency, as COLUMN_CONFIG expects 'name'
+        setEditingId(role.id); // Keep the ID for update operation
+        setRoleName(role.name || role.roleName || ''); // Use role.name, fallback to roleName
+        const prefs = {};
+        role.permissions?.forEach(p => prefs[p] = true);
+        setPermissions(prefs);
+    };
+
+    return (
+        <div className="space-y-6">
+            <ContainerCard  glassClass={glassClass}>
+                <div className="p-6 space-y-6">
+                    {/* Input for Role Name, bound to roleName state */}
+                    <Input 
+                        label="Role Name" 
+                        value={roleName} 
+                        onChange={setRoleName} 
+                        placeholder="e.g. HR Staff" 
+                        isRequired
+                    />
+                    
+                    {/* NEW SECTION: ACTION BUTTON PERMISSIONS */}
+                    <div>
+                        <h3 className="text-white font-bold mb-3 text-sm flex items-center">
+                            <Icons.ShieldCheck className="w-4 h-4 mr-2 text-cyan-400" />
+                            Global Action Permissions
+                        </h3>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                            {crudActions.map(action => (
+                                <button 
+                                    key={action.id}
+                                    onClick={() => setPermissions(prev => ({...prev, [action.id]: !prev[action.id]}))}
+                                    className={`p-3 rounded-xl border text-left transition-all ${
+                                        permissions[action.id] ? 'bg-cyan-500/10 border-cyan-500 shadow-lg shadow-cyan-500/10' : 'bg-white/5 border-white/10'
+                                    }`}
+                                >
+                                    <span className={`text-xs font-bold ${action.color}`}>{action.label}</span>
+                                    <div className="text-[10px] text-gray-500 mt-1">ID: {action.id}</div>
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* PAGE ACCESS SECTION */}
+                    <div>
+                        <h3 className="text-white font-bold mb-3 text-sm flex items-center">
+                            <Icons.Layout className="w-4 h-4 mr-2 text-cyan-400" />
+                            Page Access
+                        </h3>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                            {uniquePermissions.map(p => (
+                                <button 
+                                    key={p.id}
+                                    onClick={() => setPermissions(prev => ({...prev, [p.id]: !prev[p.id]}))}
+                                    className={`p-2 text-[10px] rounded-lg border text-left truncate transition-all ${
+                                        permissions[p.id] ? 'bg-cyan-500/20 border-cyan-500 text-white' : 'bg-white/5 border-white/10 text-gray-400'
+                                    }`}
+                                >
+                                    {p.label}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    <button onClick={handleSave} className="w-full bg-cyan-600 hover:bg-cyan-500 p-4 rounded-xl font-bold text-white shadow-xl transition-all">
+                        {editingId ? "Update Configuration" : "Save New Role"}
+                    </button>
+                </div>
+            </ContainerCard>
+
+            <ContainerCard  glassClass={glassClass}>
+                <div className="p-4 space-y-3">
+                    {(currentRoles).map(role => ( // Use currentRoles variable
+                        <div key={role.id} className="flex items-center justify-between p-4 border border-white/10 bg-white/5 rounded-xl">
+                            {/* FIX: Display role.name as it's the canonical name now */}
+                            <div className="font-bold text-white">{role.name}</div> 
+                            <div className="flex gap-2">
+                                <button onClick={() => handleEdit(role)} className="bg-cyan-500/10 px-3 py-1 rounded text-cyan-400 text-xs">Edit</button>
+                                {/* Added confirmation dialog for delete */}
+                                <button onClick={() => {
+                                    if (window.confirm(`Are you sure you want to delete role "${role.name}"? This action cannot be undone.`)) {
+                                        deleteRecord('ROLE_CRUD', role.id);
+                                    }
+                                }} className="bg-red-500/10 px-3 py-1 rounded text-red-400 text-xs">Delete</button>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            </ContainerCard>
+        </div>
+    );
+};
+
+
+    const convertGCToEC = (gcDateString) => {
+        const date = new Date(gcDateString);
+        if (isNaN(date.getTime())) return '';
+        
+        const year = date.getFullYear();
+        const month = date.getMonth() + 1;
+        const day = date.getDate();
+
+        // Approximate Ethiopia Calendar logic:
+        // New Year (Meskerem 1) is Sept 11 (or Sept 12 in leap years)
+        let etYear = year - 8;
+        if (month > 9 || (month === 9 && day >= 11)) {
+            etYear = year - 7;
+        }
+
+        // Ethiopian months are 30 days each. 
+        // We calculate the day of the year to find the exact month/day
+        const start = new Date(year, 0, 0);
+        const diff = (date - start) + ((start.getTimezoneOffset() - date.getTimezoneOffset()) * 60 * 1000);
+        const dayOfYear = Math.floor(diff / (1000 * 60 * 60 * 24));
+        
+        // Meskerem 1 is Gregorian Day 254 (non-leap) or 255 (leap)
+        const isLeap = (year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0));
+        const newYearDay = isLeap ? 255 : 254;
+        
+        let ethDayOfYear = dayOfYear - newYearDay + 1;
+        if (ethDayOfYear <= 0) {
+            ethDayOfYear += isLeap ? 366 : 365;
+        }
+
+        const etMonth = Math.ceil(ethDayOfYear / 30);
+        const etDay = ethDayOfYear % 30 || 30;
+
+        return `${etYear}-${String(etMonth).padStart(2, '0')}-${String(etDay).padStart(2, '0')}`;
+    };
 
 const FormModal = ({ collectionName, initialData, onSave, onCancel, glassClass }) => {
     const { addRecord, updateRecord, getCollection, allData } = useData();
@@ -4264,7 +4350,7 @@ const FormModal = ({ collectionName, initialData, onSave, onCancel, glassClass }
                     <MultiEntryField
                         label={field.label}
                         entries={formData[field.key] || []}
-                        fieldConfig={Array.isArray(field.arrayConfig) ? field.arrayConfig : []}
+                        fieldConfig={field.arrayConfig}
                         glassClass={glassClass}
                         onChange={(entries) => {
                             let updates = { [field.key]: entries };
@@ -4314,9 +4400,6 @@ const FormModal = ({ collectionName, initialData, onSave, onCancel, glassClass }
                 <div onClick={handleJump} className={field.label.includes('Jump') ? "cursor-pointer hover:text-cyan-400 font-bold" : ""}>
                     <Input
                         label={isTraining && field.key === 'score' ? 'Obtained Certificate?' : field.label}
-                        fieldKey={field.key}
-                        hint={field.help || field.intel}
-                        intelCollection={collectionName}
                         type={options.length > 0 ? 'select' : field.type}
                         options={options}
                         value={formData[field.key] || ''}
@@ -4426,7 +4509,377 @@ const Sidebar = ({ currentView, setCurrentView, glassClass }) => {
 
     // ... rest of Sidebar JSX
 };
-/* —— Ethiopian (Geez) ↔ Gregorian calendar —— */
+/* ===== unityUniversity AI (live + knowledge) ===== */
+const UU_FEMALE_FIRST_DUP = new Set(['lomi','saba','tigist','eleni','hanna','aster','netsanet','sara','sarah','bethlehem','mahlet','selam','rahel','helen','meseret','hiwot','kidist','marta','martha','yeshi','almaz','tsion','beten','sosina','liya','ruth','meron','eden','abeba','tsehay','worknesh','senait','bezawit','hawi','meaza','frehiwot','genet','ayelech','mekdes','selamawit','tsehaynesh','bethel','hirut','firehiwot','yelena']);
+const UU_MALE_FIRST_DUP = new Set(['abebe','kebede','chala','jemal','fasil','bereket','yonas','henok','kalab','tadesse','dawit','lemma','daniel','samuel','solomon','yared','mulugeta','getachew','tesfaye','hailu','mekonnen','assefa','girma','wolde','negash','bekele','yonatan','nahom','abel','kaleb','biruk','natnael','robelt','kirubel','ammanuel','amanuel','eyob','yohannes','melaku','sisay','asfaw','desta','haile','tewodros','mengistu','berhanu','gashaw','tamiru','fikadu','teklu','damte']);
+const uuGuessGenderFromName_UNUSED = (fullName) => {
+    const first = String(fullName || '').trim().split(/\s+/)[0].toLowerCase();
+    if (!first) return '';
+    if (UU_FEMALE_FIRST.has(first)) return 'Female';
+    if (UU_MALE_FIRST.has(first)) return 'Male';
+    return '';
+};
+const uuCorrectEmployeeGender_DUP = (e) => {
+    if (!e || typeof e !== 'object') return e;
+    const name = e.full_name || e.employee_name || e.name || e.Name || '';
+    const guessed = uuGuessGenderFromName(name);
+    if (!guessed) return e;
+    return Object.assign({}, e, { gender: guessed, Gender: guessed });
+};
+const uuCorrectEmployeeList_DUP = (list) => Array.isArray(list) ? list.map(uuCorrectEmployeeGender) : [];
+
+const UU_AI_KNOWLEDGE = [
+    { id: 'sis', title: 'Unity SIS overview', tags: ['sis', 'unity', 'overview', 'modules', 'system'], body: 'Unity SIS integrates Finance, HR, and Material under shared login/RBAC. Finance: COA, journals, TB/GL, payroll, partners, FP/P&L/cash flow. HR: employee master, leave, recruitment, training, transfer, appraisal. Material: inventory, GRV, GIV, purchases; posts stock events to Finance.' },
+    { id: 'finance', title: 'Finance module', tags: ['finance', 'coa', 'journal', 'payroll', 'trial', 'ledger'], body: 'Finance covers chart of accounts, single/journal transactions, trial balance, general ledger, partners, payroll process & reconciliation, and statements (FP, P&L, cash flow).' },
+    { id: 'hr', title: 'HR module', tags: ['hr', 'employee', 'staff', 'leave', 'recruitment'], body: 'HR is the staff system of record: employee master (ID, names, department, position, salary, TIN, pension), leave, recruitment, training, transfer, appraisal, competence, awards.' },
+    { id: 'material', title: 'Material module', tags: ['material', 'inventory', 'grv', 'giv', 'sku', 'store'], body: 'Material manages inventory SKUs, GRV (goods received), GIV (goods issued), local/foreign purchase, and parts robbing. GRV/GIV can post toward Finance stock/expense accounts.' },
+    { id: 'students', title: 'SIS students', tags: ['student', 'students', 'tuition', 'registrar', 'qms'], body: 'Students connect via registrar/QMS/attendance concepts, tuition partners in Finance, and campus stores in Material.' },
+];
+
+const uuSafeList = (data, key) => {
+    try {
+        if (!data) return [];
+        if (Array.isArray(data[key])) return data[key];
+    } catch (e) {}
+    return [];
+};
+const uuPull = (allData, getCollection, key) => {
+    try {
+        if (typeof getCollection === 'function') {
+            const v = getCollection(key);
+            if (Array.isArray(v)) return v;
+        }
+    } catch (e) {}
+    const aliases = {
+        MAT_ITEM_CRUD: ['MAT_ITEM_CRUD', 'MAT_INVENTORY_CRUD', 'MAT_MASTER_CRUD', 'inventoryItems', 'items'],
+        HR_EMPLOYEE_CRUD: ['HR_EMPLOYEE_CRUD', 'employees'],
+        MAT_GRV_CRUD: ['MAT_GRV_CRUD', 'grv'],
+        MAT_GIV_CRUD: ['MAT_GIV_CRUD', 'giv'],
+        FIN_PARTNERS_CRUD: ['FIN_PARTNERS_CRUD', 'partners'],
+        FIN_COA_CRUD: ['FIN_COA_CRUD', 'chartsOfAccounts', 'coa'],
+        transactions: ['transactions', 'dayJournals', 'FIN_TRANSACTIONS'],
+        PAY_PROCESS_CRUD: ['PAY_PROCESS_CRUD'],
+        HR_LEAVE_CRUD: ['HR_LEAVE_CRUD'],
+    };
+    try {
+        for (const k of (aliases[key] || [key])) {
+            const arr = uuSafeList(allData || {}, k);
+            if (arr.length) return arr;
+        }
+    } catch (e) {}
+    return uuSafeList(allData || {}, key);
+};
+const uuEmpName = (e) => { try { return String((e && (e.full_name || e.employee_name || e.name || e.Name)) || '—').trim(); } catch (err) { return '—'; } };
+const uuEmpId = (e) => { try { return String((e && (e.id_number || e.employee_id || e.emp_id || e.id)) || '—').trim(); } catch (err) { return '—'; } };
+const uuEmpDept = (e) => { try { return String((e && (e.department || e.dept || e.Department)) || '—').trim(); } catch (err) { return '—'; } };
+const uuEmpPos = (e) => { try { return String((e && (e.current_position || e.job_title || e.position || e.title)) || '—').trim(); } catch (err) { return '—'; } };
+const uuEmpGenderRaw = (e) => {
+    try {
+        if (!e || typeof e !== 'object') return '';
+        if (e.gender != null) return e.gender;
+        if (e.Gender != null) return e.Gender;
+        if (e.sex != null) return e.sex;
+        if (e.Sex != null) return e.Sex;
+        return '';
+    } catch (err) { return ''; }
+};
+const uuNormalizeGender = (g) => {
+    try {
+        const x = String(g == null ? '' : g).toLowerCase().trim();
+        if (!x) return 'unknown';
+        if (x === 'f' || x === 'female' || x === 'woman' || x === 'women' || x === 'girl') return 'female';
+        if (x === 'm' || x === 'male' || x === 'man' || x === 'men' || x === 'boy') return 'male';
+        if (/\bfemale\b|\bwomen\b|\bwoman\b/.test(x)) return 'female';
+        if (/\bmale\b|\bmen\b|\bman\b/.test(x) && !/\bfemale\b|\bwomen\b|\bwoman\b/.test(x)) return 'male';
+        if (x.startsWith('fem')) return 'female';
+        if (x.startsWith('mal')) return 'male';
+        return 'unknown';
+    } catch (err) { return 'unknown'; }
+};
+const uuMatchGender = (recordGender, want) => !want || uuNormalizeGender(recordGender) === want;
+const uuParseEmployeeFilters = (q) => {
+    try {
+        const s = String(q || '').toLowerCase();
+        let gender = null;
+        if (/\bfemale\b|\bwomen\b|\bwoman\b|\bfemales\b/.test(s)) gender = 'female';
+        else if (/\bmale\b|\bmen\b|\bman\b|\bmales\b/.test(s) && !/\bfemale\b|\bwomen\b|\bwoman\b/.test(s)) gender = 'male';
+        let department = null;
+        const deptMatch = s.match(/\b(?:in|from|at)\s+([a-z][a-z\s]{1,40}?)(?:\s+department|\s+dept)?(?:\s|$)/);
+        if (deptMatch) {
+            const d = deptMatch[1].trim();
+            if (!/^(unity|university|the|a|an|hr|finance|material)$/.test(d)) department = d;
+        }
+        let location = null;
+        for (const loc of ['gerji', 'burayu', 'dessie', 'adama', 'torhailoch', 'bole', 'addis ababa', 'west campus']) {
+            if (s.includes(loc)) { location = loc; break; }
+        }
+        return { gender, department, location };
+    } catch (err) {
+        return { gender: null, department: null, location: null };
+    }
+};
+const uuFilterEmployees = (list, filters) => {
+    try {
+        const rows = Array.isArray(list) ? list : [];
+        const f = filters || {};
+        return rows.filter((e) => {
+            if (!e) return false;
+            if (f.gender && !uuMatchGender(uuEmpGenderRaw(e), f.gender)) return false;
+            if (f.department && !uuEmpDept(e).toLowerCase().includes(String(f.department).toLowerCase())) return false;
+            if (f.location) {
+                const loc = String((e.work_location || e.location || '')).toLowerCase();
+                if (!loc.includes(String(f.location).toLowerCase())) return false;
+            }
+            return true;
+        });
+    } catch (err) { return []; }
+};
+const uuGenderCensus = (list) => {
+    try {
+        const rows = Array.isArray(list) ? list : [];
+        let female = 0, male = 0, unknown = 0;
+        rows.forEach((e) => {
+            const g = uuNormalizeGender(uuEmpGenderRaw(e));
+            if (g === 'female') female += 1;
+            else if (g === 'male') male += 1;
+            else unknown += 1;
+        });
+        return { total: rows.length, female, male, unknown };
+    } catch (err) { return { total: 0, female: 0, male: 0, unknown: 0 }; }
+};
+const uuResolveQuery = (question, priorTopic, priorQuestion) => {
+    try {
+        const raw = String(question || '').trim();
+        const q = raw.toLowerCase();
+        if (!q) return { query: '', topic: priorTopic || '', filters: {}, followUp: false };
+        const followUp = /^(be )?specific|more detail|tell me more|what about|who are they|those|them|same|again|elaborate|details?|narrow|focus|only the/.test(q)
+            || (q.split(/\s+/).length <= 8 && priorTopic && !/\b(grv|giv|payroll|inventory|sku|partner|coa|student)\b/.test(q));
+        let topic = priorTopic || '';
+        if (/\b(sku|skus|item|items|inventory|stock|product|tables?)\b/.test(q)) topic = 'sku';
+        else if (/\b(employee|employees|staff|worker|personnel|female|male|women|men)\b/.test(q)) topic = 'employee';
+        else if (/\b(grv|goods received)\b/.test(q)) topic = 'grv';
+        else if (/\b(giv|goods issued)\b/.test(q)) topic = 'giv';
+        else if (/\bleave\b/.test(q)) topic = 'leave';
+        else if (/\b(partner|supplier|customer|vendor)\b/.test(q)) topic = 'partner';
+        else if (/\b(coa|chart of account)/.test(q)) topic = 'coa';
+        else if (/\b(payroll|payslip|salary process)\b/.test(q)) topic = 'payroll';
+        else if (/\b(transaction|journal|trial balance|\btb\b)\b/.test(q)) topic = 'tx';
+        else if (followUp && priorTopic) topic = priorTopic;
+        let query = raw;
+        if (followUp && priorTopic) query = raw + ' (about ' + priorTopic + (priorQuestion ? '; earlier: ' + priorQuestion : '') + ')';
+        const filterSrc = query + (followUp && priorQuestion ? ' ' + priorQuestion : '');
+        return { query, topic, followUp: !!followUp, filters: uuParseEmployeeFilters(filterSrc) };
+    } catch (err) {
+        return { query: String(question || ''), topic: priorTopic || '', filters: {}, followUp: false };
+    }
+};
+const unityUniversityLiveAnswer = (question, allData, getCollection, topicHint, filtersIn) => {
+    try {
+        const q = String(question || '').toLowerCase().trim();
+        if (!q && !topicHint) return null;
+        const filters = filtersIn || uuParseEmployeeFilters(q) || {};
+        let topic = topicHint || '';
+        if (!topic) {
+            if (/\b(sku|skus|item|items|inventory|stock|tables?)\b/.test(q)) topic = 'sku';
+            else if (/\b(employee|staff|female|male|women|men|personnel)\b/.test(q) || filters.gender) topic = 'employee';
+            else if (/\bgrv\b/.test(q)) topic = 'grv';
+            else if (/\bgiv\b/.test(q)) topic = 'giv';
+            else if (/\bleave\b/.test(q)) topic = 'leave';
+            else if (/\b(partner|supplier|customer)\b/.test(q)) topic = 'partner';
+            else if (/\b(coa|chart of account)/.test(q)) topic = 'coa';
+            else if (/\b(payroll|payslip)\b/.test(q)) topic = 'payroll';
+            else if (/\b(transaction|journal|\btb\b)\b/.test(q)) topic = 'tx';
+        }
+        const employees = uuCorrectEmployeeList(uuPull(allData, getCollection, 'HR_EMPLOYEE_CRUD'));
+        const leave = uuPull(allData, getCollection, 'HR_LEAVE_CRUD');
+        const items = uuPull(allData, getCollection, 'MAT_ITEM_CRUD');
+        const grv = uuPull(allData, getCollection, 'MAT_GRV_CRUD');
+        const giv = uuPull(allData, getCollection, 'MAT_GIV_CRUD');
+        const partners = uuPull(allData, getCollection, 'FIN_PARTNERS_CRUD');
+        const coa = uuPull(allData, getCollection, 'FIN_COA_CRUD');
+        const tx = uuPull(allData, getCollection, 'transactions');
+        const process = uuPull(allData, getCollection, 'PAY_PROCESS_CRUD');
+
+        if (topic === 'employee' || filters.gender || /\b(employee|staff|female|male|women|men|personnel)\b/.test(q)) {
+            const census = uuGenderCensus(employees);
+            const filtered = uuFilterEmployees(employees, filters);
+            const filteredCensus = uuGenderCensus(filtered);
+            const n = filtered.length;
+            let logicNote = filters.gender
+                ? ('Logic check: list length ' + n + ' vs ' + filters.gender + ' in list ' + (filters.gender === 'female' ? filteredCensus.female : filteredCensus.male) + '.')
+                : '';
+            const depts = {};
+            filtered.forEach((e) => { const d = uuEmpDept(e); depts[d] = (depts[d] || 0) + 1; });
+            const deptLines = Object.entries(depts).sort((a, b) => b[1] - a[1]).slice(0, 12).map(([d, c]) => '• ' + d + ': ' + c).join('\n');
+            const lines = filtered.slice(0, 30).map((e) => '• ' + uuEmpId(e) + ' | ' + uuEmpName(e) + ' | ' + uuNormalizeGender(uuEmpGenderRaw(e)) + ' | ' + uuEmpPos(e) + ' | ' + uuEmpDept(e));
+            const filterBits = [];
+            if (filters.gender) filterBits.push('gender=' + filters.gender);
+            if (filters.department) filterBits.push('department~' + filters.department);
+            if (filters.location) filterBits.push('location~' + filters.location);
+            let head = 'Employees (live HR data)\n• Matching: ' + n + '\n• Total in master: ' + census.total + '\n• Full split: female ' + census.female + ' · male ' + census.male + ' · unspecified ' + census.unknown + '\n';
+            if (n === 0) {
+                return { title: filters.gender ? ('Live · ' + filters.gender + ' employees') : 'Live · HR employees', body: head + '• Filters: ' + (filterBits.join(', ') || 'none') + '\n\nNo rows match.\n' + logicNote + '\nSource: HR_EMPLOYEE_CRUD.' };
+            }
+            return {
+                title: filters.gender ? ('Live · ' + filters.gender + ' employees (' + n + ')') : ('Live · HR employees (' + n + ')'),
+                body: head + '• Active filters: ' + (filterBits.join(', ') || 'none') + '\n\nBy department:\n' + (deptLines || '• —') + '\n\nPeople (' + Math.min(n, 30) + (n > 30 ? ' of ' + n : '') + '):\n' + lines.join('\n') + '\n\n' + logicNote + '\nGender uses the record field, corrected from first name when the name is a known male/female Ethiopian name.\nSource: HR_EMPLOYEE_CRUD.',
+            };
+        }
+        if (topic === 'sku' || /\b(sku|skus|inventory|stock|tables?)\b/.test(q)) {
+            const n = items.length;
+            const lines = items.slice(0, 15).map((r) => {
+                const sku = (r && (r.sku || r.item_sku || r.item_code || r.code || r.id)) || '—';
+                const name = (r && (r.name || r.item_name || r.description)) || '';
+                return '• ' + sku + (name ? ' — ' + name : '') + ' | qty ' + ((r && (r.quantity != null ? r.quantity : r.qty)) ?? '—');
+            });
+            const stores = {};
+            items.forEach((r) => {
+                const s = (r && (r.location || r.store || r.warehouse || r.receiving_store)) || 'Main store';
+                stores[s] = (stores[s] || 0) + 1;
+            });
+            const storeLines = Object.entries(stores).sort((a, b) => b[1] - a[1]).map(([s, c]) => '• ' + s + ': ' + c + ' item row(s)').join('\n');
+            const tableHint = /table/.test(q) ? '\n\n"Tables in store" = inventory item rows by store (not SQL tables).' : '';
+            return { title: 'Live · Store / SKUs (' + n + ')', body: n ? ('Inventory SKU rows: ' + n + '\nBy store:\n' + (storeLines || '• —') + '\n\nSample:\n' + lines.join('\n') + tableHint) : ('No inventory rows.' + tableHint) };
+        }
+        if (topic === 'grv' || /\bgrv\b/.test(q)) return { title: 'Live · GRV', body: grv.length + ' GRV record(s). SKUs: ' + items.length + '.' };
+        if (topic === 'giv' || /\bgiv\b/.test(q)) return { title: 'Live · GIV', body: giv.length + ' GIV record(s).' };
+        if (topic === 'leave' || /\bleave\b/.test(q)) return { title: 'Live · Leave', body: leave.length + ' leave record(s). Employees: ' + employees.length + '.' };
+        if (topic === 'partner' || /\b(partner|supplier|customer)\b/.test(q)) return { title: 'Live · Partners', body: partners.length + ' partner(s).' };
+        if (topic === 'coa' || /\bcoa\b/.test(q)) return { title: 'Live · COA', body: coa.length + ' chart-of-account row(s).' };
+        if (topic === 'payroll' || /\bpayroll\b/.test(q)) return { title: 'Live · Payroll process', body: process.length + ' payroll process row(s).' };
+        if (topic === 'tx' || /\b(transaction|journal|\btb\b)\b/.test(q)) return { title: 'Live · Transactions', body: tx.length + ' transaction/journal row(s).' };
+        return null;
+    } catch (err) {
+        return { title: 'unityUniversity AI', body: 'Live data step failed: ' + String(err && err.message ? err.message : err) };
+    }
+};
+const unityUniversityAnswer = (question, allData, getCollection, priorTopic, priorQuestion) => {
+    try {
+        const raw = String(question || '').trim();
+        const resolved = uuResolveQuery(raw, priorTopic, priorQuestion);
+        if (!raw) {
+            return { title: 'unityUniversity AI', body: 'Ask live questions:\n• how many female employees\n• how many male staff\n• how many skus\n• how many GRV', topic: '' };
+        }
+        const live = unityUniversityLiveAnswer(resolved.query, allData, getCollection, resolved.topic, resolved.filters);
+        if (live && live.body) return Object.assign({}, live, { topic: resolved.topic || priorTopic || '' });
+        const q = String(resolved.query || '').toLowerCase();
+        const words = q.split(/[^a-z0-9]+/).filter((w) => w.length > 2);
+        let best = null, bestScore = 0;
+        const knowledge = Array.isArray(UU_AI_KNOWLEDGE) ? UU_AI_KNOWLEDGE : [];
+        for (let i = 0; i < knowledge.length; i++) {
+            const item = knowledge[i];
+            if (!item) continue;
+            let score = 0;
+            const titleL = String(item.title || '').toLowerCase();
+            if (q.includes(titleL)) score += 6;
+            const tags = Array.isArray(item.tags) ? item.tags : [];
+            for (let t = 0; t < tags.length; t++) {
+                const tag = String(tags[t] || '');
+                if (q.includes(tag)) score += 4;
+                for (let w = 0; w < words.length; w++) {
+                    if (tag === words[w]) score += 3;
+                    else if (tag.includes(words[w]) || words[w].includes(tag)) score += 1;
+                }
+            }
+            for (let w = 0; w < words.length; w++) {
+                if (titleL.includes(words[w])) score += 2;
+                if (String(item.body || '').toLowerCase().includes(words[w])) score += 0.2;
+            }
+            if (score > bestScore) { bestScore = score; best = item; }
+        }
+        if (best && bestScore >= 1.5) return { title: best.title, body: best.body, topic: resolved.topic || best.id };
+        return { title: 'unityUniversity AI', body: 'No strong match. Try: how many female employees · how many SKUs · what is Unity SIS', topic: resolved.topic || priorTopic || '' };
+    } catch (err) {
+        return { title: 'unityUniversity AI', body: 'Answer error: ' + String(err && err.message ? err.message : err), topic: priorTopic || '' };
+    }
+};
+const UnityUniversityAI = ({ glassClass = '' }) => {
+    let allData = {};
+    let getCollection = null;
+    try {
+        const dataApi = useData();
+        allData = (dataApi && dataApi.allData) || {};
+        getCollection = dataApi && dataApi.getCollection;
+    } catch (e) { allData = {}; }
+    try {
+        if ((!allData || !Object.keys(allData).length) && typeof window !== 'undefined' && window.__UU_ALL_DATA__) allData = window.__UU_ALL_DATA__;
+    } catch (e) {}
+    const [question, setQuestion] = useState('');
+    const [answer, setAnswer] = useState({ title: 'unityUniversity AI', body: 'Ask live questions — answers appear here at the top.\nExamples: how many female employees · how many SKUs · what is Unity SIS', topic: '' });
+    const [history, setHistory] = useState([]);
+    const [priorTopic, setPriorTopic] = useState('');
+    const [priorQuestion, setPriorQuestion] = useState('');
+    const [busy, setBusy] = useState(false);
+    const answerRef = useRef(null);
+    const ask = (q) => {
+        const query = String(q != null && String(q).length ? q : question).trim();
+        setBusy(true);
+        let ad = allData;
+        let gc = getCollection;
+        try { if (typeof window !== 'undefined' && window.__UU_ALL_DATA__) ad = window.__UU_ALL_DATA__; } catch (e) {}
+        window.setTimeout(() => {
+            try {
+                const res = unityUniversityAnswer(query, ad, gc, priorTopic, priorQuestion);
+                const safe = (res && res.body) ? res : { title: 'unityUniversity AI', body: 'No answer.', topic: priorTopic };
+                setAnswer(safe);
+                if (safe.topic) setPriorTopic(safe.topic);
+                if (query) {
+                    setPriorQuestion(query);
+                    setHistory((h) => [{ q: query, title: safe.title }, ...(Array.isArray(h) ? h : [])].slice(0, 12));
+                }
+                setQuestion('');
+                window.setTimeout(() => { try { answerRef.current && answerRef.current.scrollIntoView && answerRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e2) {} }, 20);
+            } catch (err) {
+                setAnswer({ title: 'unityUniversity AI', body: 'Could not answer: ' + String(err && err.message ? err.message : err), topic: priorTopic });
+            } finally { setBusy(false); }
+        }, 40);
+    };
+    const quick = ['How many female employees?', 'How many male employees?', 'How many employees?', 'Who are the female staff?', 'How many SKUs?', 'How many GRV?', 'Payroll process count', 'What is Unity SIS?'];
+    return (
+        <div className={'mt-6 rounded-[1.75rem] border border-cyan-500/30 bg-gradient-to-br from-cyan-950/50 to-slate-950/80 ' + (glassClass || '') + ' overflow-hidden'}>
+            <div className="px-5 py-4 border-b border-cyan-500/20 flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-2xl bg-cyan-500/20 border border-cyan-400/40 flex items-center justify-center text-cyan-300 text-lg font-black">AI</div>
+                    <div>
+                        <h3 className="text-sm font-black uppercase tracking-widest text-cyan-300">unityUniversity AI</h3>
+                        <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Consistent live logic{priorTopic ? ' · ' + priorTopic : ''}</p>
+                    </div>
+                </div>
+                <span className="text-[9px] font-black uppercase px-2 py-1 rounded-lg bg-cyan-500/10 text-cyan-200/90 border border-cyan-500/20">{busy ? 'Thinking…' : 'Ask anything'}</span>
+            </div>
+            <div className="p-5 space-y-4">
+                <div ref={answerRef} className="rounded-2xl border border-cyan-400/30 bg-black/60 p-4 space-y-2 min-h-[8rem]">
+                    <h4 className="text-xs font-black uppercase tracking-widest text-cyan-300">{(answer && answer.title) || 'unityUniversity AI'}</h4>
+                    <p className="text-[13px] text-gray-100 leading-relaxed whitespace-pre-wrap">{(answer && answer.body) || 'Answer appears here at the top.'}</p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                    {quick.map((label) => (
+                        <button key={label} type="button" onClick={() => ask(label)} disabled={busy} className="px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wide bg-white/5 border border-white/10 text-gray-300 hover:border-cyan-400/40 hover:text-cyan-200 transition disabled:opacity-50">{label}</button>
+                    ))}
+                </div>
+                <div className="flex flex-col sm:flex-row gap-2">
+                    <input type="text" value={question} onChange={(e) => setQuestion(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); ask(); } }} placeholder="e.g. how many female employees" className="flex-1 min-w-0 px-4 py-3 rounded-xl bg-black/50 border border-cyan-500/25 text-sm text-white outline-none focus:border-cyan-400" disabled={busy} />
+                    <button type="button" onClick={() => ask()} disabled={busy} className="px-5 py-3 rounded-xl bg-cyan-600 hover:bg-cyan-500 disabled:bg-cyan-900 text-white text-xs font-black uppercase tracking-wider shrink-0">{busy ? '…' : 'Ask'}</button>
+                </div>
+                {history.length > 0 && (
+                    <div className="space-y-1">
+                        <p className="text-[9px] font-black uppercase tracking-widest text-gray-500">Recent</p>
+                        <div className="flex flex-wrap gap-2">
+                            {history.map((h, idx) => (
+                                <button key={String(h.q) + '-' + idx} type="button" onClick={() => ask(h.q)} className="text-[10px] px-2 py-1 rounded-lg bg-white/5 text-gray-400 hover:text-cyan-200">{h.q}</button>
+                            ))}
+                        </div>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+};
+
+
+
+
+/* —— Ethiopian (Geez) ↔ Gregorian · Power Geez calendar —— */
 const ethiopianMonthNames = [
     'Meskerem', 'Tikimt', 'Hidar', 'Tahsas', 'Tir', 'Yekatit',
     'Megabit', 'Miazia', 'Genbot', 'Sene', 'Hamle', 'Nehase', 'Pagumen'
@@ -4504,8 +4957,8 @@ const EthiopianCalendarPanel = ({ glassClass }) => {
                     <Icons.Calendar className="w-6 h-6 text-amber-400" />
                 </div>
                 <div>
-                    <h2 className="text-xl font-black uppercase italic tracking-tighter text-white">Geez ↔ Gregorian</h2>
-                    <p className="text-[10px] text-amber-400/80 font-black uppercase tracking-[0.25em]">Ethiopian calendar converter</p>
+                    <h2 className="text-xl font-black uppercase italic tracking-tighter text-white">Power Geez · Geez ↔ Gregorian</h2>
+                    <p className="text-[10px] text-amber-400/80 font-black uppercase tracking-[0.25em]">Power Geez · Ethiopian calendar converter</p>
                 </div>
             </div>
 
@@ -4600,6 +5053,7 @@ const EthiopianCalendarPanel = ({ glassClass }) => {
     );
 };
 
+
 const UICustomization = ({ glassClass }) => {
     const { uiSettings, updateUISettings, resetToDefault } = useContext(UIContext);
     const [qrText, setQrText] = useState('');
@@ -4625,19 +5079,12 @@ const UICustomization = ({ glassClass }) => {
         reader.readAsDataURL(file);
     };
 
-    const exportCSV = (slug) => {
-        const data = allData[slug] || [];
-        if (!data.length) return;
-        const csv = [Object.keys(data[0]).join(','), ...data.map(r => Object.values(r).join(','))].join('\n');
-        const blob = new Blob([csv], { type: 'text/csv' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a'); a.href = url; a.download = `${slug}.csv`; a.click();
-    };
-
     return (
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700">
-            <FieldIntelligenceSettings glassClass={glassClass} />
+            <UnityUniversityAI glassClass={glassClass} />
+
             <EthiopianCalendarPanel glassClass={glassClass} />
+
             {/* 1. THE ATMOSPHERIC ENGINE (Scale & Transparency Fixes) */}
             <div className={`p-6 rounded-[2.5rem] border border-white/10 ${glassClass} shadow-2xl`}>
                 <div className="flex items-center gap-4 mb-8">
@@ -4782,383 +5229,234 @@ const UICustomization = ({ glassClass }) => {
     );
 };
 
-const HrDashboard = ({ glassClass }) => {
-    const { getCollection, allData } = useData();
-    const chartRef = useRef(null);
-    const [metric, setMetric] = useState('headcount');
-    const [chartType, setChartType] = useState('bar');
-    const [search, setSearch] = useState('');
-    const [deptFilter, setDeptFilter] = useState('ALL');
-    const [statusFilter, setStatusFilter] = useState('ALL');
-    const [exportOpen, setExportOpen] = useState(false);
+const StaffChangePassword = ({ glassClass }) => {
+    const { changePassword, logout } = useAuth();
+    const { getCollection, updateRecord } = useData(); // <--- Get the missing functions here
+    
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    const [status, setStatus] = useState({ type: '', msg: '' });
 
-    const employees = useMemo(() => {
-        const raw = (typeof getCollection === 'function' ? getCollection('HR_EMPLOYEE_CRUD') : null)
-            || allData?.HR_EMPLOYEE_CRUD
-            || [];
-        try {
-            if (typeof uuMergeHrEmployees === 'function') return uuMergeHrEmployees(raw);
-        } catch (e) {}
-        return Array.isArray(raw) ? raw : [];
-    }, [getCollection, allData]);
+    const [formData, setFormData] = useState({
+        oldPassword: '',
+        newPassword: '',
+        confirmNewPassword: ''
+    });
 
-    const statusOptions = useMemo(() => {
-        const s = new Set(['ALL']);
-        (employees || []).forEach((e) => {
-            const v = e.employment_type || e.status || e.auth_status;
-            if (v) s.add(String(v));
-        });
-        return Array.from(s);
-    }, [employees]);
-
-    const deptOptions = useMemo(() => {
-        const s = new Set(['ALL']);
-        (employees || []).forEach((e) => {
-            if (e.department) s.add(String(e.department));
-        });
-        (typeof getCollection === 'function' ? getCollection('DEPARTMENTS_CRUD') : null)?.forEach?.((d) => {
-            if (d?.name) s.add(String(d.name));
-        });
-        return Array.from(s);
-    }, [employees, getCollection]);
-
-    const leave = useMemo(() => getCollection?.('HR_LEAVE_CRUD') || allData?.HR_LEAVE_CRUD || [], [getCollection, allData]);
-    const recruitment = useMemo(() => getCollection?.('HR_RECRUITMENT_CRUD') || allData?.HR_RECRUITMENT_CRUD || [], [getCollection, allData]);
-    const vacancies = useMemo(() => getCollection?.('HR_VACANCY_CRUD') || allData?.HR_VACANCY_CRUD || [], [getCollection, allData]);
-    const training = useMemo(() => getCollection?.('HR_TRAINING_CRUD') || allData?.HR_TRAINING_CRUD || [], [getCollection, allData]);
-    const appraisal = useMemo(() => getCollection?.('HR_APPRAISAL_CRUD') || allData?.HR_APPRAISAL_CRUD || [], [getCollection, allData]);
-    const insurance = useMemo(() => getCollection?.('HR_INSURANCE_CRUD') || allData?.HR_INSURANCE_CRUD || [], [getCollection, allData]);
-    const attrition = useMemo(() => getCollection?.('HR_STAFF_ATTRITION_CRUD') || allData?.HR_STAFF_ATTRITION_CRUD || [], [getCollection, allData]);
-    const awards = useMemo(() => getCollection?.('HR_AWARD_CRUD') || allData?.HR_AWARD_CRUD || [], [getCollection, allData]);
-    const penalties = useMemo(() => getCollection?.('HR_PENALTY_CRUD') || allData?.HR_PENALTY_CRUD || [], [getCollection, allData]);
-    const depts = useMemo(() => getCollection?.('DEPARTMENTS_CRUD') || allData?.DEPARTMENTS_CRUD || [], [getCollection, allData]);
-
-    const deptNames = useMemo(() => {
-        const fromEmp = employees.map((e) => e.department || e.dept).filter(Boolean);
-        const fromMaster = depts.map((d) => d.name || d.department || d.title).filter(Boolean);
-        return ['ALL', ...new Set([...fromMaster, ...fromEmp])].sort();
-    }, [employees, depts]);
-
-    const filteredEmployees = useMemo(() => {
-        const q = search.trim().toLowerCase();
-        return employees.filter((e) => {
-            const name = String(e.name || e.employee_name || '');
-            const idn = String(e.id_number || '');
-            const dep = String(e.department || e.dept || '');
-            const pos = String(e.job_title || e.position || '');
-            const st = String(e.status || 'Active');
-            if (deptFilter !== 'ALL' && dep !== deptFilter) return false;
-            if (statusFilter !== 'ALL' && st.toLowerCase() !== statusFilter.toLowerCase()) return false;
-            if (!q) return true;
-            return [name, idn, dep, pos, e.tin_no, e.pension_id, e.work_location].join(' ').toLowerCase().includes(q);
-        });
-    }, [employees, search, deptFilter, statusFilter]);
-
-    const stats = useMemo(() => {
-        const active = employees.filter((e) => !/inactive|terminated|resigned/i.test(String(e.status || 'Active'))).length;
-        const academic = employees.filter((e) => /academic/i.test(String(e.employment_category || ''))).length;
-        const nonAc = employees.length - academic;
-        const pendingLeave = leave.filter((r) => /pending|submitted|requested/i.test(String(r.status || ''))).length;
-        const openVac = vacancies.filter((v) => /open|published|active/i.test(String(v.status || ''))).length;
-        const openRec = recruitment.filter((r) => !/hired|rejected|closed/i.test(String(r.status || ''))).length;
-        const openTrain = training.filter((t) => !/completed|cancelled/i.test(String(t.status || ''))).length;
-        const payrollBase = employees.reduce((s, e) => s + (parseFloat(e.gross_salary || e.basic_salary || 0) || 0), 0);
-        return {
-            headcount: employees.length,
-            active,
-            academic,
-            nonAc,
-            pendingLeave,
-            openVac,
-            openRec,
-            openTrain,
-            attrition: attrition.length,
-            awards: awards.length,
-            penalties: penalties.length,
-            insurance: insurance.length,
-            payrollBase,
-            depts: deptNames.length - 1,
-        };
-    }, [employees, leave, vacancies, recruitment, training, attrition, awards, penalties, insurance, deptNames]);
-
-    const chartData = useMemo(() => {
-        const map = {};
-        employees.forEach((e) => {
-            const d = e.department || e.dept || 'Unassigned';
-            if (!map[d]) map[d] = { name: d, headcount: 0, salary: 0, academic: 0 };
-            map[d].headcount += 1;
-            map[d].salary += parseFloat(e.gross_salary || e.basic_salary || 0) || 0;
-            if (/academic/i.test(String(e.employment_category || ''))) map[d].academic += 1;
-        });
-        leave.forEach((r) => {
-            const d = r.department || 'Unassigned';
-            if (!map[d]) map[d] = { name: d, headcount: 0, salary: 0, academic: 0, leave: 0 };
-            map[d].leave = (map[d].leave || 0) + 1;
-        });
-        return Object.values(map).map((row) => ({
-            ...row,
-            value: metric === 'salary' ? row.salary : metric === 'leave' ? (row.leave || 0) : metric === 'academic' ? row.academic : row.headcount,
-        }));
-    }, [employees, leave, metric]);
-
-    const metricCards = [
-        { id: 'headcount', title: 'HEADCOUNT', value: stats.headcount, sub: `${stats.active} active · ${stats.depts} depts`, color: 'text-cyan-400' },
-        { id: 'salary', title: 'SALARY MASS (ETB)', value: stats.payrollBase.toLocaleString(undefined, { maximumFractionDigits: 0 }), sub: 'Sum of current salary (HR master)', color: 'text-emerald-400' },
-        { id: 'leave', title: 'LEAVE PIPELINE', value: stats.pendingLeave, sub: `${leave.length} leave records total`, color: 'text-amber-400' },
-        { id: 'recruit', title: 'RECRUITMENT', value: stats.openRec, sub: `${stats.openVac} open vacancies`, color: 'text-violet-400' },
-        { id: 'academic', title: 'ACADEMIC / NON-AC', value: `${stats.academic} / ${stats.nonAc}`, sub: 'Employment category split', color: 'text-sky-400' },
-        { id: 'dev', title: 'TRAINING OPEN', value: stats.openTrain, sub: `${stats.awards} awards · ${stats.penalties} cases`, color: 'text-rose-400' },
-    ];
-
-    const exportWorkbook = async (format) => {
-        const rows = filteredEmployees.map((e) => ({
-            'ID NO': e.id_number || '',
-            'Full Name': e.name || e.employee_name || '',
-            Gender: e.gender || '',
-            Department: e.department || e.dept || '',
-            'Position / Rank': e.job_title || e.position || '',
-            'Work Location': e.work_location || '',
-            Category: e.employment_category || '',
-            Type: e.employment_type || '',
-            'Current Salary': e.gross_salary || e.basic_salary || '',
-            'Pension ID': e.pension_id || '',
-            'TIN NO': e.tin_no || '',
-            Mobile: e.telephone_number || '',
-            Status: e.status || 'Active',
-            Role: e.system_role || e.role || '',
-        }));
-        const stamp = new Date().toISOString().slice(0, 10);
-        if (format === 'CSV') {
-            if (!rows.length) return;
-            const keys = Object.keys(rows[0]);
-            const csv = [keys.join(','), ...rows.map((r) => keys.map((k) => `"${String(r[k] ?? '').replace(/"/g, '""')}"`).join(','))].join('\n');
-            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-            saveAs(blob, `HR_Employees_${stamp}.csv`);
-            return;
-        }
-        if (format === 'XLSX' || format === 'EXCEL') {
-            const wb = new ExcelJS.Workbook();
-            const ws = wb.addWorksheet('HR Employees');
-            ws.mergeCells('A1:N1');
-            ws.getCell('A1').value = 'UNITY UNIVERSITY — HR EMPLOYEE MASTER';
-            ws.getCell('A1').font = { bold: true, size: 14, color: { argb: 'FF0E7490' } };
-            ws.mergeCells('A2:N2');
-            ws.getCell('A2').value = `Export ${stamp} · ${rows.length} record(s) · filter: ${deptFilter}/${statusFilter} · search: ${search || '—'}`;
-            if (rows.length) {
-                const keys = Object.keys(rows[0]);
-                ws.addRow([]);
-                const header = ws.addRow(keys);
-                header.eachCell((c) => {
-                    c.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-                    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF155E75' } };
-                });
-                rows.forEach((r) => ws.addRow(keys.map((k) => r[k])));
-                keys.forEach((_, idx) => { ws.getColumn(idx + 1).width = 16; });
-            }
-            const buf = await wb.xlsx.writeBuffer();
-            saveAs(new Blob([buf]), `HR_Employees_${stamp}.xlsx`);
-            return;
-        }
-        if (format === 'PDF') {
-            const doc = new jsPDF({ orientation: 'landscape' });
-            doc.setFontSize(14);
-            doc.text('Unity University — HR Employee Master', 14, 16);
-            doc.setFontSize(9);
-            doc.text(`Exported ${stamp} · ${rows.length} rows`, 14, 22);
-            const body = rows.map((r) => [r['ID NO'], r['Full Name'], r.Department, r['Position / Rank'], r['Current Salary'], r.Status]);
-            doc.autoTable({
-                startY: 26,
-                head: [['ID', 'Name', 'Department', 'Position', 'Salary', 'Status']],
-                body,
-                styles: { fontSize: 7 },
-                headStyles: { fillColor: [21, 94, 117] },
-            });
-            doc.save(`HR_Employees_${stamp}.pdf`);
-        }
+    const handleChange = (field, value) => {
+        setFormData(prev => ({ ...prev, [field]: value }));
     };
 
-    const ChartBody = () => {
-        if (!chartData.length) return <p className="text-center text-gray-500 text-sm py-16">No departmental data yet.</p>;
-        const common = { data: chartData, margin: { top: 8, right: 12, left: 0, bottom: 0 } };
-        if (chartType === 'pie') {
-            return (
-                <ResponsiveContainer width="100%" height={280}>
-                    <PieChart>
-                        <Pie data={chartData} dataKey="value" nameKey="name" outerRadius={100} label>
-                            {chartData.map((_, i) => (
-                                <Cell key={i} fill={['#06b6d4', '#10b981', '#f59e0b', '#8b5cf6', '#ef4444', '#6366f1', '#ec4899'][i % 7]} />
-                            ))}
-                        </Pie>
-                        <Tooltip />
-                        <Legend />
-                    </PieChart>
-                </ResponsiveContainer>
-            );
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        setStatus({ type: '', msg: '' });
+
+        if (formData.newPassword !== formData.confirmNewPassword) {
+            setStatus({ type: 'error', msg: "New password confirmation does not match." });
+            return;
         }
-        const Comp = chartType === 'line' ? LineChart : chartType === 'area' ? AreaChart : BarChart;
-        return (
-            <ResponsiveContainer width="100%" height={280}>
-                <Comp {...common}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                    <XAxis dataKey="name" tick={{ fill: '#94a3b8', fontSize: 10 }} />
-                    <YAxis tick={{ fill: '#94a3b8', fontSize: 10 }} />
-                    <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid #334155' }} />
-                    <Legend />
-                    {chartType === 'line' ? (
-                        <Line type="monotone" dataKey="value" stroke="#06b6d4" strokeWidth={2} name={metric} />
-                    ) : chartType === 'area' ? (
-                        <Area type="monotone" dataKey="value" fill="#06b6d4" stroke="#22d3ee" name={metric} />
-                    ) : (
-                        <Bar dataKey="value" fill="#06b6d4" name={metric} radius={[6, 6, 0, 0]} />
-                    )}
-                </Comp>
-            </ResponsiveContainer>
+
+        setIsSubmitting(true);
+        
+        // PASS THE FUNCTIONS HERE:
+        const result = await changePassword(
+            formData.oldPassword, 
+            formData.newPassword, 
+            getCollection, 
+            updateRecord
         );
+        
+        setIsSubmitting(false);
+
+        if (result.success) {
+            setStatus({ type: 'success', msg: result.message });
+            setFormData({ oldPassword: '', newPassword: '', confirmNewPassword: '' });
+            
+            // Re-login requirement: Logout after 2 seconds
+            setTimeout(() => {
+                logout();
+            }, 2000);
+        } else {
+            setStatus({ type: 'error', msg: result.message });
+        }
     };
+
+    // ... (rest of your return JSX remains exactly the same)
+    return (
+        <ContainerCard Icon="Lock" glassClass={glassClass}>
+            <form onSubmit={handleSubmit} className="space-y-5 max-w-md mx-auto p-6">
+                {/* ... existing status and input fields ... */}
+                {status.msg && (
+                    <div className={`p-4 rounded-xl flex items-center text-sm ${
+                        status.type === 'success' ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'
+                    }`}>
+                        {status.msg}
+                    </div>
+                )}
+                
+                <Input label="Current Password" type="password" placeholder="Enter password" value={formData.oldPassword} onChange={(v)=>handleChange('oldPassword',v)} isRequired />
+                <Input label="New Password" type="password" placeholder="Enter password" value={formData.newPassword} onChange={(v)=>handleChange('newPassword',v)} isRequired />
+                <Input label="Confirm New Password" type="password" placeholder="Enter password" value={formData.confirmNewPassword} onChange={(v)=>handleChange('confirmNewPassword',v)} isRequired />
+
+                <button type="submit" disabled={isSubmitting} className="w-full bg-cyan-600 p-4 rounded-xl font-bold text-white">
+                    {isSubmitting ? "Processing..." : "Confirm Password Change"}
+                </button>
+            </form>
+        </ContainerCard>
+    );
+};
+const StaffUpdateProfile = ({ glassClass }) => {
+    const { currentUser } = useAuth();
+    const { getCollection, updateRecord, addRecord } = useData();
+    const [loading, setLoading] = useState(false);
+    const [message, setMessage] = useState({ text: '', type: '' });
+    const [formData, setFormData] = useState({ id: '', name: '', email: '', telephone_number: '' });
+
+    // Try to find the user record in the database
+    const loadUser = useCallback(() => {
+        const allEmployees = getCollection('HR_EMPLOYEE_CRUD') || [];
+        const myRecord = allEmployees.find(emp => 
+            emp.username === currentUser.username || emp.id === currentUser.id
+        );
+
+        if (myRecord) {
+            setFormData({
+                id: myRecord.id,
+                name: myRecord.name || '',
+                email: myRecord.email || '',
+                telephone_number: myRecord.telephone_number || ''
+            });
+            return true;
+        }
+        return false;
+    }, [currentUser, getCollection]);
+
+    useEffect(() => { loadUser(); }, [loadUser]);
+
+    // FALLBACK: Create a record if one doesn't exist
+    const handleInitializeRecord = async () => {
+        setLoading(true);
+        const success = await addRecord('HR_EMPLOYEE_CRUD', {
+            username: currentUser.username,
+            name: currentUser.username,
+            role: currentUser.role,
+            status: 'active'
+        });
+        if (success) {
+            loadUser();
+            setMessage({ text: 'Database record initialized!', type: 'success' });
+        }
+        setLoading(false);
+    };
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        setLoading(true);
+        const success = await updateRecord('HR_EMPLOYEE_CRUD', formData.id, formData);
+        setLoading(false);
+        setMessage(success ? { text: 'Profile saved!', type: 'success' } : { text: 'Save failed.', type: 'error' });
+    };
+
+    if (!formData.id) {
+        return (
+            <div className="p-10 text-center space-y-4">
+                <Icons.Database size={48} className="mx-auto text-yellow-500 opacity-50" />
+                <h2 className="text-xl font-bold text-white">No Database Link Found</h2>
+                <p className="text-gray-400">Your current account ({currentUser.username}) is not yet linked to an employee record.</p>
+                <button onClick={handleInitializeRecord} className="bg-cyan-600 px-6 py-3 rounded-xl font-bold text-white hover:bg-cyan-500">
+                    Initialize Database Record
+                </button>
+            </div>
+        );
+    }
 
     return (
-        <div className="space-y-5 animate-in fade-in duration-500 pb-8">
-            {/* Header */}
-            <div className={`${glassClass} rounded-2xl border border-white/10 p-5 flex flex-col lg:flex-row lg:items-center gap-4 justify-between`}>
-                <div>
-                    <h2 className="text-xl font-black text-white tracking-tight flex items-center gap-2">
-                        <span className="text-cyan-400">◆</span> HR COMMAND CENTER
-                    </h2>
-                    <p className="text-[10px] text-gray-400 mt-1 uppercase tracking-widest">
-                        Unity University · Live employee master · leave · recruitment · development
-                    </p>
-                </div>
-                <div className="flex flex-wrap gap-2 items-center">
-                    <div className="relative">
-                        <input
-                            type="search"
-                            value={search}
-                            onChange={(e) => setSearch(e.target.value)}
-                            placeholder="Search ID, name, dept, TIN, pension…"
-                            className="bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs text-white w-56 focus:outline-none focus:border-cyan-500"
-                        />
-                    </div>
-                    <UUSelect
-                                value={deptFilter}
-                                onChange={setDeptFilter}
-                                options={deptOptions && deptOptions.length ? deptOptions : ['ALL']}
-                                allLabel="All departments"
-                                compact
-                            />
-                    <UUSelect
-                                value={statusFilter}
-                                onChange={setStatusFilter}
-                                options={statusOptions.length ? statusOptions : ['ALL']}
-                                allLabel="All statuses"
-                                compact
-                            />
-                    <div className="relative">
-                        <button type="button" onClick={() => setExportOpen((v) => !v)} className="px-3 py-2 rounded-xl text-[10px] font-black uppercase bg-cyan-600 hover:bg-cyan-500 text-white">
-                            Export ▾
-                        </button>
-                        {exportOpen && (
-                            <div className="absolute right-0 mt-1 z-50 w-44 rounded-xl border border-white/10 bg-slate-900 shadow-xl overflow-hidden">
-                                {['XLSX', 'CSV', 'PDF'].map((f) => (
-                                    <button key={f} type="button" onClick={() => { exportWorkbook(f); setExportOpen(false); }} className="w-full text-left px-3 py-2 text-[11px] text-gray-200 hover:bg-white/10">
-                                        {f === 'XLSX' ? 'Excel workbook' : f}
-                                    </button>
-                                ))}
-                            </div>
-                        )}
-                    </div>
-                </div>
-            </div>
-
-            {/* KPI cards */}
-            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
-                {metricCards.map((c) => (
-                    <button
-                        key={c.id}
-                        type="button"
-                        onClick={() => setMetric(c.id === 'recruit' || c.id === 'dev' ? 'headcount' : c.id === 'salary' ? 'salary' : c.id === 'leave' ? 'leave' : c.id === 'academic' ? 'academic' : 'headcount')}
-                        className={`${glassClass} rounded-2xl border border-white/10 p-4 text-left hover:border-cyan-500/40 transition ${metric === c.id ? 'ring-1 ring-cyan-500/50' : ''}`}
-                    >
-                        <p className="text-[9px] font-black uppercase tracking-widest text-gray-500">{c.title}</p>
-                        <p className={`text-xl font-black mt-1 ${c.color}`}>{c.value}</p>
-                        <p className="text-[10px] text-gray-500 mt-1 leading-snug">{c.sub}</p>
-                    </button>
-                ))}
-            </div>
-
-            {/* Chart + summary */}
-            <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-                <div className={`${glassClass} rounded-2xl border border-white/10 p-4 xl:col-span-2`} ref={chartRef}>
-                    <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-                        <p className="text-xs font-black uppercase tracking-widest text-white">Department profile · {metric}</p>
-                        <div className="flex gap-1">
-                            {['bar', 'line', 'area', 'pie'].map((t) => (
-                                <button key={t} type="button" onClick={() => setChartType(t)} className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase ${chartType === t ? 'bg-cyan-600 text-white' : 'bg-white/5 text-gray-400'}`}>{t}</button>
-                            ))}
-                        </div>
-                    </div>
-                    <ChartBody />
-                </div>
-                <div className={`${glassClass} rounded-2xl border border-white/10 p-4 space-y-3`}>
-                    <p className="text-xs font-black uppercase tracking-widest text-white">Snapshot</p>
-                    {[
-                        ['Employees (filtered)', filteredEmployees.length],
-                        ['Academic staff', stats.academic],
-                        ['Non-academic', stats.nonAc],
-                        ['Open vacancies', stats.openVac],
-                        ['Recruitment in progress', stats.openRec],
-                        ['Pending leave', stats.pendingLeave],
-                        ['Attrition records', stats.attrition],
-                        ['Insurance policies', stats.insurance],
-                    ].map(([k, v]) => (
-                        <div key={k} className="flex justify-between text-[11px] border-b border-white/5 pb-1.5">
-                            <span className="text-gray-400">{k}</span>
-                            <span className="font-bold text-cyan-300">{v}</span>
-                        </div>
-                    ))}
-                </div>
-            </div>
-
-            {/* Employee table */}
-            <div className={`${glassClass} rounded-2xl border border-white/10 overflow-hidden`}>
-                <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between">
-                    <p className="text-xs font-black uppercase tracking-widest text-white">Employee master · full information</p>
-                    <p className="text-[10px] text-gray-500">{filteredEmployees.length} / {employees.length} shown</p>
-                </div>
-                <div className="overflow-auto max-h-[420px] custom-scrollbar">
-                    <table className="min-w-full text-left text-[11px]">
-                        <thead className="sticky top-0 bg-slate-900/95 z-10">
-                            <tr className="text-[9px] uppercase tracking-wider text-gray-400">
-                                {['ID', 'Full name', 'Dept', 'Position', 'Location', 'Category', 'Salary', 'Pension', 'TIN', 'Mobile', 'Status'].map((h) => (
-                                    <th key={h} className="px-3 py-2 font-black whitespace-nowrap">{h}</th>
-                                ))}
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {!filteredEmployees.length ? (
-                                <tr><td colSpan={11} className="px-3 py-10 text-center text-gray-500">No employees match search / filters. Open HR Employee master or clear filters.</td></tr>
-                            ) : filteredEmployees.map((e) => (
-                                <tr key={e.id || e.id_number || e.name} className="border-t border-white/5 hover:bg-white/5">
-                                    <td className="px-3 py-2 font-mono text-cyan-300 whitespace-nowrap">{e.id_number || '—'}</td>
-                                    <td className="px-3 py-2 font-semibold text-white whitespace-nowrap">{e.name || e.employee_name || '—'}</td>
-                                    <td className="px-3 py-2 text-gray-300">{e.department || e.dept || '—'}</td>
-                                    <td className="px-3 py-2 text-gray-300">{e.job_title || e.position || '—'}</td>
-                                    <td className="px-3 py-2 text-gray-400">{e.work_location || '—'}</td>
-                                    <td className="px-3 py-2 text-gray-400">{e.employment_category || '—'}</td>
-                                    <td className="px-3 py-2 text-emerald-300 font-bold">{Number(e.gross_salary || e.basic_salary || 0).toLocaleString()}</td>
-                                    <td className="px-3 py-2 text-gray-400">{e.pension_id || '—'}</td>
-                                    <td className="px-3 py-2 text-gray-400">{e.tin_no || '—'}</td>
-                                    <td className="px-3 py-2 text-gray-400 whitespace-nowrap">{e.telephone_number || '—'}</td>
-                                    <td className="px-3 py-2"><span className="px-2 py-0.5 rounded-full bg-white/5 text-[9px] font-bold uppercase">{e.status || 'Active'}</span></td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
+        <ContainerCard Icon='Edit' glassClass={glassClass}>
+            <form onSubmit={handleSubmit} className="p-6 space-y-4 max-w-xl mx-auto">
+                {message.text && <div className={`p-3 rounded text-sm ${message.type === 'success' ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>{message.text}</div>}
+                <Input label="Full Name" value={formData.name} onChange={(v) => setFormData({...formData, name: v})} />
+                <Input label="Email" value={formData.email} onChange={(v) => setFormData({...formData, email: v})} />
+                <Input label="Phone" value={formData.telephone_number} onChange={(v) => setFormData({...formData, telephone_number: v})} />
+                <button type="submit" className="w-full bg-cyan-600 p-3 rounded font-bold text-white uppercase tracking-widest">{loading ? 'Saving...' : 'Save Profile'}</button>
+            </form>
+        </ContainerCard>
     );
 };
 
+const StaffSignup = ({ glassClass }) => {
+    const { getCollection, addRecord } = useData();
+    const [formData, setFormData] = useState({
+        username: '',
+        fullName: '',
+        password: '',
+        role: '' // Stores the ID from ROLE_CRUD
+    });
+
+    // Populate dropdown with Dynamic Roles from ROLE_CRUD
+    const dynamicRoleOptions = useMemo(() => {
+        const savedRoles = getCollection('ROLE_CRUD') || [];
+        const base = [
+            { label: 'Admin (System)', value: 'admin' },
+            { label: 'Standard Employee', value: 'employee' }
+        ];
+        
+        const custom = savedRoles.map(role => ({
+            label: role.name || role.roleName,
+            value: role.id 
+        }));
+
+        return [...base, ...custom];
+    }, [getCollection]);
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        try {
+            // Find display name for system_role
+            const roleObj = dynamicRoleOptions.find(o => o.value === formData.role);
+            
+            await addRecord('HR_EMPLOYEE_CRUD', {
+                ...formData,
+                name: formData.fullName,
+                status: 'active',
+                system_role: roleObj?.label || 'Employee',
+                createdAt: new Date().toISOString()
+            });
+            
+            alert(`Staff Registered Successfully: ${formData.username}`);
+            setFormData({ username: '', fullName: '', password: '', role: '' });
+        } catch (error) {
+            alert("Signup failed.");
+        }
+    };
+
+    return (
+        <ContainerCard Icon="UserPlus" glassClass={glassClass}>
+            <form onSubmit={handleSubmit} className="p-6 space-y-4 max-w-2xl mx-auto">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <Input label="Full Name" value={formData.fullName} onChange={(v) => setFormData({...formData, fullName: v})} isRequired />
+                    <Input label="Username" value={formData.username} onChange={(v) => setFormData({...formData, username: v})} isRequired />
+                </div>
+                <Input label="Initial Password" type="password" placeholder="Enter password" value={formData.password} onChange={(v) => setFormData({...formData, password: v})} isRequired />
+                
+                <div className="flex flex-col space-y-2">
+                    <label className="text-[10px] font-black text-cyan-400 uppercase tracking-widest">Assign Permission Role</label>
+                    <select 
+                        value={formData.role} 
+                        onChange={(e) => setFormData({...formData, role: e.target.value})} 
+                        className="w-full bg-black/60 border border-white/20 p-4 rounded-xl text-white outline-none focus:border-cyan-500 transition-all font-bold"
+                    >
+                        <option value="">-- Choose Access Level --</option>
+                        {dynamicRoleOptions.map(opt => <option key={opt.value} value={opt.value} className="bg-slate-900">{opt.label}</option>)}
+                    </select>
+                </div>
+
+                <button type="submit" className="w-full bg-cyan-600 hover:bg-cyan-500 p-4 rounded-xl font-black text-white shadow-lg mt-6 uppercase tracking-tighter transition-transform active:scale-95">
+                    Generate Staff Account
+                </button>
+            </form>
+        </ContainerCard>
+    );
+};
+// Access Denied Fallback
 const AccessDenied = ({ glassClass }) => (
     <ContainerCard  Icon='Lock' glassClass={glassClass} className="h-full flex items-center justify-center">
         <div className="text-center text-red-400 p-8">
@@ -5173,274 +5471,154 @@ const AccessDenied = ({ glassClass }) => (
    10. MAIN APP & NAVIGATION (Standard)
    ---------------------------------------------------------------------- */
 const RoleAssignmentManager = ({ glassClass }) => {
-    const { getCollection, updateRecord, addRecord } = useData();
-    const roles = getCollection('ROLE_CRUD') || [];
-    const [userTick, setUserTick] = useState(0);
-
-    // Re-read shared users when tick changes (after assign) or catalog event fires
-    useEffect(() => {
-        const onUpd = () => setUserTick((t) => t + 1);
-        window.addEventListener('uu-shared-users-updated', onUpd);
-        return () => window.removeEventListener('uu-shared-users-updated', onUpd);
-    }, []);
-
-    // System login users (created accounts) — NOT HR staff display names
-    const users = useMemo(() => {
-        const fromShared = (typeof getSharedUsers === 'function' ? getSharedUsers() : []) || [];
-        const fromSys = getCollection('SYS_USERS_CRUD') || getCollection('USERS_CRUD') || [];
-        const byUser = new Map();
-        fromShared.forEach((u) => {
-            if (!u || !u.username) return;
-            byUser.set(String(u.username).toLowerCase(), {
-                id: u.id || `user-${u.username}`,
-                username: String(u.username).trim(),
-                name: u.name || u.display_name || u.username,
-                role: u.role || u.system_role || 'employee',
-                modules: u.modules || null,
-                password: u.password,
-                source: 'shared',
-            });
-        });
-        (Array.isArray(fromSys) ? fromSys : []).forEach((u) => {
-            const username = String(u.username || u.user_name || '').trim();
-            if (!username) return;
-            const prev = byUser.get(username.toLowerCase()) || {};
-            // Shared catalog role wins over stale collection role
-            byUser.set(username.toLowerCase(), {
-                ...prev,
-                id: u.id || prev.id || `user-${username}`,
-                username,
-                name: u.name || u.full_name || prev.name || username,
-                role: prev.role || u.role || u.system_role || 'employee',
-                modules: u.modules || u.allowed_modules || prev.modules,
-                password: u.password != null ? u.password : prev.password,
-                source: 'collection',
-                _raw: u,
-            });
-        });
-        return Array.from(byUser.values()).sort((a, b) =>
-            String(a.username).localeCompare(String(b.username))
-        );
-    }, [getCollection, userTick]);
-
-    const [selectedUsername, setSelectedUsername] = useState('');
+    const { getCollection, updateRecord } = useData();
+    
+    // Use getCollection directly to ensure we get the latest database state
+    const employees = getCollection('HR_EMPLOYEE_CRUD') || [];
+    const roles = getCollection('ROLE_CRUD') || []; 
+    
+    const [selectedEmployeeId, setSelectedEmployeeId] = useState('');
     const [selectedRoleId, setSelectedRoleId] = useState('');
 
-    const selectedUser = users.find(
-        (u) => String(u.username).toLowerCase() === String(selectedUsername).toLowerCase()
-    );
+    const selectStyle = {
+        backgroundColor: '#000000',
+        color: '#ffffff',         
+        appearance: 'none', 
+        WebkitAppearance: 'none'
+    };
 
     const handleAssignment = async () => {
-        if (!selectedUsername || !selectedRoleId) {
-            return alert('Please select both a system user and a role.');
+        if (!selectedEmployeeId || !selectedRoleId) {
+            return alert("Please select both an employee and a role.");
         }
-        const user = users.find(
-            (u) => String(u.username).toLowerCase() === String(selectedUsername).toLowerCase()
-        );
-        const role = roles.find((r) => String(r.id) === String(selectedRoleId));
-        if (!user) {
-            alert('Selected user not found.');
+
+        const employee = employees.find(e => e.id === selectedEmployeeId);
+        const role = roles.find(r => r.id === selectedRoleId);
+
+        if (!employee) {
+            alert("Selected employee not found. Please try again.");
             return;
         }
         if (!role) {
-            alert('Selected role not found.');
+            alert("Selected role not found. Please try again.");
             return;
         }
-        const roleKey = role.roleName || role.name || role.id;
-        // Prefer ROLE_CRUD id so checkPermission finds permissions; keep name for display
-        const roleNorm = String(role.id != null ? role.id : roleKey).trim();
-        const roleSlug = String(roleKey).trim().toLowerCase().replace(/\s+/g, '_');
+
         try {
-            // Always write shared catalog first (login source of truth)
-            if (typeof upsertSharedUser === 'function') {
-                upsertSharedUser({
-                    username: user.username,
-                    password: user.password || '',
-                    name: user.name,
-                    role: roleNorm,
-                    system_role: roleNorm,
-                    role_id: role.id,
-                    role_name: roleKey,
-                    role_slug: roleSlug,
-                    modules: user.modules,
-                    id: user.id,
-                    _forceRole: true,
-                });
-            }
-            // Verify write
-            const verify = (typeof getSharedUsers === 'function' ? getSharedUsers() : []).find(
-                (x) => String(x.username).toLowerCase() === String(user.username).toLowerCase()
-            );
-            if (!verify || String(verify.role).toLowerCase() !== roleNorm) {
-                // Force raw localStorage rewrite
-                try {
-                    const key = 'uu_shared_users_v1';
-                    const raw = JSON.parse(localStorage.getItem(key) || '[]');
-                    const list = Array.isArray(raw) ? raw : [];
-                    const idx = list.findIndex((x) => String(x.username || '').toLowerCase() === String(user.username).toLowerCase());
-                    const row = {
-                        ...(idx >= 0 ? list[idx] : {}),
-                        username: user.username,
-                        password: user.password || (idx >= 0 ? list[idx].password : '') || '',
-                        name: user.name || user.username,
-                        role: roleNorm,
-                        system_role: roleNorm,
-                        role_id: role.id,
-                        role_name: roleKey,
-                        modules: user.modules,
-                        id: user.id,
-                    };
-                    if (idx >= 0) list[idx] = row;
-                    else list.push(row);
-                    localStorage.setItem(key, JSON.stringify(list));
-                    window.dispatchEvent(new CustomEvent('uu-shared-users-updated', { detail: { users: list } }));
-                } catch (e) {
-                    console.error(e);
-                }
-            }
-
-            const collName =
-                (getCollection('SYS_USERS_CRUD') || []).length
-                    ? 'SYS_USERS_CRUD'
-                    : (getCollection('USERS_CRUD') || []).length
-                      ? 'USERS_CRUD'
-                      : null;
-            if (collName && user.id && !String(user.id).startsWith('user-')) {
-                const raw = user._raw || user;
-                await updateRecord(collName, user.id, {
-                    ...raw,
-                    username: user.username,
-                    role: roleNorm,
-                    system_role: roleNorm,
-                    role_id: role.id,
-                    role_name: roleKey,
-                });
-            }
-
-            // Sync active sessions
-            try {
-                const sessKey = 'uu_shared_session_v1';
-                const sess = JSON.parse(localStorage.getItem(sessKey) || 'null');
-                if (sess && String(sess.username).toLowerCase() === String(user.username).toLowerCase()) {
-                    localStorage.setItem(sessKey, JSON.stringify({ ...sess, role: roleNorm, system_role: roleNorm }));
-                }
-                const authKey = 'uu_auth_session_v1';
-                const authSess = JSON.parse(localStorage.getItem(authKey) || 'null');
-                if (authSess && String(authSess.username).toLowerCase() === String(user.username).toLowerCase()) {
-                    localStorage.setItem(authKey, JSON.stringify({ ...authSess, role: roleNorm, system_role: roleNorm }));
-                }
-            } catch (e) {}
-
-            setUserTick((t) => t + 1);
-            alert(`Role "${roleKey}" assigned to user "${user.username}".
-New role: ${roleNorm}
-Log out and log in again if the menu does not update immediately.`);
+            await updateRecord('HR_EMPLOYEE_CRUD', selectedEmployeeId, {
+                ...employee, 
+                role: selectedRoleId, 
+                system_role: role.roleName || role.name 
+            });
+            alert(`Role "${role.roleName || role.name}" assigned to ${employee.name}`);
+            setSelectedEmployeeId('');
             setSelectedRoleId('');
-            // keep username selected so Current role line updates
-            setSelectedUsername(user.username);
         } catch (error) {
-            console.error('Role assignment failed:', error);
-            alert('Role assignment failed. See console for details.');
+            console.error("Role assignment failed:", error);
+            alert("Role assignment failed. Please check the console for errors.");
         }
     };
 
     return (
-        <div className="space-y-6 pb-40">
+        <div className="space-y-6 pb-40"> 
             <ContainerCard glassClass={glassClass}>
                 <div className="p-6 space-y-6">
-                    <div>
-                        <h2 className="text-xl font-black text-white italic uppercase tracking-tight">Role Assignment</h2>
-                        <p className="text-[11px] text-cyan-300/80 font-bold uppercase tracking-widest mt-1">
-                            Assign roles to <span className="text-white">system users</span> (login accounts) — not HR staff names
-                        </p>
-                    </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div className="relative min-w-0">
+                        
+                        {/* EMPLOYEE SELECT */}
+                        <div className="relative">
                             <label className="text-cyan-400 text-[10px] font-bold mb-2 block uppercase tracking-widest">
-                                1. Select system user ({users.length} accounts)
+                                1. Select Staff Member ({employees.length} users found)
                             </label>
-                            <select
-                                className="w-full bg-black border border-white/20 rounded-xl p-4 text-white focus:border-cyan-500 outline-none cursor-pointer shadow-2xl [color-scheme:dark]"
-                                value={selectedUsername}
-                                onChange={(e) => setSelectedUsername(e.target.value)}
+                            <select 
+                                style={selectStyle} 
+                                className="w-full bg-black border border-white/20 rounded-xl p-4 text-white focus:border-cyan-500 outline-none cursor-pointer shadow-2xl"
+                                value={selectedEmployeeId}
+                                onChange={(e) => setSelectedEmployeeId(e.target.value)}
                             >
-                                <option value="">-- Select username --</option>
-                                {users.map((u) => (
-                                    <option key={u.username} value={u.username}>
-                                        {u.username}
-                                        {u.name && u.name !== u.username ? ` — ${u.name}` : ''}
-                                        {u.role ? ` [role: ${u.role}]` : ''}
+                                <option value="">-- Click to view list --</option> 
+                                {employees.map(emp => (
+                                    <option key={emp.id} value={emp.id}>
+                                        {/* FIXED THE CHARACTER ENCODING BELOW */}
+                                        {emp.name} - {emp.email || 'No Email'}
                                     </option>
                                 ))}
                             </select>
-                            {selectedUser && (
-                                <p className="mt-2 text-[10px] text-gray-400 font-mono">
-                                    Current role: <span className="text-cyan-300">{selectedUser.role || '—'}</span>
-                                </p>
-                            )}
                         </div>
-                        <div className="relative min-w-0">
+
+                        {/* ROLE SELECT */}
+                        <div className="relative">
                             <label className="text-cyan-400 text-[10px] font-bold mb-2 block uppercase tracking-widest">
-                                2. Choose permissions role
+                                2. Choose New Permissions Role
                             </label>
-                            <select
-                                className="w-full bg-black border border-white/20 rounded-xl p-4 text-white focus:border-cyan-500 outline-none cursor-pointer shadow-2xl [color-scheme:dark]"
+                            <select 
+                                style={selectStyle} 
+                                className="w-full bg-black border border-white/20 rounded-xl p-4 text-white focus:border-cyan-500 outline-none cursor-pointer shadow-2xl"
                                 value={selectedRoleId}
                                 onChange={(e) => setSelectedRoleId(e.target.value)}
                             >
-                                <option value="">-- Select role --</option>
-                                {roles.map((r) => (
-                                    <option key={r.id} value={r.id}>
-                                        {r.roleName || r.name || r.id}
+                                <option value="">-- Click to view roles --</option> 
+                                {roles.map(role => (
+                                    <option key={role.id} value={role.id}>
+                                        {role.roleName || role.name}
                                     </option>
                                 ))}
                             </select>
                         </div>
                     </div>
-                    <div className="flex flex-wrap gap-3">
-                        <button
-                            type="button"
-                            onClick={handleAssignment}
-                            className="px-6 py-3 rounded-xl text-xs font-black uppercase bg-cyan-600 text-white hover:bg-cyan-500 shadow-lg shadow-cyan-900/40"
-                        >
-                            Assign role to user
-                        </button>
-                    </div>
-                    <div className="overflow-x-auto rounded-xl border border-white/10">
-                        <table className="w-full text-left text-sm min-w-[480px]">
-                            <thead className="bg-slate-950 text-[10px] uppercase font-black tracking-widest text-cyan-400">
-                                <tr>
-                                    <th className="p-3">Username</th>
-                                    <th className="p-3">Display name</th>
-                                    <th className="p-3">Current role</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-white/5">
-                                {users.map((u) => (
-                                    <tr key={u.username} className="hover:bg-white/[0.03]">
-                                        <td className="p-3 font-mono text-cyan-300">{u.username}</td>
-                                        <td className="p-3 text-gray-200">{u.name || '—'}</td>
-                                        <td className="p-3 text-gray-300">{u.role || '—'}</td>
-                                    </tr>
-                                ))}
-                                {!users.length && (
-                                    <tr>
-                                        <td colSpan={3} className="p-6 text-center text-gray-500 text-xs uppercase">
-                                            No system users found. Create users first, then assign roles here.
+
+                    <button 
+                        onClick={handleAssignment}
+                        className="w-full bg-cyan-600 hover:bg-cyan-500 py-4 rounded-xl font-black text-white transition-all shadow-lg flex items-center justify-center gap-2 uppercase tracking-tighter"
+                    >
+                        <Icons.UserCheck className="w-5 h-5" /> Confirm Role Assignment
+                    </button>
+                </div>
+            </ContainerCard>
+
+            <ContainerCard glassClass={glassClass}>
+                <div className="p-4">
+                    <table className="w-full text-left">
+                        <thead>
+                            <tr className="text-gray-500 text-[10px] uppercase border-b border-white/10">
+                                <th className="p-3">Staff</th>
+                                <th className="p-3">Current Role</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/5">
+                            {employees.length === 0 ? (
+                                <tr><td colSpan="2" className="p-4 text-center text-gray-500">No users in database.</td></tr>
+                            ) : (
+                                employees.map(emp => (
+                                    <tr key={emp.id} className="hover:bg-white/5 transition-colors">
+                                        <td className="p-3 text-white font-medium">{emp.name}</td>
+                                        <td className="p-3">
+                                            <span className="bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 px-2 py-1 rounded text-xs">
+                                                {emp.system_role || emp.role || 'N/A'}
+                                            </span>
                                         </td>
                                     </tr>
-                                )}
-                            </tbody>
-                        </table>
-                    </div>
+                                ))
+                            )}
+                        </tbody>
+                    </table>
                 </div>
             </ContainerCard>
         </div>
     );
 };
-
-
-
+// 1. STANDALONE HELPER FUNCTION (Fixes the ReferenceError)
+const findMenuItemTitle = (items, currentId) => {
+    if (!items || !Array.isArray(items)) return null;
+    for (const item of items) {
+        if (item.id === currentId) return item.label || item.title;
+        if (item.children) {
+            const childTitle = findMenuItemTitle(item.children, currentId);
+            if (childTitle) return childTitle;
+        }
+    }
+    return null;
+};
 
 const renderView = (currentView, glassClass, getCollection, checkPermission, allRoles = []) => {
     if (!checkPermission(currentView, allRoles)) return <AccessDenied glassClass={glassClass} />;
@@ -5584,131 +5762,6 @@ const Navigation = ({ menuItems, currentView, setCurrentView, expandedFolders, s
 
  
 
-const AuthScreen = ({ glassClass }) => {
-    const { login } = useAuth();
-    const { getCollection } = useData();
-    // ADDED: Get the logo from UI Context
-    const { uiSettings } = useUI(); 
-    
-    const [username, setUsername] = useState('');
-    const [password, setPassword] = useState('');
-    const [error, setError] = useState('');
-    const [isSubmitting, setIsSubmitting] = useState(false);
-
-    const handleSignIn = async (e) => {
-        e.preventDefault();
-        setError('');
-        setIsSubmitting(true);
-        try {
-            const allEmployees = getCollection('HR_EMPLOYEE_CRUD') || [];
-            const result = await login(username, password, allEmployees);
-            if (!result.success) {
-                setError(result.message || 'Invalid username or password.');
-            }
-        } catch (err) {
-            setError('An unexpected error occurred.');
-            console.error("Login Error:", err);
-        } finally {
-            setIsSubmitting(false);
-        }
-    };
-
-    return (
-        <div className="h-full w-full min-h-0 flex items-center justify-center p-4 bg-slate-950 overflow-y-auto">
-            <div className={`max-w-md w-full p-8 rounded-3xl shadow-2xl border border-white/10 ${glassClass} transform transition-all`}>
-                
-                <div className="flex flex-col items-center mb-8">
-                    {/* FIXED: Conditional Logo Logic */}
-                    <div className="mb-4">
-                        {uiSettings?.logoURL ? (
-                            // Show your UPLOADED logo if it exists
-                            <img 
-                                src={uiSettings.logoURL} 
-                                alt="University Logo" 
-                                className="w-20 h-20 object-contain drop-shadow-lg"
-                            />
-                        ) : (
-                            // Fallback to the icon if no logo is set in UICustomization
-                            <div className="p-4 bg-cyan-500/20 rounded-2xl shadow-inner">
-                                <Icons.Monitor className="w-12 h-12 text-cyan-400" />
-                            </div>
-                        )}
-                    </div>
-                    
-                    <h1 className="text-3xl font-black text-white tracking-tighter italic uppercase text-center">
-                        Material Management - Unity University
-                    </h1>
-                    <p className="text-gray-400 mt-2 text-sm font-medium">Material Management Terminal</p>
-                </div>
-
-                <form onSubmit={handleSignIn} className="space-y-5">
-                    {error && (
-                        <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/50 text-red-400 text-xs flex items-center animate-shake">
-                            <Icons.AlertCircle className="w-4 h-4 mr-2 flex-shrink-0" />
-                            {error}
-                        </div>
-                    )}
-
-                    <div className="space-y-1">
-                        <Input 
-                            label="Username"
-                            value={username}
-                            onChange={(val) => setUsername(val)}
-                            placeholder="Enter your username"
-                            isRequired
-                        />
-                    </div>
-
-                    <div className="space-y-1">
-                        <Input 
-                            label="Password"
-                            type="password"
-                            placeholder="Password"
-                            autoComplete="current-password"
-                            value={password}
-                            onChange={(val) => setPassword(val)}
-                            isRequired
-                        />
-                    </div>
-
-                    <button 
-                        type="submit"
-                        disabled={isSubmitting}
-                        className={`w-full py-4 rounded-2xl font-bold text-white transition-all flex items-center justify-center text-lg
-                            ${isSubmitting 
-                                ? 'bg-gray-700 cursor-not-allowed' 
-                                : 'bg-cyan-600 hover:bg-cyan-500 active:scale-[0.97] shadow-xl shadow-cyan-900/40'
-                            }`}
-                    >
-                        {isSubmitting ? (
-                            <Icons.Loader2 className="w-6 h-6 animate-spin" />
-                        ) : (
-                            <>
-                                <Icons.LogIn className="w-5 h-5 mr-2" />
-                                Sign In
-                            </>
-                        )}
-                    </button>
-                
-                    
-
-                
-                    <LoginModuleSwitcher current="material" />
-                </form>
-
-                <div className="mt-8 pt-6 border-t border-white/5 text-center">
-                    
-                    
-
-                    <p className="text-[10px] text-gray-500 uppercase tracking-[0.2em] font-bold opacity-60">
-                        Secure Access Terminal
-                    </p>
-                </div>
-            </div>
-        </div>
-    );
-}
-
 const HrmAppContent = () => {
     const { isLoggedIn, currentView, setCurrentView, currentUser, checkPermission, logout } = useAuth();
     const { glassOpacityClass, rootStyle, uiSettings } = useUI();
@@ -5717,7 +5770,6 @@ const HrmAppContent = () => {
     // FETCH LIVE ROLES: This is the heartbeat of the April 21 logic
     const allRoles = getCollection('ROLE_CRUD') || [];
     const [showNotifications, setShowNotifications] = useState(false);
-    const [notifCount, setNotifCount] = useState(0);
     const [mobileNavOpen, setMobileNavOpen] = useState(false);
     const isMobile = useIsMobile(768); 
     const [expandedFolders, setExpandedFolders] = useState(['HR', 'SETTINGS']); 
@@ -5763,7 +5815,6 @@ const HrmAppContent = () => {
 
     return (
         <div className="h-full w-full flex flex-col overflow-hidden relative uu-module-root" style={{ ...(rootStyle || {}), position: "relative", inset: "auto", zIndex: "auto", pointerEvents: "auto" }}>
-            <FieldIntelligenceRuntime />
             <MobileStyles />
             <header className={`uu-app-header h-14 shrink-0 flex items-center justify-between px-3 sm:px-6 border-b border-white/10 z-20 ${glassClass}`}>
                 <div className="flex items-center gap-2 sm:gap-4 min-w-0">
@@ -5779,20 +5830,15 @@ const HrmAppContent = () => {
                         <p className="text-[8px] sm:text-[9px] text-cyan-500 uppercase font-black truncate">{currentUser?.role}</p>
                     </div>
                     <button type="button" onClick={logout} className="p-2 bg-red-500/10 text-red-500 rounded-lg hover:bg-red-500/20 text-[10px] sm:text-xs font-bold transition-all">LOGOUT</button>
-                    <button type="button" onClick={() => setShowNotifications(!showNotifications)} className={`relative p-2 rounded-full transition-all ${showNotifications ? 'bg-cyan-500 text-white' : 'text-gray-400 hover:text-cyan-300'}`} aria-label="Notifications">
+                    <button type="button" onClick={() => setShowNotifications(!showNotifications)} className={`p-2 rounded-full transition-all ${showNotifications ? 'bg-cyan-500 text-white' : 'text-gray-400'}`}>
                         <Icons.Bell className="w-5 h-5" />
-                        {notifCount > 0 && (
-                            <span className="absolute -top-0.5 -right-0.5 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-500 text-white text-[9px] font-black flex items-center justify-center ring-2 ring-slate-950">
-                                {notifCount > 99 ? '99+' : notifCount}
-                            </span>
-                        )}
                     </button>
                 </div>
             </header>
 
             <div className="flex flex-grow overflow-hidden min-h-0 relative">
                 {mobileNavOpen && <div className="uu-sidebar-backdrop md:hidden" onClick={() => setMobileNavOpen(false)} />}
-                <aside className={`uu-sidebar-desktop hidden md:block w-[20%] min-w-[260px] max-w-[280px] border-r border-white/10 ${glassClass}`}>
+                <aside className={`uu-sidebar-desktop hidden md:block w-[20%] min-w-[200px] max-w-[280px] border-r border-white/10 ${glassClass}`}>
                     <Navigation
                         menuItems={MENU_ITEMS}
                         currentView={currentView}
@@ -5837,8 +5883,7 @@ const HrmAppContent = () => {
                     <aside className={`w-[25%] border-l border-white/10 animate-in slide-in-from-right ${glassClass}`}>
                         <NotificationBar 
                             glassClass={glassClass} 
-                            currentUser={currentUser}
-                            onCountChange={setNotifCount} 
+                            currentUser={currentUser} 
                             onClose={() => setShowNotifications(false)} 
                         />
                     </aside>
@@ -5863,49 +5908,6 @@ const App = () => {
 
 // Main entry point is the App component
 
-
-const KPI = ({ title, value, iconName, glassClass, colorClass, explanation }) => {
-    const IconComponent = Icons[iconName] || Icons.Activity;
-
-    return (
-        <div className={`p-4 rounded-2xl flex flex-col justify-between ${glassClass} border border-white/5 shadow-xl h-28 hover:border-cyan-500/50 transition-all`}>
-            <div className="flex items-center justify-between w-full">
-                <div className="flex-1">
-                    <p className="text-[9px] font-black text-gray-400 uppercase tracking-[0.2em]">{title}</p>
-                    <p className="text-sm font-black text-white mt-1 tabular-nums tracking-tighter uppercase">
-                        {value}
-                    </p>
-                </div>
-                <div className={`p-2 rounded-xl bg-white/5 ${colorClass}`}>
-                    <IconComponent className="w-5 h-5" />
-                </div>
-            </div>
-            {/* Added Explaining Text here */}
-            <div className="mt-2 pt-2 border-t border-white/10">
-                <p className="text-[8px] leading-tight text-gray-500 italic">
-                    {explanation}
-                </p>
-            </div>
-        </div>
-    );
-}
-
-const StatCard = ({ label, value, Icon, color, glassClass }) => {
-    // If Icon is passed as a component from the Icons object (e.g. Icons.Clock)
-    // We must ensure it is rendered as a JSX tag <Icon />
-    return (
-        <div className={`p-4 rounded-xl ${glassClass} border border-white/10 flex items-center space-x-4`}>
-            <div className={`p-3 rounded-lg bg-gray-800/50 ${color}`}>
-                {/* This is where the error happens if Icon is undefined */}
-                {Icon && <Icon className="w-6 h-6" />}
-            </div>
-            <div>
-                <p className="text-xs text-gray-400 font-medium uppercase tracking-wider">{label}</p>
-                <p className="text-xl font-bold text-white">{value}</p>
-            </div>
-        </div>
-    );
-}
 
 const MatDashboard = ({ glassClass }) => {
     const { getCollection } = useData();

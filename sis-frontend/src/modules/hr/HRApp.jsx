@@ -1,15 +1,16 @@
 import ModuleAccessGate from '../../unity/ModuleAccessGate.jsx';
-import { attemptSharedLogin, upsertSharedUsers, getSharedUsers, resolveAssignedRole, changeSharedPassword, upsertSharedUser, saveSharedRoles, saveSharedSession, loadSharedSession, clearSharedSession, canAccessModule, getSharedRoles, mergeSharedRolesInto } from '../../unity/SharedCredentials.js';
+import { attemptSharedLogin, upsertSharedUsers, upsertSharedUser, saveSharedRoles, saveSharedSession, loadSharedSession, clearSharedSession, canAccessModule, getSharedRoles, mergeSharedRolesInto } from '../../unity/SharedCredentials.js';
 import { afterHrBootstrap, publishHrEmployees } from '../../unity/UnityModuleBridge.js';
 import LoginModuleSwitcher from '../../unity/LoginModuleSwitcher.jsx';
 import { MobileStyles, useIsMobile } from '../../unity/mobileCompat.js';
-import { IntelTip, IntelLabel, FieldIntelligenceSettings, FieldIntelligenceRuntime } from '../../unity/FieldIntelligence.jsx';
                
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import ReactDOM, { createPortal } from 'react-dom';
 import * as Icons from 'lucide-react';
 
 import {
+
+/* Gender helpers (hoisted early — used by mock generators and unityUniversity AI) */
+
     BarChart,
     Bar,
     XAxis,
@@ -37,6 +38,28 @@ import 'jspdf-autotable';
 import * as docx from 'docx';
 import { saveAs } from 'file-saver';
 
+/* Gender helpers (early — used by mock generators and AI) */
+const UU_FEMALE_FIRST_EARLY = new Set(['lomi','saba','tigist','eleni','hanna','aster','netsanet','sara','sarah','bethlehem','mahlet','selam','rahel','helen','meseret','hiwot','kidist','marta','martha','yeshi','almaz','tsion','beten','sosina','liya','ruth','meron','eden','abeba','tsehay','worknesh','senait','bezawit','hawi','meaza','frehiwot','genet','ayelech','mekdes','selamawit','tsehaynesh','bethel','hirut','firehiwot','yelena']);
+const UU_MALE_FIRST_EARLY = new Set(['abebe','kebede','chala','jemal','fasil','bereket','yonas','henok','kalab','tadesse','dawit','lemma','daniel','samuel','solomon','yared','mulugeta','getachew','tesfaye','hailu','mekonnen','assefa','girma','wolde','negash','bekele','yonatan','nahom','abel','kaleb','biruk','natnael','robelt','kirubel','ammanuel','amanuel','eyob','yohannes','melaku','sisay','asfaw','desta','haile','tewodros','mengistu','berhanu','gashaw','tamiru','fikadu','teklu','damte']);
+function uuGuessGenderFromName(fullName) {
+    const first = String(fullName || '').trim().split(/\s+/)[0].toLowerCase();
+    if (!first) return '';
+    if (UU_FEMALE_FIRST_EARLY.has(first)) return 'Female';
+    if (UU_MALE_FIRST_EARLY.has(first)) return 'Male';
+    return '';
+}
+function uuCorrectEmployeeGender(e) {
+    if (!e || typeof e !== 'object') return e;
+    const name = e.full_name || e.employee_name || e.name || e.Name || '';
+    const guessed = uuGuessGenderFromName(name);
+    if (!guessed) return e;
+    return Object.assign({}, e, { gender: guessed, Gender: guessed });
+}
+function uuCorrectEmployeeList(list) {
+    return Array.isArray(list) ? list.map(uuCorrectEmployeeGender) : [];
+}
+
+
 /* ===== HR ↔ Finance integration (no extra module) ===== */
 const UU_HR_EMP_KEY = 'uu_shared_hr_employees_v1';
 const uuLoadHrEmployees = () => {
@@ -49,17 +72,9 @@ const uuLoadHrEmployees = () => {
 };
 const uuSaveHrEmployees = (list) => {
     try {
-        const arr = Array.isArray(list) ? list : [];
-        localStorage.setItem(UU_HR_EMP_KEY, JSON.stringify(arr));
-        try {
-            window.dispatchEvent(new CustomEvent('uu-hr-employees-updated', { detail: { count: arr.length, at: Date.now() } }));
-        } catch (e) {}
-        try {
-            window.dispatchEvent(new CustomEvent('uu-sis-sync', { detail: { type: 'HR_EMPLOYEES', count: arr.length } }));
-        } catch (e) {}
+        localStorage.setItem(UU_HR_EMP_KEY, JSON.stringify(Array.isArray(list) ? list : []));
     } catch (e) {}
 };
-
 const uuNormHrEmp = (e) => {
     if (!e || typeof e !== 'object') return null;
     const name = e.name || e.employee_name || e.full_name || '';
@@ -87,21 +102,14 @@ const uuNormHrEmp = (e) => {
 };
 const uuMergeHrEmployees = (local = []) => {
     const by = new Map();
-    const put = (e) => {
+    [...(local || []), ...uuLoadHrEmployees()].forEach((e) => {
         const n = uuNormHrEmp(e);
         if (!n) return;
-        const k = String(n.id_number || n.id || n.name).toLowerCase().trim();
-        if (!k) return;
+        const k = String(n.id_number || n.name).toLowerCase();
         by.set(k, { ...(by.get(k) || {}), ...n });
-    };
-    // local HR allData first, then shared — shared/latest publish overwrites same key
-    (Array.isArray(local) ? local : []).forEach(put);
-    uuLoadHrEmployees().forEach(put);
-    // if local is non-empty, prefer local fields on top of storage for this module's own view
-    (Array.isArray(local) ? local : []).forEach(put);
+    });
     return Array.from(by.values());
 };
-
 const uuPublishHrEmployees = (list) => {
     const merged = uuMergeHrEmployees(list || []);
     uuSaveHrEmployees(merged);
@@ -454,174 +462,19 @@ export const AuthProvider = ({ children }) => {
     }, []);
 
     const changePassword = async (oldPassword, newPassword, getCollection, updateRecord) => {
-        try {
-            if (!currentUser || !currentUser.username) {
-                return { success: false, message: 'Not signed in.' };
-            }
-            const uName = String(currentUser.username).trim();
-            const oldP = String(oldPassword ?? '');
-            const newP = String(newPassword ?? '').trim();
-            if (!oldP) return { success: false, message: 'Current password is required.' };
-            if (!newP || newP.length < 4) {
-                return { success: false, message: 'New password must be at least 4 characters.' };
-            }
-            if (oldP === newP) {
-                return { success: false, message: 'New password must be different from the current password.' };
-            }
+        if (!getCollection || !updateRecord) return { success: false, message: 'Database failure.' };
+        const employees = getCollection('HR_EMPLOYEE_CRUD') || [];
+        const userRecord = employees.find(u => u.username === currentUser.username);
 
-            // Prefer shared helper; fall back to local implementation
-            let applyShared = null;
-            try {
-                if (typeof changeSharedPassword === 'function') applyShared = changeSharedPassword;
-            } catch (e) {}
-            if (!applyShared) {
-                applyShared = (username, o, n) => {
-                    try {
-                        const users = (typeof getSharedUsers === 'function' ? getSharedUsers() : []) || [];
-                        const found = users.find(
-                            (u) => String(u.username || '').trim().toLowerCase() === String(username).toLowerCase()
-                        );
-                        if (!found) return { success: false, message: 'User account not found.' };
-                        const stored = String(found.password ?? '');
-                        if (stored !== String(o ?? '') && stored.trim() !== String(o ?? '').trim()) {
-                            return { success: false, message: 'Current password incorrect.' };
-                        }
-                        if (typeof upsertSharedUser === 'function') {
-                            upsertSharedUser({
-                                username: found.username,
-                                password: String(n).trim(),
-                                name: found.name,
-                                role: found.role,
-                                system_role: found.system_role || found.role,
-                                role_id: found.role_id,
-                                role_name: found.role_name,
-                                modules: found.modules,
-                                id: found.id,
-                                _forceRole: true,
-                            });
-                        } else {
-                            // raw localStorage write
-                            const key = 'uu_shared_users_v1';
-                            const raw = JSON.parse(localStorage.getItem(key) || '[]');
-                            const list = Array.isArray(raw) ? raw : [];
-                            const idx = list.findIndex(
-                                (u) => String(u.username || '').toLowerCase() === String(username).toLowerCase()
-                            );
-                            const row = {
-                                ...(idx >= 0 ? list[idx] : {}),
-                                username: found.username || username,
-                                password: String(n).trim(),
-                                role: found.role,
-                                name: found.name,
-                            };
-                            if (idx >= 0) list[idx] = { ...list[idx], ...row };
-                            else list.push(row);
-                            localStorage.setItem(key, JSON.stringify(list));
-                        }
-                        return { success: true, message: 'Password updated successfully. Please sign in again.' };
-                    } catch (err) {
-                        console.error(err);
-                        return { success: false, message: 'Password change failed.' };
-                    }
-                };
-            }
-
-            let result = applyShared(uName, oldP, newP);
-
-            // If not in shared store, try matching session-only / HR employee password
-            if (!result.success && result.message === 'User account not found.') {
-                // Seed shared user from current session + provided current password
-                try {
-                    if (typeof upsertSharedUser === 'function') {
-                        // Only accept if they can prove old password against HR or we allow set
-                        let hrOk = false;
-                        if (getCollection) {
-                            const employees = getCollection('HR_EMPLOYEE_CRUD') || [];
-                            const userRecord = employees.find(
-                                (u) =>
-                                    u &&
-                                    String(u.username || u.user_name || '').toLowerCase() === uName.toLowerCase()
-                            );
-                            if (userRecord && String(userRecord.password ?? '') === oldP) hrOk = true;
-                        }
-                        // Also accept if they just logged in with this password (session active)
-                        // User is logged in — trust oldP only when HR matches OR shared gets created with verify
-                        if (hrOk) {
-                            upsertSharedUser({
-                                username: uName,
-                                password: newP,
-                                name: currentUser.name || uName,
-                                role: currentUser.role,
-                                role_id: currentUser.role_id,
-                                role_name: currentUser.role_name,
-                                _forceRole: true,
-                            });
-                            result = { success: true, message: 'Password updated successfully. Please sign in again.' };
-                        }
-                    }
-                } catch (e) {}
-            }
-
-            // HR employee password sync
-            try {
-                if (result.success && getCollection && updateRecord) {
-                    const employees = getCollection('HR_EMPLOYEE_CRUD') || [];
-                    const userRecord = employees.find(
-                        (u) =>
-                            u &&
-                            String(u.username || u.user_name || '').toLowerCase() === uName.toLowerCase()
-                    );
-                    if (userRecord && userRecord.id != null) {
-                        await updateRecord('HR_EMPLOYEE_CRUD', userRecord.id, {
-                            ...userRecord,
-                            password: newP,
-                        });
-                    }
-                }
-            } catch (e) {
-                console.warn('[changePassword] HR sync', e);
-            }
-
-            // HR-only fallback when shared said incorrect / not found
-            if (!result.success && getCollection && updateRecord) {
-                const employees = getCollection('HR_EMPLOYEE_CRUD') || [];
-                const userRecord = employees.find(
-                    (u) =>
-                        u &&
-                        String(u.username || u.user_name || '').toLowerCase() === uName.toLowerCase()
-                );
-                if (userRecord && String(userRecord.password ?? '') === oldP) {
-                    const ok = await updateRecord('HR_EMPLOYEE_CRUD', userRecord.id, {
-                        ...userRecord,
-                        password: newP,
-                    });
-                    if (ok) {
-                        try {
-                            if (typeof upsertSharedUser === 'function') {
-                                upsertSharedUser({
-                                    username: uName,
-                                    password: newP,
-                                    name: userRecord.name || userRecord.employee_name || uName,
-                                    role: currentUser.role,
-                                    _forceRole: true,
-                                });
-                            }
-                        } catch (e) {}
-                        result = {
-                            success: true,
-                            message: 'Password updated successfully. Please sign in again.',
-                        };
-                    }
-                }
-            }
-
-            return result.success
-                ? result
-                : { success: false, message: result.message || 'Current password incorrect.' };
-        } catch (err) {
-            console.error(err);
-            return { success: false, message: 'Password change failed.' };
+        if (!userRecord || userRecord.password !== oldPassword.trim()) {
+            return { success: false, message: 'Current password incorrect.' };
         }
+
+        const success = await updateRecord('HR_EMPLOYEE_CRUD', userRecord.id, { 
+            ...userRecord, 
+            password: newPassword.trim() 
+        });
+        return success ? { success: true, message: 'Updated! Please re-login.' } : { success: false };
     };
 
     /**
@@ -642,7 +495,6 @@ export const AuthProvider = ({ children }) => {
             else if (typeof getSharedRoles === 'function') roles = [...roles, ...(getSharedRoles() || [])];
         } catch (e) {}
 
-        const norm = (x) => String(x || '').trim().toLowerCase().replace(/\s+/g, '_');
         const roleDef = roles.find(
             (r) =>
                 r &&
@@ -650,11 +502,7 @@ export const AuthProvider = ({ children }) => {
                     String(r.name) === role ||
                     String(r.roleName || '') === role ||
                     String(r.id || '').toLowerCase() === role.toLowerCase() ||
-                    String(r.name || '').toLowerCase() === role.toLowerCase() ||
-                    norm(r.roleName) === norm(role) ||
-                    norm(r.name) === norm(role) ||
-                    String(r.id) === String(currentUser.role_id || '') ||
-                    norm(r.roleName) === norm(currentUser.role_name))
+                    String(r.name || '').toLowerCase() === role.toLowerCase())
         );
 
         if (roleDef) {
@@ -689,38 +537,13 @@ export const AuthProvider = ({ children }) => {
 
     const login = async (username, password, allEmployees = []) => {
         setLoading(true);
-        await new Promise((resolve) => setTimeout(resolve, 200));
-        const applyRole = (baseUser) => {
-            const uName = (baseUser && baseUser.username) || username;
-            let assigned = null;
-            try {
-                assigned = typeof resolveAssignedRole === 'function' ? resolveAssignedRole(uName) : null;
-            } catch (e) {}
-            const role = (assigned && assigned.role) || (baseUser && baseUser.role) || 'employee';
-            return {
-                ...(baseUser || {}),
-                username: uName,
-                name: (baseUser && baseUser.name) || (assigned && assigned.name) || uName,
-                role,
-                system_role: role,
-                role_id: (assigned && assigned.role_id) || (baseUser && baseUser.role_id) || null,
-                role_name: (assigned && assigned.role_name) || (baseUser && baseUser.role_name) || null,
-                modules: (baseUser && baseUser.modules) || (assigned && assigned.modules) || null,
-            };
-        };
+        await new Promise((resolve) => setTimeout(resolve, 300));
         try {
-            try {
-                const { login: apiLogin } = await import('../../unity/api.js');
-                await apiLogin(username, password);
-            } catch (apiErr) {
-                console.warn('[HR] API login failed (CRUD may stay local-only):', apiErr && apiErr.message);
-            }
             const result = attemptSharedLogin(username, password, allEmployees || []);
             if (result.success && result.user) {
-                const user = applyRole(result.user);
-                setCurrentUser(user);
+                setCurrentUser(result.user);
                 setIsLoggedIn(true);
-                try { saveSharedSession(user); } catch (e) {}
+                try { saveSharedSession(result.user); } catch (e) {}
                 setCurrentView('HR_DASHBOARD_VIEW');
                 setLoading(false);
                 return { success: true };
@@ -733,6 +556,7 @@ export const AuthProvider = ({ children }) => {
             return { success: false, message: 'Login error.' };
         }
     };
+
 
     const authValue = useMemo(() => ({
         isLoggedIn, currentUser, loading, login, changePassword, 
@@ -815,76 +639,65 @@ const generateMockData = (collectionName, count = 35) => {
 
         switch (collectionName) {
             case 'employees':
-            case 'HR_EMPLOYEE_CRUD': {
-                const roleForDemo = employeeName.includes('admin') ? 'admin' :
-                                   employeeName.includes('manager') ? 'hr_manager' :
+            case 'HR_EMPLOYEE_CRUD':
+                // ROLE LOGIC
+                const roleForDemo = employeeName.includes('admin') ? 'admin' : 
+                                   employeeName.includes('manager') ? 'hr_manager' : 
                                    employeeName.includes('staff') ? 'hr_staff' : 'employee';
 
+                // LOGICAL ACADEMIC MATCHING
+                // If i is even, make them a Lecturer (Academic), otherwise an Officer (Non-Academic)
                 const jobTitle = i % 2 === 0 ? `Lecturer ${i % 3 + 1}` : `Officer ${i % 3 + 1}`;
                 const category = jobTitle.includes('Lecturer') ? 'Academic' : 'Non-Academic';
-                // Trigger notifications: some near retirement, some on provision
-                let empDobGc = dob_gc;
-                let empAge = (2026 - birthYear);
-                let empType = i % 3 === 0 ? 'Non-Permanent' : 'Permanent';
-                let seniorityGc = getRandomDate();
-                if (i === 1 || i === 2) {
-                    // Retires within ~2–5 months of Sept 2026 (age ~60)
-                    empDobGc = `1966-${String(10 + (i % 2)).padStart(2, '0')}-15`;
-                    empAge = 60;
-                }
-                if (i === 3 || i === 4) {
-                    empType = 'Non-Permanent';
-                    seniorityGc = `2026-0${3 + (i % 3)}-10`; // provision ends ~6 months after start
-                }
-                const locations = ['Gerji', 'Burayu', 'Dessie', 'Adama', 'Torhailoch', 'Bole', 'Addis Ababa'];
-                const fullName = employeeName.includes(' ') ? employeeName : `${employeeName} Unity`;
+
                 data.push({
-                    id,
+                    id, 
+                    // Page 2 Fields
                     id_number: `UU-${String(i).padStart(3, '0')}`,
-                    name: fullName,
-                    employee_name: fullName,
-                    full_name: fullName,
-                    gender: i % 2 === 0 ? 'Male' : 'Female',
-                    dob_gc: empDobGc,
+                    name: employeeName, 
+                    gender: uuGuessGenderFromName(typeof employeeName !== 'undefined' ? employeeName : (typeof fullName !== 'undefined' ? fullName : '')) || (i % 2 === 0 ? 'Male' : 'Female'),
+                    dob_gc: dob_gc,
                     dob_ec: dob_ec,
-                    age: String(empAge),
+                    age: (2026 - birthYear).toString(),
                     marital_status: ['Single', 'Married', 'Divorced', 'Widowed'][i % 4],
-                    seniority_date_gc: seniorityGc,
+                    seniority_date_gc: getRandomDate(),
                     seniority_date_ec: getRandomECDate(),
-                    work_location: locations[i % locations.length],
+
+                    // Workplace & Position
+                    work_location: ['Gerji', 'Burayu', 'Dessie', 'Adama'][i % 4],
                     department: departments[i % departments.length],
-                    job_title: jobTitle,
-                    current_position: jobTitle,
+                    job_title: jobTitle, 
                     reporting_to: 'Department Head',
-                    employment_category: category,
-                    employment_type: empType,
+                    employment_category: category, // MODIFIED: Logical link to title
+                    employment_type: i % 3 === 0 ? 'Non-Permanent' : 'Permanent',
+
+                    // Page 3 Fields
                     educational_status: jobTitle.includes('Lecturer') ? 'Masters Degree' : 'Bachelors Degree',
-                    cumulative_gpa: (2.7 + (i % 12) * 0.1).toFixed(2),
                     auth_status: 'Approved',
                     field_of_study: jobTitle.includes('Lecturer') ? 'Advanced Academics' : 'Operational Management',
-                    gross_salary: (salary + 8000 + i * 120).toFixed(2),
-                    current_salary: (salary + 8000 + i * 120).toFixed(2),
-                    basic_salary: (salary + 8000 + i * 120).toFixed(2),
-                    family_contact: `Family of ${fullName}`,
+                    
+                    // Page 1 Fields (Financial/Legal/Contact)
+                    gross_salary: (salary + 5000).toFixed(2),
+                    family_contact: `Family Member ${i}`,
                     pension_id: `PEN-${1000 + i}`,
                     retirement_date_ec: retirement_date_ec,
-                    national_id: `NID-${55000 + i}`,
-                    tin_no: `TIN-${30000 + i * 17}`,
-                    telephone_number: `+2519${String(10000000 + i * 137).slice(0, 8)}`,
-                    mobile: `+2519${String(10000000 + i * 137).slice(0, 8)}`,
-                    office_tel: `0116${String(2000 + i).slice(-4)}`,
-                    ext_no: String(100 + i),
-                    emergency_contact_name: `Emergency Contact ${i}`,
-                    emergency_contact_telephone: `+251911${String(100000 + i).slice(0, 6)}`,
-                    emergency_contact_address: `Addis Ababa, Sub-city ${i % 10}`,
-                    education_entries: education,
-                    remarks: i % 5 === 0 ? 'Verified Unity University staff record' : 'Typical HR master row',
+                    national_id: `NID-${Math.floor(Math.random() * 90000)}`,
+                    tin_no: `TIN-${Math.floor(Math.random() * 80000)}`,
+                    
+                    telephone_number: `+2519${Math.floor(Math.random() * 99999999)}`,
+                    office_tel: `0116${String(i).padStart(4, '0')}`,
+                    ext_no: `${100 + i}`,
+                    emergency_contact_name: `Contact Person ${i}`, 
+                    emergency_contact_telephone: `+25111${Math.floor(Math.random() * 9999999)}`,
+                    emergency_contact_address: `Addis Ababa, Sub-city ${i % 10}`, 
+
+                    // Array Fields (Multiple Entries)
+                    education_entries: education, 
+                    remarks: i % 5 === 0 ? "Employee data verified" : "",
                     beneficiaries: beneficiaries,
-                    system_role: roleForDemo,
-                    status: i % 11 === 0 ? 'On Leave' : 'Active',
+                    system_role: roleForDemo
                 });
                 break;
-            }
 
             case 'departments':
                 // Only generate records for the length of the departement list to avoid repeats
@@ -929,42 +742,28 @@ case 'HR_VACANCY_CRUD':
         description: `Responsible for maintaining excellence in the ${departments[i % departments.length]} department.`
     });
     break;
-            case 'retirementRecords': {
-                const rDate = i <= 3 ? ('2026-1' + String(i).padStart(1, '0') + '-15') : getRandomDate();
+            case 'retirementRecords':
                 data.push({
                     id,
                     employee_name: employeeNames[i % employeeNames.length],
-                    employee_id: `UU-${String(((i - 1) % 10) + 1).padStart(3, '0')}`,
-                    department: departments[i % departments.length],
-                    retirement_date: i <= 2 ? '2026-10-15' : (i <= 4 ? '2026-12-01' : rDate),
-                    reason: i % 2 === 0 ? 'Reached mandatory retirement age - Standard' : 'Early retirement request',
-                    pension_details: `Pension Plan Alpha - ID ${1000 + i}`,
-                    status: i <= 4 ? 'In Progress' : 'Completed',
-                    notes: 'Handover process initiated. Documentation with HR.',
+                    retirement_date: getRandomDate(),
+                    reason: `Reached mandatory retirement age - ${i % 2 === 0 ? 'Standard' : 'Early'}`,
+                    pension_details: `Pension Plan Alpha - ID ${Math.floor(Math.random() * 1000)}`,
+                    notes: 'Handover process initiated. All documentation pending.'
                 });
                 break;
-            }
 
-
-            case 'resignationRecords': {
-                const lastDay = i <= 3
-                    ? ('2026-09-' + String(1 + i).padStart(2, '0'))
-                    : (i <= 6 ? '2026-09-20' : getRandomDate());
+            case 'resignationRecords':
                 data.push({
                     id,
                     employee_name: employeeName,
-                    employee_id: `UU-${String(((i - 1) % 10) + 1).padStart(3, '0')}`,
-                    department: departments[i % departments.length],
-                    resignation_date: i <= 6 ? '2026-08-15' : getRandomDate(),
-                    last_working_day: lastDay,
-                    reason: ['Better Opportunity', 'Personal Reasons', 'Relocation', 'Further Study'][i % 4],
-                    acceptance_status: i <= 6 ? 'Accepted' : ['Accepted', 'Pending', 'Rejected'][i % 3],
-                    handover_completed: i <= 2 ? 'No' : ['Yes', 'No'][i % 2],
-                    remarks: i <= 3 ? 'Final working day this month — complete clearance' : 'Standard exit process',
+                    resignation_date: getRandomDate(),
+                    last_working_day: getRandomDate(),
+                    reason: ['Better Opportunity', 'Personal Reasons', 'Relocation'][Math.floor(Math.random() * 3)],
+                    acceptance_status: ['Accepted', 'Pending', 'Rejected'][Math.floor(Math.random() * 3)],
+                    handover_completed: ['Yes', 'No'][Math.floor(Math.random() * 2)],
                 });
                 break;
-            }
-
 
             case 'deathRecords':
                 data.push({
@@ -1038,153 +837,34 @@ case 'HR_RECRUITMENT_CRUD':
         verified_by_comment: 'Credentials and professional history verified.',
         approved_by: 'Deputy President Treasury, Manpower and Enterprise Management',
         approved_by_signature: 'SIGNED_E-STAMP_ID_882',
-        approval_date: itemDate,
-        status: i <= 4 ? 'In Progress' : (i <= 7 ? 'Shortlisted' : 'Completed'),
+        approval_date: itemDate
     });
     break;   
     // Inside your generateMockData function switch statement:
 case 'HR_COMPETENCE_CRUD':
-case 'competenceMatrix': {
-                if (i !== 1) break;
-                const skillCats = (typeof NEW_MOCK_SKILLS !== 'undefined' && NEW_MOCK_SKILLS)
-                    ? NEW_MOCK_SKILLS
-                    : {
-                        'Core / Foundational Competencies (Universal for all jobs)': ['Critical thinking', 'Problem-solving', 'Decision-making', 'Learning agility'],
-                        'Communication Skills': ['Verbal communication', 'Written communication', 'Presentation skills', 'Active listening'],
-                        'Interpersonal Skills': ['Teamwork', 'Collaboration', 'Conflict resolution', 'Emotional intelligence'],
-                        'Technical / Professional': ['Domain expertise', 'Process compliance', 'Quality focus', 'Digital literacy'],
-                      };
-                const catNames = Object.keys(skillCats);
-                const levelLabel = (s) => ({ 1: 'Novice', 2: 'Developing', 3: 'Competent', 4: 'Proficient', 5: 'Expert' }[Number(s)] || 'Competent');
-                const periods = ['2025-H2', '2026-H1', '2026-H2'];
-                // Same index space as HR_EMPLOYEE_CRUD mocks (i = 1..count)
-                for (let i = 1; i <= Math.min(count, 18); i++) {
-                    const empNameRaw = employeeNames[(i - 1) % employeeNames.length];
-                    const low = String(empNameRaw || '').toLowerCase();
-                    if (['admin', 'hr_manager', 'hr_staff', 'employee'].includes(low)) continue;
-                    const empName = String(empNameRaw).includes(' ') ? empNameRaw : `${empNameRaw} Unity`;
-                    const empId = `UU-${String(i).padStart(3, '0')}`;
-                    const dept = departments[i % departments.length];
-                    const pos = i % 2 === 0 ? `Lecturer ${i % 3 + 1}` : `Officer ${i % 3 + 1}`;
-                    for (let s = 0; s < 6; s++) {
-                        const cat = catNames[s % catNames.length];
-                        const skills = skillCats[cat] || ['General competency'];
-                        const skill = skills[s % skills.length];
-                        const score = 2 + ((i * 3 + s * 7) % 4);
-                        const weight = cat.toLowerCase().includes('core') ? 1.2
-                            : (cat.toLowerCase().includes('tech') || cat.toLowerCase().includes('professional')) ? 1.1
-                            : 1.0;
-                        data.push({
-                            id: `comp-${empId}-${s + 1}`,
-                            employee_id: empId,
-                            employee_name: empName,
-                            department: dept,
-                            position: pos,
-                            skill_category: cat,
-                            skill,
-                            score: String(score),
-                            rating_label: levelLabel(score),
-                            weight: Number(weight.toFixed(2)),
-                            weighted_score: Number((score * weight).toFixed(2)),
-                            period: periods[i % periods.length],
-                            last_assessed: itemDate || getRandomDate(),
-                            evaluator: 'HR Manager',
-                            evidence: `Observed on duty · ${skill} · ${dept}`,
-                            notes: score >= 4 ? 'Exceeds role expectation' : (score <= 2 ? 'Development plan required' : 'Meets expectation'),
-                            status: score <= 2 ? 'Development' : 'Active',
-                        });
-                    }
-                }
+case 'competenceMatrix': 
+    // Flatten all skills from the categories into one array
+    const allAvailableSkills = Object.values(NEW_MOCK_SKILLS).flat();
+    
+    data.push({ 
+        id,
+        // Use the consistent employee name
+        employee_name: employeeName,
+        employee_id: `UU-00${i}`,
+        department: departments[i % departments.length],
+        // FIX: This ensures a skill is picked from the full list for every mock record
+        skill: allAvailableSkills[i % allAvailableSkills.length], 
+        score: (Math.floor(Math.random() * 5) + 1).toString(),
+        last_assessed: itemDate,
+        evaluator: employeeNames[(i + 5) % employeeNames.length] || 'HR Manager'
+    });
+    break;
+            case 'appraisalRecords':
+                data.push({ id, employee_name: employeeName, appraisal_date: itemDate, appraisal_score: employeeName === 'employee' ? '4.5' : (Math.random() * 5).toFixed(1), feedback_manager: `Manager Feedback ${i}`, feedback_peer: `Peer Feedback ${i}`, feedback_self: `Self Review ${i}`, status: employeeName === 'employee' && i % 2 === 0 ? 'Pending' : 'Completed' });
                 break;
-            }
-            case 'appraisalRecords': {
-                if (i !== 1) break;
-                const levelBand = (avg) => {
-                    const a = Number(avg) || 0;
-                    if (a >= 4.5) return 'Outstanding';
-                    if (a >= 4.0) return 'Exceeds Expectations';
-                    if (a >= 3.0) return 'Meets Expectations';
-                    if (a >= 2.0) return 'Needs Improvement';
-                    return 'Unsatisfactory';
-                };
-                for (let i = 1; i <= Math.min(count, 18); i++) {
-                    const empNameRaw = employeeNames[(i - 1) % employeeNames.length];
-                    const low = String(empNameRaw || '').toLowerCase();
-                    if (['admin', 'hr_manager', 'hr_staff', 'employee'].includes(low)) continue;
-                    const empName = String(empNameRaw).includes(' ') ? empNameRaw : `${empNameRaw} Unity`;
-                    const empId = `UU-${String(i).padStart(3, '0')}`;
-                    const dept = departments[i % departments.length];
-                    const pos = i % 2 === 0 ? `Lecturer ${i % 3 + 1}` : `Officer ${i % 3 + 1}`;
-                    let wSum = 0, wTot = 0, skills = 0;
-                    for (let s = 0; s < 6; s++) {
-                        const score = 2 + ((i * 3 + s * 7) % 4);
-                        const weight = 1.0 + (s % 3) * 0.1;
-                        wSum += score * weight;
-                        wTot += weight;
-                        skills += 1;
-                    }
-                    const avg = wTot ? Math.round((wSum / wTot) * 100) / 100 : 3;
-                    const band = levelBand(avg);
-                    const statuses = ['Completed', 'Completed', 'Completed', 'Pending', 'In Review'];
-                    data.push({
-                        id: `apr-${empId}-2026`,
-                        employee_id: empId,
-                        employee_name: empName,
-                        department: dept,
-                        position: pos,
-                        appraisal_period: '2026-H1',
-                        appraisal_date: itemDate || getRandomDate(),
-                        competence_avg: avg,
-                        skills_assessed: skills,
-                        appraisal_score: avg,
-                        performance_band: band,
-                        goals_score: Math.min(5, Math.round((avg + 0.2) * 10) / 10),
-                        conduct_score: Math.min(5, Math.round((avg - 0.1) * 10) / 10),
-                        feedback_manager: `${String(empName).split(' ')[0]} demonstrates ${band.toLowerCase()} performance. Competence average ${avg}/5 across ${skills} skills.`,
-                        feedback_peer: `Peer input: collaborative and reliable in ${dept}.`,
-                        feedback_self: `Self review: committed to continuous improvement for ${pos}.`,
-                        development_plan: avg < 3.5 ? 'Targeted training on lowest-scored competencies within 90 days.' : 'Maintain strengths; mentor junior staff.',
-                        next_review_date: '2026-12-15',
-                        evaluator: 'HR Manager',
-                        status: statuses[i % statuses.length],
-                    });
-                }
+            case 'leaveRecords':
+                data.push({ id, employee_name: employeeName, leave_type: ['Annual Leave', 'Sick Leave', 'Emergency Leave'][i % 3], start_date: itemDate, end_date: itemDate, days_taken: (Math.floor(Math.random() * 10) + 1).toFixed(0), status: 'Approved' });
                 break;
-            }
-            case 'leaveRecords': {
-                const leaveTypes = ['Annual Leave', 'Sick Leave', 'Emergency Leave', 'Maternity Leave', 'Study Leave'];
-                let start = itemDate;
-                let end = itemDate;
-                let status = 'Approved';
-                if (i <= 4) {
-                    start = '2026-08-25';
-                    end = '2026-09-' + String(10 + i).padStart(2, '0');
-                    status = 'Approved';
-                } else if (i <= 8) {
-                    start = '2026-09-05';
-                    end = '2026-09-' + String(12 + (i % 5)).padStart(2, '0');
-                    status = 'Pending';
-                } else {
-                    status = ['Approved', 'Rejected', 'Pending'][i % 3];
-                }
-                const days = Math.max(1, Math.round((new Date(end) - new Date(start)) / 86400000) + 1) || (Math.floor(Math.random() * 10) + 1);
-                data.push({
-                    id,
-                    employee_name: employeeName,
-                    employee_id: `UU-${String(((i - 1) % 10) + 1).padStart(3, '0')}`,
-                    leave_type: leaveTypes[i % leaveTypes.length],
-                    start_date: start,
-                    end_date: end,
-                    days: days,
-                    days_taken: String(days),
-                    reason: ['Family matter', 'Medical', 'Personal', 'Conference', 'Exam'][i % 5],
-                    status,
-                    approved_by: status === 'Approved' ? 'hr_manager' : '',
-                    remarks: status === 'Pending' ? 'Awaiting supervisor approval' : 'Recorded',
-                });
-                break;
-            }
-
             case 'penaltyRecords': data.push({ id, employee_name: employeeName, reason: `Disciplinary Issue ${i}`, date: itemDate, action_taken: HR_PENALTIES[i % HR_PENALTIES.length], severity: ['Low', 'Medium', 'High'][i % 3] });
                 break;
             case 'awardRecords': data.push({ id, employee_name: employeeName, award_type: ['Employee of the Month', 'Innovation', 'Service Award'][i % 3], date: itemDate, description: `Awarded for excellent service ${i}`, monetary_value: (Math.random() * 5000).toFixed(2) });
@@ -1295,17 +975,17 @@ const NEW_MOCK_SKILLS = {
 
 // ... (MOCK_EMPLOYEES definition)
 
-const MOCK_EMPLOYEES = generateMockData('employees', 18);
+const MOCK_EMPLOYEES = generateMockData('employees', 10);
 const MOCK_DEPARTMENTS = generateMockData('departments');
 const MOCK_DEPARTMENTS_HIRING_REQUESTS = generateMockData('departmentsHiringRequests');
-const MOCK_RETIREMENT_RECORDS = generateMockData('retirementRecords', 10);
-const MOCK_RESIGNATION_RECORDS = generateMockData('resignationRecords', 12);
+const MOCK_RETIREMENT_RECORDS = generateMockData('retirementRecords');
+const MOCK_RESIGNATION_RECORDS = generateMockData('resignationRecords');
 const MOCK_DEATH_RECORDS = generateMockData('deathRecords');
 
 const MOCK_RECRUITMENT_RECORDS = generateMockData('recruitmentRecords');
 const MOCK_COMPETENCE_MATRIX = generateMockData('competenceMatrix');
 const MOCK_APPRAISAL_RECORDS = generateMockData('appraisalRecords');
-const MOCK_LEAVE_RECORDS = generateMockData('leaveRecords', 15);
+const MOCK_LEAVE_RECORDS = generateMockData('leaveRecords');
 const MOCK_PENALTY_RECORDS = generateMockData('penaltyRecords');
 const MOCK_AWARD_RECORDS = generateMockData('awardRecords');
 const MOCK_TRANSFER_RECORDS = generateMockData('transferRecords');
@@ -1392,11 +1072,28 @@ const MOCK_ROLE_RECORDS = [
       },
     ];
 const MOCK_VACANCY_RECORDS = [
-    { id: 'vac-1', vacancy_no: 'VAC-2026-001', position_title: 'Senior Software Engineer', department: 'IT Department', no_of_positions: 2, employment_type: 'Full-Time', closing_date: '2026-10-15', status: 'Published', description: 'Core systems development — Unity SIS.' },
-    { id: 'vac-2', vacancy_no: 'VAC-2026-002', position_title: 'HR Specialist', department: 'Human Resource', no_of_positions: 1, employment_type: 'Contract', closing_date: '2026-09-30', status: 'Open', description: 'Recruitment and employee relations.' },
-    { id: 'vac-3', vacancy_no: 'VAC-2026-003', position_title: 'Lecturer – Engineering', department: 'Engineering', no_of_positions: 3, employment_type: 'Full-Time', closing_date: '2026-11-01', status: 'Published', description: 'Teaching and research load.' },
-    { id: 'vac-4', vacancy_no: 'VAC-2026-004', position_title: 'Registrar Officer', department: 'Registrar', no_of_positions: 1, employment_type: 'Permanent', closing_date: '2026-09-20', status: 'Open', description: 'Student records and graduation processing.' },
-    { id: 'vac-5', vacancy_no: 'VAC-2026-005', position_title: 'Store Keeper', department: 'Material Management', no_of_positions: 1, employment_type: 'Full-Time', closing_date: '2026-08-01', status: 'Closed', description: 'Filled via internal transfer.' },
+    {
+        id: 'vac-1',
+        vacancy_no: 'VAC-2026-001',
+        position_title: 'Senior Software Engineer',
+        department: 'IT Department',
+        no_of_positions: 2,
+        employment_type: 'Full-Time',
+        closing_date: '2026-05-15',
+        status: 'Published',
+        description: 'Lead the development of our core HR systems.'
+    },
+    {
+        id: 'vac-2',
+        vacancy_no: 'VAC-2026-002',
+        position_title: 'HR Specialist',
+        department: 'Human Resource',
+        no_of_positions: 1,
+        employment_type: 'Contract',
+        closing_date: '2026-06-01',
+        status: 'Draft',
+        description: 'Handle recruitment and employee relations.'
+    }
 ];
 
 /* ======================================================================
@@ -1755,31 +1452,14 @@ export const DataProvider = ({ children }) => {
                     setAllData((prev) => {
                     const next = { ...prev };
                     Object.keys(base).forEach((k) => {
-                      // Backend is source of truth when API responds
+                      // Backend wins only when it has rows; empty arrays must NOT wipe INITIAL mocks
                       if (Array.isArray(base[k])) {
-                        if (base[k].length > 0 || k === 'HR_EMPLOYEE_CRUD') next[k] = base[k];
+                        if (base[k].length > 0) next[k] = base[k];
                         else if (!(k in next) || next[k] == null) next[k] = base[k];
                       } else if (base[k] != null) next[k] = base[k];
                     });
                     return next;
                 });
-                    // Force employee master from DB list endpoint (always freshest)
-                    try {
-                        const fromDb = await uuApiListEmployees();
-                        if (!cancelled && Array.isArray(fromDb)) {
-                            const mapped = fromDb.map((e) => ({
-                                ...e,
-                                name: e.name || e.employee_name || e.full_name || '',
-                                employee_name: e.name || e.employee_name || e.full_name || '',
-                                full_name: e.full_name || e.name || e.employee_name || '',
-                                id_no: e.id_no || e.id_number,
-                                current_position: e.current_position || e.job_title,
-                                mobile: e.mobile || e.telephone_number,
-                            }));
-                            setAllData((prev) => ({ ...prev, HR_EMPLOYEE_CRUD: mapped }));
-                            uuPublishHrEmployees(mapped);
-                        }
-                    } catch (e) {}
                     console.info('[bootstrap HR/MAT]', {
                         emp: (base.HR_EMPLOYEE_CRUD || []).length,
                         leave: (base.HR_LEAVE_CRUD || []).length,
@@ -1859,229 +1539,133 @@ export const DataProvider = ({ children }) => {
 
 
 
-
-
-/** Persist to PostgreSQL via SIS API — DB is source of truth for Employee Master */
-
-/** Normalize employee display/DB name fields */
-function uuNormEmpNameFields(body = {}) {
-    const nm = body.name || body.employee_name || body.full_name || '';
-    return {
-        ...body,
-        name: nm,
-        employee_name: nm,
-        full_name: nm,
-        gross_salary: body.gross_salary != null ? body.gross_salary : (body.current_salary != null ? body.current_salary : body.basic_salary),
-        job_title: body.job_title || body.current_position || body.position || '',
-        telephone_number: body.telephone_number || body.mobile || '',
-    };
-}
-
-function uuSameEmpId(a, b) {
-    if (a == null || b == null) return false;
-    return String(a) === String(b);
-}
-
-function uuMatchEmpRow(row, id) {
-    if (!row) return false;
-    return uuSameEmpId(row.id, id) || uuSameEmpId(row.id_number, id) || uuSameEmpId(row.id_no, id);
-}
-
-/** Persist to PostgreSQL via SIS API */
-async function uuApiUpsertCollection(collectionName, record, isNew) {
-    const api = await import('../../unity/api.js');
-    let body = { ...record };
-    if (collectionName === 'HR_EMPLOYEE_CRUD') body = uuNormEmpNameFields(body);
-    console.info('[HR→API]', isNew ? 'CREATE' : 'UPDATE', collectionName, {
-        id: body.id,
-        id_number: body.id_number,
-        name: body.name,
-    });
-    if (isNew) {
-        const saved = await api.createRecord(collectionName, body);
-        console.info('[HR→API] CREATE ok', saved && (saved.id || saved.id_number));
-        return saved || body;
-    }
-    // Prefer id_number (UU-001) — backend resolves to UUID; then try UUID
-    const candidates = [body.id_number, record.id_number, body.id, record.id].filter(Boolean);
-    let lastErr = null;
-    for (const key of candidates) {
-        try {
-            const saved = await api.updateRecord(collectionName, key, body);
-            console.info('[HR→API] UPDATE ok via', key, saved && saved.name);
-            return saved || body;
-        } catch (e) {
-            lastErr = e;
-            console.warn('[HR→API] UPDATE failed via', key, e && (e.message || e));
-        }
-    }
-    throw lastErr || new Error('Update failed for all id candidates');
-}
-async function uuApiDeleteCollection(collectionName, id) {
-    const api = await import('../../unity/api.js');
-    await api.deleteRecord(collectionName, id);
-    return true;
-}
-async function uuApiListEmployees() {
-    try {
-        const api = await import('../../unity/api.js');
-        const rows = await api.listCollection('HR_EMPLOYEE_CRUD');
-        return Array.isArray(rows) ? rows : [];
-    } catch (e) {
-        console.warn('[HR API list employees]', e && e.message);
-        return null;
-    }
-}
-
-
 const addRecord = async (collectionName, newData) => {
-        const currentCollection = allData[collectionName] || [];
-        let recordToSave = {
-            ...newData,
-            id: newData.id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : String(Date.now())),
-        };
+    const id = Date.now().toString();
+    // Use allData (not collections) to match your state variable name
+    const currentCollection = allData[collectionName] || [];
+    
+    let recordToSave = { ...newData, id };
 
-        if (collectionName === 'HR_EMPLOYEE_CRUD') {
-            const nm = recordToSave.name || recordToSave.employee_name || recordToSave.full_name || '';
-            recordToSave.name = nm;
-            recordToSave.employee_name = nm;
-            recordToSave.full_name = nm;
-            if (!recordToSave.id_number) {
-                const lastNum = currentCollection.reduce((max, emp) => {
-                    const num = parseInt(String(emp.id_number || '').split('-')[1], 10) || 0;
-                    return Math.max(max, num);
-                }, 0);
-                recordToSave.id_number = `UU-${String(lastNum + 1).padStart(3, '0')}`;
-            }
-            if (recordToSave.gross_salary == null && recordToSave.current_salary != null) {
-                recordToSave.gross_salary = recordToSave.current_salary;
-            }
-        }
-
-        // Local UI first (same pattern as Finance)
-        setAllData((prev) => ({
-            ...prev,
-            [collectionName]: [recordToSave, ...(prev[collectionName] || [])],
-        }));
+    // Auto-ID logic for Employees
+    if (collectionName === 'HR_EMPLOYEE_CRUD') {
+        const lastNum = currentCollection.reduce((max, emp) => {
+            const num = parseInt(emp.id_number?.split('-')[1]) || 0;
+            return Math.max(max, num);
+        }, 0);
+        recordToSave.id_number = `UU-${String(lastNum + 1).padStart(3, '0')}`;
+    }
+    
+    // Update the state using the correct state setter
+    setAllData(prev => ({
+        ...prev,
+        [collectionName]: [recordToSave, ...currentCollection]
+    }));
 
         try {
-            if (collectionName === 'HR_EMPLOYEE_CRUD') {
-                uuPublishHrEmployees([recordToSave, ...(allData.HR_EMPLOYEE_CRUD || []).filter((x) => String(x.id) !== String(recordToSave.id))]);
-            }
             if (['HR_EMPLOYEE_CRUD', 'EMPLOYEE_CRUD', 'SYS_USERS_CRUD', 'USERS_CRUD', 'HR_USER_CRUD'].includes(collectionName)) {
-                try { upsertSharedUser({ ...recordToSave, modules: recordToSave.modules || ['hr'] }); } catch (e) {}
+                upsertSharedUser({ ...recordToSave, modules: recordToSave.modules || ['hr'] });
+                try {
+                    if (collectionName === 'HR_EMPLOYEE_CRUD') {
+                        const next = [recordToSave, ...(allData.HR_EMPLOYEE_CRUD || []).filter(x => String(x.id) !== String(recordToSave.id))];
+                        uuPublishHrEmployees(next);
+                    }
+                } catch (e) {}
             }
             if (collectionName === 'ROLE_CRUD') {
-                const prevR = allData.ROLE_CRUD || [];
-                saveSharedRoles([recordToSave, ...prevR.filter((r) => String(r.id) !== String(recordToSave.id))]);
+                const prev = allData.ROLE_CRUD || [];
+                saveSharedRoles([recordToSave, ...prev.filter(r => String(r.id) !== String(recordToSave.id))]);
             }
         } catch (e) {}
 
-        // Persist to PostgreSQL — identical to FinanceApp
-        try {
-            const mod = await import('../../unity/api.js').catch(() => import('../../unity/api'));
-            if (mod && typeof mod.createRecord === 'function') {
-                await mod.createRecord(collectionName, recordToSave);
-                console.info('[HR addRecord] DB ok', collectionName, recordToSave.id_number || recordToSave.id);
-            }
-        } catch (apiErr) {
-            console.warn('[HR addRecord] API persist skipped', collectionName, apiErr?.message || apiErr);
-            setMessage({ text: 'Saved in HR; DB: ' + (apiErr?.message || apiErr), type: 'error' });
-        }
+    
+    return true; // Important for FormModal to know it finished
+};
 
-        return true;
-    };
+const updateRecord = useCallback(async (collectionName, id, updatedFields) => {
+    try {
+        setAllData(prev => {
+            let newData = { ...prev };
+            const original = prev[collectionName]?.find(r => r.id === id);
+            
+            // 1. Apply the update to the current list
+            newData[collectionName] = prev[collectionName].map(r => 
+                r.id === id ? { ...r, ...updatedFields } : r
+            );
 
-    const updateRecord = useCallback(async (collectionName, id, updatedFields) => {
-        // Normalize employee name fields before anything else
-        let fields = { ...updatedFields };
-        if (collectionName === 'HR_EMPLOYEE_CRUD') {
-            const nm = fields.name || fields.employee_name || fields.full_name || '';
-            if (nm) {
-                fields.name = nm;
-                fields.employee_name = nm;
-                fields.full_name = nm;
-            }
-            if (fields.gross_salary == null && fields.current_salary != null) {
-                fields.gross_salary = fields.current_salary;
-            }
-        }
+            if (!original) return newData;
 
-        // Local UI first — match by id OR id_number (same reliability as Finance id match)
-        setAllData((prev) => {
-            const list = prev[collectionName] || [];
-            const updatedList = list.map((r) => {
-                const hit =
-                    String(r.id) === String(id) ||
-                    String(r.id_number || '') === String(id) ||
-                    String(r.id_no || '') === String(id);
-                return hit ? { ...r, ...fields } : r;
-            });
-            let next = { ...prev, [collectionName]: updatedList };
+            // IDENTITY DETECTION: Capture the employee's identity from the record being edited
+            const empName = original.employee_name || original.name;
+            const empId = original.employee_id || original.staff_national_id || original.id_number;
 
-            if (collectionName === 'HR_EMPLOYEE_CRUD') {
-                const current = updatedList.find(
-                    (r) =>
-                        String(r.id) === String(id) ||
-                        String(r.id_number || '') === String(id) ||
-                        String(r.id_no || '') === String(id)
-                );
-                try {
-                    uuPublishHrEmployees(updatedList);
-                } catch (e) {}
-                // cascade name into related HR collections
-                const orig = list.find(
-                    (r) =>
-                        String(r.id) === String(id) ||
-                        String(r.id_number || '') === String(id)
-                );
-                if (orig && fields.name && fields.name !== orig.name) {
-                    const oldName = orig.name;
-                    Object.keys(next).forEach((colKey) => {
-                        if (colKey === 'HR_EMPLOYEE_CRUD' || !Array.isArray(next[colKey])) return;
-                        next[colKey] = next[colKey].map((item) => {
-                            if (item.employee_name === oldName || item.name === oldName) {
-                                return {
-                                    ...item,
-                                    ...(item.employee_name !== undefined ? { employee_name: fields.name } : {}),
-                                    ...(item.name !== undefined ? { name: fields.name } : {}),
-                                };
-                            }
-                            return item;
-                        });
+            // ---------------------------------------------------------
+            // SYNC RULE 1: COMPETENCE MATRIX SCORE -> APPRAISAL SCORE
+            // ---------------------------------------------------------
+            if (collectionName === 'HR_COMPETENCE_CRUD' && updatedFields.score) {
+                console.log(`Syncing Score: ${updatedFields.score} for ${empName}`);
+                
+                if (newData['HR_APPRAISAL_CRUD']) {
+                    newData['HR_APPRAISAL_CRUD'] = newData['HR_APPRAISAL_CRUD'].map(app => {
+                        // Check every possible name/id match field
+                        const matches = (app.employee_name === empName) || 
+                                        (app.name === empName) || 
+                                        (app.employee_id === empId) || 
+                                        (app.staff_national_id === empId);
+
+                        if (matches) {
+                            return { 
+                                ...app, 
+                                score: updatedFields.score,
+                                // Also update visual feedback for confirmation
+                                manager_feedback: `Updated via Competence Sync: ${new Date().toLocaleDateString()}`
+                            };
+                        }
+                        return app;
                     });
                 }
             }
-            return next;
+
+            // ---------------------------------------------------------
+            // SYNC RULE 2: GLOBAL EMPLOYEE MASTER SYNC
+            // ---------------------------------------------------------
+            if (collectionName === 'HR_EMPLOYEE_CRUD') {
+                const oldName = original.name;
+                const oldId = original.id_number;
+
+                Object.keys(newData).forEach(colKey => {
+                    if (colKey === 'HR_EMPLOYEE_CRUD' || colKey === 'ROLE_CRUD') return;
+                    
+                    newData[colKey] = newData[colKey].map(item => {
+                        const isMatch = item.employee_name === oldName || item.name === oldName || 
+                                        item.employee_id === oldId || item.staff_national_id === oldId;
+                        if (isMatch) {
+                            return {
+                                ...item,
+                                ...(item.employee_name !== undefined && { employee_name: updatedFields.name || item.employee_name }),
+                                ...(item.name !== undefined && { name: updatedFields.name || item.name }),
+                                ...(item.employee_id !== undefined && { employee_id: updatedFields.id_number || item.employee_id }),
+                                ...(item.staff_national_id !== undefined && { staff_national_id: updatedFields.id_number || item.staff_national_id }),
+                                ...(item.department !== undefined && { department: updatedFields.department || item.department })
+                            };
+                        }
+                        return item;
+                    });
+                });
+            }
+
+            return newData;
         });
 
-        // Persist to PostgreSQL — identical to FinanceApp
-        try {
-            const mod = await import('../../unity/api.js').catch(() => import('../../unity/api'));
-            if (mod && typeof mod.updateRecord === 'function') {
-                // Prefer id_number for HR employees (backend resolves UU-### → UUID)
-                let persistId = id;
-                if (collectionName === 'HR_EMPLOYEE_CRUD') {
-                    const row = (allData.HR_EMPLOYEE_CRUD || []).find(
-                        (r) =>
-                            String(r.id) === String(id) ||
-                            String(r.id_number || '') === String(id)
-                    );
-                    persistId = (row && (row.id_number || row.id)) || fields.id_number || id;
-                }
-                await mod.updateRecord(collectionName, persistId, fields);
-                console.info('[HR updateRecord] DB ok', collectionName, persistId, fields.name || '');
-            }
-        } catch (apiErr) {
-            console.warn('[HR updateRecord] API persist skipped', collectionName, apiErr?.message || apiErr);
-            setMessage({ text: 'Updated in HR; DB: ' + (apiErr?.message || apiErr), type: 'error' });
-        }
-
-        setMessage({ text: 'System Synchronized Successfully', type: 'success' });
+        setMessage({ text: "System Synchronized Successfully", type: 'success' });
         return true;
-    }, [allData]);
+    } catch (e) {
+        console.error("Update Sync Error: ", e);
+        return false;
+    }
+}, []);
 
-const deleteRecord = useCallback(async (collectionName, id) => {
+   
+    const deleteRecord = useCallback(async (collectionName, id) => {
         if (!collectionName || !id) {
             setMessage({ text: `Data missing to delete record from ${collectionName}.`, type: 'error' });
             return false;
@@ -2090,27 +1674,11 @@ const deleteRecord = useCallback(async (collectionName, id) => {
         try {
             setAllData(prev => ({
                 ...prev,
-                [collectionName]: (prev[collectionName] || []).filter(record => String(record.id) !== String(id) && String(record.id_number || '') !== String(id))
+                [collectionName]: prev[collectionName].filter(record => record.id !== id)
             }));
 
             if (collectionName === 'HR_LEAVE_CRUD') {
                 setLeaveUpdateTrigger(prev => prev + 1);
-            }
-            if (collectionName === 'HR_EMPLOYEE_CRUD') {
-                try {
-                    const left = (allData.HR_EMPLOYEE_CRUD || []).filter(r => String(r.id) !== String(id) && String(r.id_number || '') !== String(id));
-                    uuPublishHrEmployees(left);
-                } catch (e) {}
-            }
-
-            // Persist to PostgreSQL — same as Finance pattern
-            try {
-                const mod = await import('../../unity/api.js').catch(() => import('../../unity/api'));
-                if (mod && typeof mod.deleteRecord === 'function') {
-                    await mod.deleteRecord(collectionName, id);
-                }
-            } catch (apiErr) {
-                console.warn('[HR deleteRecord] API persist skipped', collectionName, apiErr?.message || apiErr);
             }
 
             setMessage({ text: `${collectionName} record deleted successfully!`, type: 'success' });
@@ -2119,7 +1687,7 @@ const deleteRecord = useCallback(async (collectionName, id) => {
             setMessage({ text: `Failed to delete record from ${collectionName}: ${error.message}`, type: 'error' });
             return false;
         }
-    }, [allData]);
+    }, []);
 
     const updateEmployeeRole = useCallback(async (employeeId, newRole) => {
         const employees = allData['HR_EMPLOYEE_CRUD'];
@@ -2311,199 +1879,100 @@ const getIcon = (name) => Icons[name] || Icons.File;
 /* --- FIXED INPUT COMPONENT (SELECT + DUAL CALENDARS + REDIRECT) --- */
 
 /** Dark in-app select (filters + forms) — never uses OS white picker on mobile */
-/** Dark in-app select — opens above nearby UI (filters, tables, cards) */
-/** Dark select — full readable width for long labels (campus, COA, employee, etc.) */
-/** Dark select — menu portaled to document.body so it always stacks above tables/modals */
-const UUSelect = ({ value, onChange, options = [], allLabel = 'All', className = '', compact = false, placeholder }) => {
+const UUSelect = ({ value, onChange, options = [], allLabel = 'All', className = '', compact = false }) => {
     const [open, setOpen] = useState(false);
-    const [menuBox, setMenuBox] = useState(null);
     const ref = useRef(null);
-    const btnRef = useRef(null);
     const list = Array.isArray(options) ? options : [];
-
-    const placeMenu = React.useCallback(() => {
-        const el = btnRef.current;
-        if (!el) return;
-        const r = el.getBoundingClientRect();
-        const gap = 4;
-        const maxH = 320;
-        const spaceBelow = window.innerHeight - r.bottom - gap;
-        const spaceAbove = r.top - gap;
-        const openUp = spaceBelow < 160 && spaceAbove > spaceBelow;
-        const height = Math.min(maxH, openUp ? spaceAbove : spaceBelow, maxH);
-        const width = Math.min(Math.max(r.width, 260), Math.min(window.innerWidth - 16, 520));
-        let left = r.left;
-        if (left + width > window.innerWidth - 8) left = Math.max(8, window.innerWidth - width - 8);
-        if (left < 8) left = 8;
-        const top = openUp ? Math.max(8, r.top - gap - height) : r.bottom + gap;
-        setMenuBox({ top, left, width, maxHeight: height, openUp });
-    }, []);
 
     useEffect(() => {
         if (!open) return undefined;
-        placeMenu();
         const onDoc = (e) => {
-            if (ref.current && !ref.current.contains(e.target)
-                && !(e.target && e.target.closest && e.target.closest('[data-uu-select-menu]'))) {
-                setOpen(false);
-            }
+            if (ref.current && !ref.current.contains(e.target)) setOpen(false);
         };
-        const onReposition = () => placeMenu();
         document.addEventListener('mousedown', onDoc);
         document.addEventListener('touchstart', onDoc);
-        window.addEventListener('resize', onReposition);
-        window.addEventListener('scroll', onReposition, true);
         return () => {
             document.removeEventListener('mousedown', onDoc);
             document.removeEventListener('touchstart', onDoc);
-            window.removeEventListener('resize', onReposition);
-            window.removeEventListener('scroll', onReposition, true);
         };
-    }, [open, placeMenu]);
+    }, [open]);
 
     const labelFor = (v) => {
-        if (v === 'ALL' || v === 'All' || v === 'all') return allLabel;
-        return String(v ?? '');
+        if (v === 'ALL' || v === 'All') return allLabel;
+        return String(v);
     };
-    const currentLabel = (value === '' || value == null || value === 'ALL' || value === 'All')
-        ? (placeholder || allLabel || '-- SELECT --')
-        : labelFor(value);
-
-    const portalFn = (typeof createPortal === 'function')
-        ? createPortal
-        : (typeof ReactDOM !== 'undefined' && ReactDOM.createPortal ? ReactDOM.createPortal : null);
-
-    const menu = (open && menuBox) ? (
-        <div
-            data-uu-select-menu="1"
-            role="listbox"
-            className="overflow-y-auto rounded-xl border border-white/25 bg-slate-900 shadow-2xl shadow-black/80 text-white"
-            style={{
-                position: 'fixed',
-                top: menuBox.top,
-                left: menuBox.left,
-                width: menuBox.width,
-                maxHeight: menuBox.maxHeight,
-                zIndex: 2147483646,
-            }}
-        >
-            {list.length === 0 ? (
-                <div className="px-4 py-3 text-sm text-white/50">No options</div>
-            ) : list.map((s) => {
-                const val = (s && typeof s === 'object') ? (s.value ?? s.id ?? s.name) : s;
-                const lab = (s && typeof s === 'object') ? (s.label ?? s.name ?? String(val)) : labelFor(s);
-                const selected = String(value) === String(val);
-                return (
-                    <button
-                        key={String(val)}
-                        type="button"
-                        role="option"
-                        aria-selected={selected}
-                        className={`w-full text-left px-4 py-3.5 min-h-[48px] text-sm border-b border-white/10 last:border-b-0
-                                    flex items-center justify-between gap-3
-                                    ${selected ? 'bg-cyan-600/40 text-white' : 'text-white hover:bg-white/10'}`}
-                        style={{ fontSize: 15, lineHeight: 1.4 }}
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => { onChange(val); setOpen(false); }}
-                    >
-                        <span className="whitespace-normal break-words text-left pr-2">{lab}</span>
-                        <span className={`w-4 h-4 rounded-full border-2 shrink-0 ${selected ? 'border-cyan-300 bg-cyan-400' : 'border-white/40'}`} />
-                    </button>
-                );
-            })}
-        </div>
-    ) : null;
-
-    const menuNode = menu && portalFn && typeof document !== 'undefined' && document.body
-        ? portalFn(menu, document.body)
-        : menu;
+    const currentLabel = labelFor(value);
 
     return (
-        <div
-            className={`relative ${className || ''}`}
-            ref={ref}
-            style={{
-                zIndex: open ? 50 : 2,
-                isolation: 'isolate',
-                minWidth: compact ? 200 : 260,
-                maxWidth: '100%',
-                width: compact ? undefined : '100%',
-            }}
-        >
+        <div className={`relative ${className}`} ref={ref}>
             <button
-                ref={btnRef}
                 type="button"
                 onClick={() => setOpen((o) => !o)}
-                className={`w-full flex items-center justify-between gap-2 bg-slate-900/90 border border-white/20 rounded-xl
+                className={`w-full flex items-center justify-between gap-2 bg-black/50 border border-white/10 rounded-xl
                             text-white outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/40
-                            ${compact ? 'px-3 py-2.5 text-sm min-h-[44px]' : 'px-4 py-3 text-base min-h-[48px]'}`}
-                style={{ fontSize: compact ? 14 : 15 }}
+                            ${compact ? 'px-3 py-2 text-xs min-h-[40px] max-w-[180px]' : 'px-3.5 py-3 text-base min-h-[48px]'}`}
+                style={{ fontSize: compact ? undefined : 16 }}
                 aria-haspopup="listbox"
                 aria-expanded={open}
             >
-                <span
-                    className={`text-left flex-1 min-w-0 ${(!value || value === 'ALL' || value === 'All') ? 'text-white/55' : 'text-white'}`}
-                    style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                >
-                    {currentLabel}
-                </span>
-                <span className="text-cyan-400 text-xs shrink-0 ml-2">{open ? '▲' : '▼'}</span>
+                <span className="truncate">{currentLabel}</span>
+                <span className="text-cyan-400/80 text-[10px] shrink-0">{open ? '▲' : '▼'}</span>
             </button>
-            {menuNode}
+            {open && (
+                <div
+                    className="absolute left-0 right-0 top-full mt-1 z-[10050] min-w-[160px] max-h-56 overflow-y-auto
+                               rounded-xl border border-white/20 bg-slate-900 shadow-2xl shadow-black/60"
+                    role="listbox"
+                >
+                    {list.map((s) => {
+                        const val = s;
+                        const selected = String(value) === String(val);
+                        return (
+                            <button
+                                key={String(val)}
+                                type="button"
+                                role="option"
+                                aria-selected={selected}
+                                className={`w-full text-left px-4 py-3 min-h-[44px] text-sm
+                                            border-b border-white/10 last:border-b-0
+                                            flex items-center justify-between gap-2
+                                            ${selected ? 'bg-cyan-600/35 text-cyan-100' : 'text-white hover:bg-white/5 active:bg-cyan-500/20'}`}
+                                style={{ fontSize: 16 }}
+                                onClick={() => {
+                                    onChange(val);
+                                    setOpen(false);
+                                }}
+                            >
+                                <span className="truncate">{labelFor(val)}</span>
+                                <span className={`w-4 h-4 rounded-full border-2 shrink-0 flex items-center justify-center
+                                    ${selected ? 'border-cyan-400 bg-cyan-500' : 'border-white/30'}`}>
+                                    {selected ? <span className="w-1.5 h-1.5 rounded-full bg-white" /> : null}
+                                </span>
+                            </button>
+                        );
+                    })}
+                </div>
+            )}
         </div>
     );
 };
 
 
-
-
-
-
-
-const Input = ({ label, type, value, onChange, placeholder, isRequired = false, options = [], hint, fieldKey, intelModule, intelCollection }) => {
+const Input = ({ label, type, value, onChange, placeholder, isRequired = false, options = [] }) => {
     const id = React.useId();
     const [showECPicker, setShowECPicker] = useState(false);
     const [selectOpen, setSelectOpen] = useState(false);
-    const [selectMenuBox, setSelectMenuBox] = useState(null);
     const selectRootRef = useRef(null);
-    const selectBtnRef = useRef(null);
     useEffect(() => {
-        if (!selectOpen) {
-            setSelectMenuBox(null);
-            return undefined;
-        }
-        const place = () => {
-            const el = selectBtnRef.current;
-            if (!el) return;
-            const r = el.getBoundingClientRect();
-            const gap = 4;
-            const maxH = 320;
-            const spaceBelow = window.innerHeight - r.bottom - gap;
-            const spaceAbove = r.top - gap;
-            const openUp = spaceBelow < 160 && spaceAbove > spaceBelow;
-            const height = Math.min(maxH, Math.max(120, openUp ? spaceAbove : spaceBelow));
-            const width = Math.min(Math.max(r.width, 220), Math.min(window.innerWidth - 16, 480));
-            let left = r.left;
-            if (left + width > window.innerWidth - 8) left = Math.max(8, window.innerWidth - width - 8);
-            if (left < 8) left = 8;
-            const top = openUp ? Math.max(8, r.top - gap - height) : r.bottom + gap;
-            setSelectMenuBox({ top, left, width, maxHeight: height });
-        };
-        place();
+        if (!selectOpen) return undefined;
         const onDoc = (e) => {
-            if (selectRootRef.current && selectRootRef.current.contains(e.target)) return;
-            if (e.target && e.target.closest && e.target.closest('[data-uu-input-select-menu]')) return;
-            setSelectOpen(false);
+            if (selectRootRef.current && !selectRootRef.current.contains(e.target)) setSelectOpen(false);
         };
         document.addEventListener('mousedown', onDoc);
         document.addEventListener('touchstart', onDoc);
-        window.addEventListener('resize', place);
-        window.addEventListener('scroll', place, true);
         return () => {
             document.removeEventListener('mousedown', onDoc);
             document.removeEventListener('touchstart', onDoc);
-            window.removeEventListener('resize', place);
-            window.removeEventListener('scroll', place, true);
         };
     }, [selectOpen]);
 
@@ -2554,47 +2023,37 @@ const Input = ({ label, type, value, onChange, placeholder, isRequired = false, 
         const current = normalized.find((o) => o.value === String(value ?? '')) || null;
 
         return (
-            <div className="flex flex-col space-y-1.5 mb-0 group relative min-w-0 max-w-full w-full overflow-visible" ref={selectRootRef}>
+            <div className="flex flex-col space-y-2 mb-4 group relative" ref={selectRootRef}>
                 {label && (
                 <label 
                     onClick={handleLabelClick}
-                    className="text-[9px] font-black uppercase tracking-[0.12em] text-white/50 group-focus-within:text-cyan-400 flex items-center gap-1 max-w-full cursor-help"
-                    title={label}
+                    className="text-[10px] font-black uppercase tracking-[0.2em] text-white/50 group-focus-within:text-cyan-400"
                 >
-                    <span className="truncate">{label}{isRequired ? <span className="text-red-500"> *</span> : null}</span>
-                    <IntelTip label={label} fieldKey={fieldKey || label} module={intelModule} collection={intelCollection} help={hint} />
+                    {label} {isRequired && <span className="text-red-500">*</span>}
                 </label>
                 )}
                 <button
                     type="button"
                     id={id}
-                    ref={selectBtnRef}
                     onClick={() => setSelectOpen((o) => !o)}
-                    className="w-full max-w-full min-w-0 min-h-[42px] flex items-center justify-between gap-2
-                               px-3 py-2.5 rounded-xl bg-black/60 border border-white/20 text-left
-                               text-white text-sm focus:ring-2 focus:ring-cyan-500/50 outline-none
-                               hover:bg-black/80 transition-all cursor-pointer box-border"
-                    style={{ fontSize: 14 }}
+                    className="w-full min-h-[48px] flex items-center justify-between gap-2
+                               p-3.5 rounded-xl bg-black/60 border border-white/20 text-left
+                               text-white text-base focus:ring-2 focus:ring-cyan-500/50 outline-none
+                               hover:bg-black/80 transition-all cursor-pointer"
+                    style={{ fontSize: 16 }}
                     aria-haspopup="listbox"
                     aria-expanded={selectOpen}
                 >
-                    <span className={current ? 'text-white' : 'text-white/50'} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <span className={current ? 'text-white truncate' : 'text-white/40'}>
                         {current ? current.label : (placeholder || '-- SELECT --')}
                     </span>
                     <span className="text-cyan-400/80 text-xs shrink-0">{selectOpen ? '▲' : '▼'}</span>
                 </button>
-                {selectOpen && selectMenuBox && createPortal(
+                {selectOpen && (
                     <div
-                        data-uu-input-select-menu="1"
-                        className="overflow-y-auto rounded-xl border border-white/25 bg-slate-900 shadow-2xl shadow-black/80"
-                        style={{
-                            position: 'fixed',
-                            top: selectMenuBox.top,
-                            left: selectMenuBox.left,
-                            width: selectMenuBox.width,
-                            maxHeight: selectMenuBox.maxHeight,
-                            zIndex: 2147483646,
-                        }}
+                        className="absolute left-0 right-0 top-full mt-1 z-[10050]
+                                   max-h-56 overflow-y-auto rounded-xl
+                                   border border-white/20 bg-slate-900 shadow-2xl shadow-black/60"
                         role="listbox"
                     >
                         <button
@@ -2632,8 +2091,7 @@ const Input = ({ label, type, value, onChange, placeholder, isRequired = false, 
                                 </button>
                             );
                         })}
-                    </div>,
-                    document.body
+                    </div>
                 )}
             </div>
         );
@@ -2646,11 +2104,10 @@ const Input = ({ label, type, value, onChange, placeholder, isRequired = false, 
             {label && (
                 <label 
                     onClick={handleLabelClick}
-                    className={`text-[10px] font-black uppercase tracking-[0.2em] transition-all flex items-center gap-1 max-w-full cursor-help
+                    className={`text-[10px] font-black uppercase tracking-[0.2em] transition-all
                         ${(label.toLowerCase().includes('experience') || label.toLowerCase().includes('beneficiary')) ? 'text-cyan-400 cursor-pointer hover:underline' : 'text-white/50'}`}
                 >
-                    <span className="truncate">{label}{isRequired ? <span className="text-red-500"> *</span> : null}</span>
-                    <IntelTip label={label} fieldKey={fieldKey || label} module={intelModule} collection={intelCollection} help={hint} />
+                    {label} {isRequired && <span className="text-red-500">*</span>}
                 </label>
             )}
 
@@ -2675,7 +2132,7 @@ const Input = ({ label, type, value, onChange, placeholder, isRequired = false, 
                 {isEC && showECPicker && (
                     <div className="absolute top-full left-0 mt-2 p-4 bg-slate-900 border border-cyan-500/50 rounded-xl shadow-2xl z-[999] w-72 backdrop-blur-2xl">
                         <div className="flex justify-between items-center mb-4">
-                            <span className="text-[11px] font-black text-white uppercase italic">Ethiopian Calendar</span>
+                            <span className="text-[11px] font-black text-white uppercase italic">Power Geez · Ethiopian Calendar</span>
                             <button onClick={() => setShowECPicker(false)}><Icons.X size={16} className="text-red-400"/></button>
                         </div>
                         
@@ -2710,77 +2167,49 @@ const Input = ({ label, type, value, onChange, placeholder, isRequired = false, 
 
 
 // Component for Generic Reports (Only available to Admins/Managers/Staff)
-const ContainerCard = ({ children, className = '', title, subtitle, actions }) => (
-    <div className={`rounded-[1.75rem] border border-white/10 bg-black/40 backdrop-blur-md shadow-xl ${className}`}>
-        {(title || actions) && (
-            <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 border-b border-white/10">
-                <div>
-                    {title ? <h3 className="text-sm font-black uppercase tracking-widest text-white">{title}</h3> : null}
-                    {subtitle ? <p className="text-[10px] text-gray-500 mt-0.5">{subtitle}</p> : null}
-                </div>
-                {actions ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : null}
-            </div>
-        )}
-        <div className="p-5">{children}</div>
-    </div>
-);
-
 const ReportsGenerator = ({ glassClass }) => {
-    const { allData, getCollection } = useData();
+    const { allData, getCollection } = useData(); 
     const { currentUser, checkPermission } = useAuth();
 
+    // New constants for Report Type
     const REPORT_TYPES = [
         { label: 'All Time', value: 'all' },
         { label: 'Daily', value: 'daily' },
         { label: 'Weekly', value: 'weekly' },
         { label: 'Monthly', value: 'monthly' },
         { label: 'Quarterly', value: 'quarterly' },
-        { label: 'Annually', value: 'annually' },
-    ];
-
-    const REPORT_PRESETS = [
-        { id: '', label: 'Custom selection' },
-        { id: 'HR_EMP', label: 'HR · Employees', collection: 'HR_EMPLOYEE_CRUD' },
-        { id: 'HR_LEAVE', label: 'HR · Leave', collection: 'HR_LEAVE_CRUD' },
-        { id: 'HR_RECRUIT', label: 'HR · Recruitment', collection: 'HR_RECRUITMENT_CRUD' },
-        { id: 'HR_TRAIN', label: 'HR · Training', collection: 'HR_TRAINING_CRUD' },
-        { id: 'HR_TRANS', label: 'HR · Transfer', collection: 'HR_TRANSFER_CRUD' },
-        { id: 'HR_APP', label: 'HR · Appraisal', collection: 'HR_APPRAISAL_CRUD' },
-        { id: 'HR_COMP', label: 'HR · Competence', collection: 'HR_COMPETENCE_CRUD' },
-        { id: 'HR_AWARD', label: 'HR · Awards', collection: 'HR_AWARD_CRUD' },
+        { label: 'Annually', value: 'annually' }
     ];
 
     const getCollectionLabel = useCallback((name) => {
-        if (!name || typeof name !== 'string') return '';
+        if (!name) return '';
+        if (typeof name !== 'string') return ''; 
         return name.replace(/_/g, ' ').replace('CRUD', '(Data)').trim();
     }, []);
 
-    const collectionNames = useMemo(() => Object.keys(allData || {}).sort(), [allData]);
-    const initialSelected = collectionNames.length > 0 ? collectionNames[0] : '';
-
-    const [selectedCollection, setSelectedCollection] = useState(initialSelected);
-    useEffect(() => {
-        if (!selectedCollection && collectionNames.length) {
-            setSelectedCollection(collectionNames[0]);
-        }
-    }, [collectionNames, selectedCollection]);
+    const collectionNames = useMemo(() => Object.keys(allData).sort(), [allData]);
+    const initialSelectedCollectionName = collectionNames.length > 0 ? collectionNames[0] : '';
+    
+    const [selectedCollection, setSelectedCollection] = useState(initialSelectedCollectionName);
     const [sortKey, setSortKey] = useState('');
     const [groupByKey, setGroupByKey] = useState('');
-    const [reportType, setReportType] = useState('all');
-    const [dateFrom, setDateFrom] = useState('');
-    const [dateTo, setDateTo] = useState('');
-    const [preset, setPreset] = useState('');
-    const [statusFilter, setStatusFilter] = useState('All');
-    const [searchTerm, setSearchTerm] = useState('');
+    const [reportType, setReportType] = useState('all'); // New State for Type
 
-    const columns = useMemo(() => (typeof COLUMN_CONFIG !== 'undefined' ? (COLUMN_CONFIG[selectedCollection] || []) : []), [selectedCollection]);
+    const columns = useMemo(() => COLUMN_CONFIG[selectedCollection] || [], [selectedCollection]);
 
-    const filterableColumns = useMemo(
-        () => (columns || []).filter((col) => !col.isHidden && col.type !== 'array'),
+    const filterableColumns = useMemo(() =>
+        columns.filter(col => !col.isHidden && col.type !== 'array'),
         [columns]
     );
 
-    const [columnFilters, setColumnFilters] = useState({});
+    const [columnFilters, setColumnFilters] = useState(() => {
+        return filterableColumns.reduce((acc, col) => {
+            acc[col.key] = '';  
+            return acc;
+        }, {});
+    });
+
+    const currentData = useMemo(() => getCollection(selectedCollection) || [], [getCollection, selectedCollection]);
 
     useEffect(() => {
         if (selectedCollection) {
@@ -2792,24 +2221,24 @@ const ReportsGenerator = ({ glassClass }) => {
             );
             setSortKey('');
             setGroupByKey('');
-            setReportType('all');
+            setReportType('all'); // Reset type on collection change
         }
     }, [selectedCollection, filterableColumns]);
 
-    const currentData = useMemo(() => getCollection(selectedCollection) || [], [getCollection, selectedCollection]);
-
     const getColumnFilterOptions = useCallback((data, columnKey) => {
         const values = new Set(['All']);
-        (data || []).forEach((item) => {
+        data.forEach(item => {
             const value = item[columnKey];
-            if (value !== null && value !== undefined) values.add(String(value));
+            if (value !== null && value !== undefined) {
+                values.add(String(value));
+            }
         });
-        return Array.from(values).map((v) => ({ label: v, value: v }));
+        return Array.from(values).map(v => ({ label: v, value: v }));
     }, []);
 
-    const columnOptions = useMemo(() => {
+    const columnOptions = React.useMemo(() => {
         const options = {};
-        filterableColumns.forEach((col) => {
+        filterableColumns.forEach(col => {
             options[col.key] = getColumnFilterOptions(currentData, col.key);
         });
         return options;
@@ -2818,111 +2247,55 @@ const ReportsGenerator = ({ glassClass }) => {
     const filteredAndSortedData = useMemo(() => {
         let data = [...currentData];
 
-        data = data.filter((item) =>
-            (filterableColumns || []).every((col) => {
+        data = data.filter(item => {
+            return filterableColumns.every(col => {
                 const filterValue = columnFilters[col.key] || '';
-                if (filterValue === 'All' || !filterValue) return true;
-                return String(item[col.key] || '').toLowerCase() === filterValue.toLowerCase();
-            })
-        );
-
-        if (statusFilter && statusFilter !== 'All') {
-            const sf = statusFilter.toLowerCase();
-            data = data.filter((item) => String(item.status || item.Status || '').toLowerCase() === sf);
-        }
-
-        const dateKeys = [
-            'date', 'posting_date', 'createdAt', 'created_at', 'payroll_process_date',
-            'process_date', 'leave_start', 'start_date', 'transaction_date', 'grv_date', 'period',
-        ];
-
-        if (dateFrom || dateTo) {
-            const fromTs = dateFrom ? new Date(dateFrom).setHours(0, 0, 0, 0) : null;
-            const toTs = dateTo ? new Date(dateTo).setHours(23, 59, 59, 999) : null;
-            data = data.filter((item) => {
-                let raw = null;
-                for (const k of dateKeys) {
-                    if (item[k] != null && String(item[k]).trim() !== '') {
-                        raw = item[k];
-                        break;
-                    }
+                if (filterValue === 'All' || !filterValue) {
+                    return true;
                 }
-                if (!raw) return true;
-                const ts = new Date(raw).getTime();
-                if (isNaN(ts)) return true;
-                if (fromTs != null && ts < fromTs) return false;
-                if (toTs != null && ts > toTs) return false;
-                return true;
+                const itemValue = String(item[col.key] || '').toLowerCase();
+                const filterValueLower = filterValue.toLowerCase();
+                return itemValue === filterValueLower;
             });
-        }
-
-        if (reportType && reportType !== 'all') {
-            const now = new Date();
-            data = data.filter((item) => {
-                let raw = null;
-                for (const k of dateKeys) {
-                    if (item[k] != null && String(item[k]).trim() !== '') {
-                        raw = item[k];
-                        break;
-                    }
-                }
-                if (!raw) return true;
-                const d = new Date(raw);
-                if (isNaN(d.getTime())) return true;
-                if (reportType === 'daily') return d.toDateString() === now.toDateString();
-                if (reportType === 'weekly') {
-                    const weekAgo = new Date(now);
-                    weekAgo.setDate(now.getDate() - 7);
-                    return d >= weekAgo && d <= now;
-                }
-                if (reportType === 'monthly') return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-                if (reportType === 'quarterly') {
-                    const q = Math.floor(now.getMonth() / 3);
-                    return Math.floor(d.getMonth() / 3) === q && d.getFullYear() === now.getFullYear();
-                }
-                if (reportType === 'annually') return d.getFullYear() === now.getFullYear();
-                return true;
-            });
-        }
-
-        if (searchTerm && searchTerm.trim()) {
-            const q = searchTerm.trim().toLowerCase();
-            data = data.filter((item) =>
-                Object.values(item || {}).some((v) => String(v ?? '').toLowerCase().includes(q))
-            );
-        }
+        });
 
         if (sortKey) {
             data.sort((a, b) => {
                 const aVal = a[sortKey];
                 const bVal = b[sortKey];
-                const na = parseFloat(aVal);
-                const nb = parseFloat(bVal);
-                if (!isNaN(na) && !isNaN(nb) && isFinite(na) && isFinite(nb)) return na - nb;
-                return String(aVal || '').toLowerCase().localeCompare(String(bVal || '').toLowerCase());
+                if ((typeof aVal === 'number' || (!isNaN(parseFloat(aVal)) && isFinite(aVal))) && (typeof bVal === 'number' || (!isNaN(parseFloat(bVal)) && isFinite(bVal)))) {
+                    return parseFloat(aVal) - parseFloat(bVal);
+                }
+                const stringA = String(aVal || '').toLowerCase();
+                const stringB = String(bVal || '').toLowerCase();
+                if (stringA < stringB) return -1;
+                if (stringA > stringB) return 1;
+                return 0;
             });
         }
 
         return data;
-    }, [currentData, columnFilters, sortKey, filterableColumns, searchTerm, dateFrom, dateTo, reportType, statusFilter]);
+    }, [currentData, columnFilters, sortKey, filterableColumns]);
 
     const groupedData = useMemo(() => {
-        if (!groupByKey) return { 'All Records': filteredAndSortedData };
+        if (!groupByKey) {
+            return { 'All Records': filteredAndSortedData };
+        }
         return filteredAndSortedData.reduce((acc, item) => {
             const key = String(item[groupByKey] || 'N/A');
-            if (!acc[key]) acc[key] = [];
+            acc[key] = acc[key] || [];
             acc[key].push(item);
             return acc;
         }, {});
     }, [filteredAndSortedData, groupByKey]);
 
-    const displayColumns = useMemo(
-        () => (columns || []).filter((col) => !col.isHidden && col.type !== 'array').slice(0, 8),
-        [columns]
-    );
+    const displayColumns = useMemo(() => columns.filter(col => !col.isHidden && col.type !== 'array').slice(0, 8), [columns]);
 
     const handleFilterChange = (columnKey, value) => {
-        setColumnFilters((prev) => ({ ...prev, [columnKey]: value }));
+        setColumnFilters(prevFilters => ({
+            ...prevFilters,
+            [columnKey]: value,
+        }));
     };
 
     useEffect(() => {
@@ -2931,406 +2304,233 @@ const ReportsGenerator = ({ glassClass }) => {
         }
     }, [collectionNames, selectedCollection]);
 
-    const exportCSV = () => {
-        const rows = filteredAndSortedData;
-        if (!rows || !rows.length) return;
-        const cols = displayColumns.length
-            ? displayColumns
-            : Object.keys(rows[0] || {}).map((k) => ({ key: k, label: k }));
-        const headers = cols.map((c) => c.label || c.key);
-        const body = rows.map((r) =>
-            cols
-                .map((c) => {
-                    const v = r[c.key];
-                    const s = v == null ? '' : String(v).replace(/"/g, '""');
-                    return `"${s}"`;
-                })
-                .join(',')
-        );
-        const csv = [headers.join(','), ...body].join('\n');
-        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${selectedCollection || 'report'}.csv`;
-        a.click();
-        URL.revokeObjectURL(url);
-    };
-
-    const partners = (typeof getCollection === 'function' ? (getCollection('FIN_PARTNERS_CRUD') || getCollection('HR_PARTNERS_CRUD') || []) : []);
-
     return (
-        <ContainerCard Icon="FileText" glassClass={glassClass} className="h-full max-w-full min-w-0 overflow-x-hidden overflow-y-auto">
-            <div className="space-y-3 mb-4 p-3 sm:p-4 border border-white/10 rounded-xl max-w-full min-w-0 overflow-hidden bg-black/20">
-                <h3 className="text-base font-semibold text-cyan-400 flex items-center shrink-0">
-                    <Icons.FileBarChart className="w-5 h-5 mr-2 shrink-0" />
-                    Institutional Report Studio
+        <ContainerCard  Icon='FileText' glassClass={glassClass} className="h-full">
+            <div className="space-y-4 mb-6 p-4 border border-gray-700/50 rounded-xl">
+                <h3 className="text-lg font-semibold text-cyan-400 flex items-center">
+                    <Icons.Building className="w-5 h-5 mr-2" />
+                    Report Configuration
                 </h3>
-                <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">
-                    Presets · date range · column filters · group · export
-                </p>
 
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-2">
-                    <div className="rounded-xl border border-cyan-500/20 bg-cyan-950/20 p-3">
-                        <p className="text-[9px] text-cyan-400/80 uppercase font-black">Rows</p>
-                        <p className="text-lg font-black text-white">{filteredAndSortedData.length}</p>
-                    </div>
-                    <div className="rounded-xl border border-white/10 bg-black/30 p-3">
-                        <p className="text-[9px] text-gray-500 uppercase font-black">Source</p>
-                        <p className="text-xs font-bold text-white truncate">{getCollectionLabel(selectedCollection) || '—'}</p>
-                    </div>
-                    <div className="rounded-xl border border-white/10 bg-black/30 p-3">
-                        <p className="text-[9px] text-gray-500 uppercase font-black">Period</p>
-                        <p className="text-xs font-bold text-white">{reportType}</p>
-                    </div>
-                    <div className="rounded-xl border border-white/10 bg-black/30 p-3">
-                        <p className="text-[9px] text-gray-500 uppercase font-black">Groups</p>
-                        <p className="text-lg font-black text-white">{Object.keys(groupedData || {}).length}</p>
-                    </div>
-                </div>
-
-                <div className="w-full max-w-full min-w-0 overflow-x-auto overflow-y-visible">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 items-end min-w-0 w-full">
-                        <div className="min-w-0 max-w-full w-full overflow-hidden">
-                            <Input
-                                label="Report preset"
-                                type="select"
-                                options={REPORT_PRESETS.map((p) => ({ label: p.label, value: p.id }))}
-                                value={preset}
-                                onChange={(val) => {
-                                    setPreset(val);
-                                    const hit = REPORT_PRESETS.find((p) => p.id === val);
-                                    if (hit && hit.collection && collectionNames.includes(hit.collection)) {
-                                        setSelectedCollection(hit.collection);
-                                    }
-                                }}
-                            />
-                        </div>
-
-                        <div className="min-w-0 max-w-full w-full overflow-hidden">
-                            <Input
-                                label="Data Collection"
-                                type="select"
-                                options={collectionNames.map((name) => ({ label: getCollectionLabel(name), value: name }))}
-                                value={selectedCollection}
-                                onChange={(val) => setSelectedCollection(val)}
-                                isRequired
-                            />
-                        </div>
-
-                        <div className="min-w-0 max-w-full w-full overflow-hidden">
-                            <label className="text-[10px] font-black uppercase text-gray-500 tracking-widest">Date from</label>
-                            <input
-                                type="date"
-                                value={dateFrom}
-                                onChange={(e) => setDateFrom(e.target.value)}
-                                className="w-full mt-1 bg-black/50 border border-white/15 rounded-xl px-3 py-2.5 text-white text-sm outline-none focus:ring-1 focus:ring-cyan-500/40"
-                            />
-                        </div>
-
-                        <div className="min-w-0 max-w-full w-full overflow-hidden">
-                            <label className="text-[10px] font-black uppercase text-gray-500 tracking-widest">Date to</label>
-                            <input
-                                type="date"
-                                value={dateTo}
-                                onChange={(e) => setDateTo(e.target.value)}
-                                className="w-full mt-1 bg-black/50 border border-white/15 rounded-xl px-3 py-2.5 text-white text-sm outline-none focus:ring-1 focus:ring-cyan-500/40"
-                            />
-                        </div>
-
-                        <div className="min-w-0 max-w-full w-full overflow-hidden">
-                            <Input
-                                label="Status"
-                                type="select"
-                                options={[
-                                    { label: 'All', value: 'All' },
-                                    { label: 'Draft', value: 'Draft' },
-                                    { label: 'Posted', value: 'Posted' },
-                                    { label: 'Approved', value: 'Approved' },
-                                    { label: 'Pending', value: 'Pending' },
-                                    { label: 'Active', value: 'Active' },
-                                ]}
-                                value={statusFilter}
-                                onChange={(val) => setStatusFilter(val)}
-                            />
-                        </div>
-
-                        <div className="min-w-0 max-w-full w-full overflow-hidden">
-                            <Input
-                                label="Filter by Partner/Entity"
-                                type="select"
-                                options={[
-                                    { label: 'All Entities', value: 'All' },
-                                    ...partners.map((p) => ({
-                                        label: p.partner_name || p.name || p.id,
-                                        value: p.partner_name || p.name || p.id,
-                                    })),
-                                ]}
-                                value={columnFilters.partner_name || ''}
-                                onChange={(val) => handleFilterChange('partner_name', val)}
-                            />
-                        </div>
-
-                        {(filterableColumns || []).map((col) => (
-                            <div key={col.key} className="min-w-0 max-w-full w-full overflow-hidden">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                    <div className="col-span-full">
+                        <div className="flex flex-wrap gap-4 justify-start items-end">
+                            
+                            {/* Data Collection Select */}
+                            <div className="flex-grow min-w-[200px]">
                                 <Input
-                                    label={`Filter: ${col.label}`}
+                                    label="Data Collection"
                                     type="select"
-                                    options={columnOptions[col.key] || [{ label: 'All', value: 'All' }]}
-                                    value={columnFilters[col.key] || ''}
-                                    onChange={(val) => handleFilterChange(col.key, val)}
+                                    options={collectionNames.map(name => ({ label: getCollectionLabel(name), value: name }))}
+                                    value={selectedCollection}
+                                    onChange={(val) => setSelectedCollection(val)}
+                                    isRequired
                                 />
                             </div>
-                        ))}
 
-                        <div className="min-w-0 max-w-full w-full overflow-hidden">
-                            <Input
-                                label="Report Type"
-                                type="select"
-                                options={REPORT_TYPES}
-                                value={reportType}
-                                onChange={(val) => setReportType(val)}
-                            />
-                        </div>
+                            {/* Dynamic Filter Selects */}
+                            {selectedCollection && filterableColumns.map(col => (
+                                <div key={col.key} className="flex-grow min-w-[200px]">
+                                    <Input
+                                        label={`Filter: ${col.label}`}
+                                        type="select"
+                                        options={columnOptions[col.key] || [{ label: 'All', value: 'All' }]}
+                                        value={columnFilters[col.key] || ''}
+                                        onChange={(val) => handleFilterChange(col.key, val)}
+                                    />
+                                </div>
+                            ))}
 
-                        <div className="min-w-0 max-w-full w-full overflow-hidden">
-                            <Input
-                                label="Sort By"
-                                type="select"
-                                options={[
-                                    { label: 'None', value: '' },
-                                    ...(filterableColumns || []).map((c) => ({ label: c.label, value: c.key })),
-                                ]}
-                                value={sortKey}
-                                onChange={(val) => setSortKey(val)}
-                            />
-                        </div>
+                            {/* Report Type Select (DAILY, WEEKLY, etc) */}
+                            <div className="flex-grow min-w-[200px]">
+                                <Input
+                                    label="Report Type"
+                                    type="select"
+                                    options={REPORT_TYPES}
+                                    value={reportType}
+                                    onChange={(val) => setReportType(val)}
+                                />
+                            </div>
 
-                        <div className="min-w-0 max-w-full w-full overflow-hidden">
-                            <Input
-                                label="Group By"
-                                type="select"
-                                options={[
-                                    { label: 'None', value: '' },
-                                    ...(filterableColumns || []).map((c) => ({ label: c.label, value: c.key })),
-                                ]}
-                                value={groupByKey}
-                                onChange={(val) => setGroupByKey(val)}
-                            />
+                            {/* Sort By Select */}
+                            <div className="flex-grow min-w-[200px]">
+                                <Input
+                                    label="Sort By"
+                                    type="select"
+                                    options={[{ label: 'None', value: '' }, ...filterableColumns.map(c => ({ label: c.label, value: c.key }))]}
+                                    value={sortKey}
+                                    onChange={(val) => setSortKey(val)}
+                                />
+                            </div>
+
+                            {/* Group By Select */}
+                            <div className="flex-grow min-w-[200px]">
+                                <Input
+                                    label="Group By"
+                                    type="select"
+                                    options={[{ label: 'None', value: '' }, ...filterableColumns.map(c => ({ label: c.label, value: c.key }))]}
+                                    value={groupByKey}
+                                    onChange={(val) => setGroupByKey(val)}
+                                />
+                            </div>
                         </div>
                     </div>
-                </div>
 
-                <div className="w-full pt-2 flex flex-wrap justify-end gap-2">
-                    {typeof ExportButton === 'function' ? (
+                    {/* Export Button Integration */}
+                    <div className="col-span-full pt-4 flex justify-end">
                         <ExportButton
                             data={filteredAndSortedData}
                             columns={columns}
-                            filename={selectedCollection || 'report'}
-                            isFinancial
+                            filename={`${getCollectionLabel(selectedCollection)}-${reportType}-Report`}
                         />
-                    ) : (
-                        <button
-                            type="button"
-                            onClick={exportCSV}
-                            className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700 transition font-semibold"
-                        >
-                            Export CSV
-                        </button>
-                    )}
-                </div>
-            </div>
-
-            <div className="mb-4 flex flex-wrap gap-2 items-center">
-                <input
-                    type="text"
-                    placeholder="Search records..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="border border-cyan-500/30 bg-black/50 text-white placeholder:text-gray-500 p-2 rounded-lg text-sm w-full md:w-64 outline-none focus:ring-2 focus:ring-cyan-500/40"
-                />
-                <button
-                    type="button"
-                    onClick={exportCSV}
-                    className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700 transition font-semibold"
-                >
-                    Export to CSV
-                </button>
-            </div>
-
-            {Object.entries(groupedData).map(([groupName, rows]) => (
-                <div key={groupName} className="mb-6">
-                    {groupByKey ? (
-                        <h4 className="text-sm font-black text-cyan-400 uppercase tracking-widest mb-2 px-1">
-                            {groupName} · {rows.length}
-                        </h4>
-                    ) : null}
-                    <div className="uu-table-scroll w-full max-w-full min-w-0 overflow-x-auto overflow-y-auto max-h-[min(55vh,520px)] rounded-xl border border-white/10 bg-black/40">
-                        <table className="w-max min-w-full border-collapse table-auto">
-                            <thead className="bg-slate-950/95 sticky top-0 z-10">
-                                <tr className="border-b border-white/10">
-                                    {(displayColumns || []).map((col, i) => (
-                                        <th
-                                            key={i}
-                                            className="px-3 py-2.5 text-left text-[10px] font-black uppercase tracking-wider text-cyan-300/90 whitespace-nowrap border-r border-white/5 last:border-r-0"
-                                        >
-                                            {col.label}
-                                        </th>
-                                    ))}
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {(rows || []).map((row, ri) => (
-                                    <tr key={row.id || ri} className="border-b border-white/5 hover:bg-white/5">
-                                        {(displayColumns || []).map((col, j) => {
-                                            const raw = row[col.key];
-                                            let cell;
-                                            if (Array.isArray(raw)) {
-                                                cell = (raw || []).slice(0, 2).map((entry, idx) => (
-                                                    <span
-                                                        key={idx}
-                                                        className="bg-gray-700 text-gray-200 rounded-full px-2 py-1 text-xs mr-1 inline-block"
-                                                    >
-                                                        {typeof entry === 'object' ? Object.values(entry).join(' / ') : String(entry)}
-                                                    </span>
-                                                ));
-                                            } else if (raw === null || raw === undefined || raw === '') {
-                                                cell = <span className="text-gray-500">—</span>;
-                                            } else if (
-                                                col.type === 'number' ||
-                                                typeof raw === 'number' ||
-                                                (typeof raw === 'string' &&
-                                                    raw !== '' &&
-                                                    !isNaN(Number(raw)) &&
-                                                    /salary|pay|gross|net|amount|tax|pension|basic|ot|allowance/i.test(col.key || ''))
-                                            ) {
-                                                const n = Number(raw);
-                                                cell = Number.isFinite(n)
-                                                    ? n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-                                                    : String(raw);
-                                            } else {
-                                                cell = String(raw);
-                                            }
-                                            return (
-                                                <td key={j} className="px-4 py-3.5 whitespace-nowrap text-sm text-white font-medium">
-                                                    {cell}
-                                                </td>
-                                            );
-                                        })}
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
                     </div>
                 </div>
-            ))}
+            </div>
 
-            {filteredAndSortedData.length === 0 ? (
-                <p className="text-center py-8 text-gray-500">No records match the current criteria.</p>
-            ) : null}
+            {/* Results Table */}
+            {selectedCollection && (
+                <div className="flex-grow overflow-y-auto p-2 mt-4">
+                    <h3 className="text-xl font-bold text-white mb-4">
+                        Report Results: {getCollectionLabel(selectedCollection)} ({filteredAndSortedData.length} Records)
+                    </h3>
+
+                    {Object.entries(groupedData).map(([groupKey, data]) => (
+                        <div key={groupKey} className="mb-6 p-4 rounded-lg bg-gray-800/50">
+                            <h4 className="text-lg font-semibold text-gray-300 sticky top-0 bg-gray-800/80 p-2 -m-2 mb-2 z-10">
+                                {groupByKey ? `${filterableColumns.find(col => col.key === groupByKey)?.label || groupByKey}: ${groupKey} (${data.length})` : `All Records (${data.length})`}
+                            </h4>
+                            <div className="uu-table-scroll overflow-x-auto">
+                                <table className="min-w-full divide-y divide-gray-700">
+                                    <thead className="bg-gray-900/90 sticky top-12 z-[9]">
+                                        <tr className="text-gray-400">
+                                            {displayColumns.map((col, i) => (
+                                                <th key={i} className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">{col.label}</th>
+                                            ))}
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-gray-800 text-gray-300">
+                                        {data.map((record) => (
+                                            <tr key={record.id} className="transition duration-150 hover:bg-gray-700/50">
+                                                {displayColumns.map((col, j) => (
+                                                    <td key={j} className="px-4 py-3 whitespace-nowrap text-sm">
+                                                        {Array.isArray(record[col.key])
+                                                            ? record[col.key].slice(0, 2).map((entry, idx) => (
+                                                                <span key={idx} className="bg-gray-700/50 text-gray-300 rounded-full px-2 py-1 text-xs mr-1">
+                                                                    {typeof entry === 'object' ? Object.values(entry).join(' / ') : String(entry)}
+                                                                </span>
+                                                            ))
+                                                            : String(record[col.key] || 'N/A')}
+                                                    </td>
+                                                ))}
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    ))}
+                    {filteredAndSortedData.length === 0 && (
+                        <p className="text-center py-8 text-gray-500">No records match the current criteria.</p>
+                    )}
+                </div>
+            )}
         </ContainerCard>
     );
 };
 
 
-/* --- HARDENED MULTIENTRYFIELD (add-modal sub-forms) --- */
+/* --- FULLY MODIFIED MULTIENTRYFIELD COMPONENT --- */
 const MultiEntryField = ({ label, entries, fieldConfig, onChange, glassClass }) => {
-    const safeConfig = Array.isArray(fieldConfig) ? fieldConfig.filter(Boolean) : [];
     const safeEntries = Array.isArray(entries) ? entries : [];
-    const emptyRow = () => safeConfig.reduce((acc, f) => {
-        if (f && f.key) acc[f.key] = '';
-        return acc;
-    }, {});
-
-    const [newEntry, setNewEntry] = React.useState(() => emptyRow());
-
-    React.useEffect(() => {
-        setNewEntry(emptyRow());
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [label]);
+    const [newEntry, setNewEntry] = React.useState(
+        fieldConfig?.reduce((acc, field) => ({ ...acc, [field.key]: '' }), {}) || {}
+    );
 
     const handleAdd = () => {
-        if (!safeConfig.length) {
-            alert('No fields configured for this sub-form.');
-            return;
-        }
-        const isComplete = safeConfig.every((f) => f.isReadOnly || String(newEntry[f.key] ?? '').trim());
+        // Validation: ensures all fields except readOnly ones are filled
+        const isComplete = fieldConfig.every(field => field.isReadOnly || newEntry[field.key]?.toString().trim());
+        
         if (isComplete) {
-            onChange([...(safeEntries || []), { ...newEntry }]);
-            setNewEntry(emptyRow());
+            onChange([...safeEntries, newEntry]);
+            setNewEntry(fieldConfig.reduce((acc, field) => ({ ...acc, [field.key]: '' }), {})); 
         } else {
-            alert('Please complete the entry form below.');
+            alert(`Please complete the entry form below.`);
         }
     };
 
     return (
-        <div className={`p-6 sm:p-8 rounded-[2rem] space-y-6 border border-white/10 ${glassClass || ''} mb-8 bg-black/40 shadow-2xl scroll-mt-20`}>
+        <div className={`p-8 rounded-[2rem] space-y-6 border border-white/10 ${glassClass} mb-8 bg-black/40 shadow-2xl scroll-mt-20`}>
             <label className="block text-[14px] font-black text-cyan-400 border-b border-cyan-500/30 pb-4 uppercase italic tracking-widest">
-                {label || 'Entries'}
+                {label}
             </label>
+
+            {/* List Table */}
             <div className="space-y-3 max-h-80 overflow-y-auto pr-2 custom-scrollbar">
                 {safeEntries.length > 0 ? (
                     safeEntries.map((entry, index) => (
                         <div key={index} className="flex justify-between items-start p-5 rounded-2xl bg-white/5 border border-white/10 hover:bg-cyan-900/20 transition-all">
                             <div className="grid grid-cols-2 lg:grid-cols-4 gap-6 w-full text-[11px]">
-                                {safeConfig.map((f) => (
+                                {fieldConfig.map(f => (
                                     <div key={f.key} className="flex flex-col">
                                         <span className="text-cyan-500 font-black uppercase text-[9px] mb-1">{f.label}:</span>
                                         <span className="text-white font-medium break-words">
-                                            {entry?.[f.key] ?? '—'}
+                                            {f.key === 'digital_stamp' ? (
+                                                <code className="bg-cyan-500/10 px-1 rounded text-[8px] tracking-tighter">{entry[f.key]}</code>
+                                            ) : entry[f.key]}
                                         </span>
                                     </div>
                                 ))}
                             </div>
-                            <button
-                                type="button"
-                                onClick={() => onChange(safeEntries.filter((_, i) => i !== index))}
-                                className="ml-4 text-red-500 hover:text-red-400 p-2"
-                            >
+                            <button type="button" onClick={() => onChange(safeEntries.filter((_, i) => i !== index))} className="ml-4 text-red-500 hover:text-red-400 p-2 transition-transform active:scale-90">
                                 <Icons.Trash2 size={20} />
                             </button>
                         </div>
                     ))
                 ) : (
-                    <p className="text-[10px] text-white/20 italic p-6 text-center border-2 border-dashed border-white/5 rounded-2xl uppercase tracking-widest font-black">
-                        Awaiting entry input...
-                    </p>
+                    <p className="text-[10px] text-white/20 italic p-6 text-center border-2 border-dashed border-white/5 rounded-2xl uppercase tracking-widest font-black">Awaiting entry input...</p>
                 )}
             </div>
-            <div className="pt-8 border-t border-white/10 space-y-6">
+
+            {/* SPACIOUS Input Form */}
+            <div className="pt-10 border-t border-white/10 space-y-8">
                 <p className="text-[10px] font-black text-cyan-400/50 uppercase tracking-[0.3em]">Data Entry Interface:</p>
-                <div className="grid grid-cols-1 gap-y-6 bg-black/60 p-6 sm:p-8 rounded-[2rem] border border-white/5">
-                    {safeConfig.map((f) => {
-                        if (!f || !f.key) return null;
-                        const opts = Array.isArray(f.options) ? f.options : [];
-                        const isSelect = f.type === 'select' || opts.length > 0;
+                <div className="grid grid-cols-1 gap-y-8 bg-black/60 p-8 rounded-[2rem] border border-white/5 shadow-inner shadow-black">
+                    {fieldConfig.map(field => {
+                        const isSelect = field.type === 'select' || (field.options && field.options.length > 0);
+                        
                         return (
-                            <div key={f.key} className="flex flex-col space-y-2">
-                                <label className="text-[11px] font-black text-gray-400 uppercase ml-1 tracking-widest">
-                                    {f.label || f.key}
+                            <div key={field.key} className="flex flex-col space-y-3">
+                                <label className="text-[11px] font-black text-gray-400 uppercase ml-2 tracking-widest">
+                                    {field.label}
                                 </label>
                                 {isSelect ? (
                                     <select
-                                        value={newEntry[f.key] || ''}
-                                        onChange={(e) => setNewEntry((prev) => ({ ...prev, [f.key]: e.target.value }))}
-                                        className="w-full p-4 rounded-2xl bg-black border border-white/10 text-white text-sm focus:border-cyan-500 outline-none"
+                                        value={newEntry[field.key] || ''}
+                                        onChange={(e) => setNewEntry(prev => ({ ...prev, [field.key]: e.target.value }))}
+                                        className="w-full p-5 rounded-2xl bg-black border border-white/10 text-white text-sm focus:border-cyan-500 outline-none appearance-none"
                                     >
-                                        <option value="">Select {f.label || f.key}...</option>
-                                        {opts.map((opt) => {
-                                            const val = typeof opt === 'object' ? (opt.value ?? opt.label ?? '') : opt;
-                                            const lab = typeof opt === 'object' ? (opt.label ?? opt.value ?? '') : opt;
-                                            return <option key={String(val)} value={String(val)}>{String(lab)}</option>;
-                                        })}
+                                        <option value="">Select {field.label}...</option>
+                                        {field.options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
                                     </select>
                                 ) : (
                                     <input
-                                        type={f.type || 'text'}
-                                        autoComplete="off"
-                                        readOnly={!!f.isReadOnly}
-                                        value={newEntry[f.key] || ''}
-                                        onChange={(e) => setNewEntry((prev) => ({ ...prev, [f.key]: e.target.value }))}
-                                        className={`w-full p-4 rounded-2xl bg-black border border-white/10 text-white text-sm focus:border-cyan-500 ${f.isReadOnly ? 'opacity-40 cursor-not-allowed' : ''}`}
-                                        placeholder={f.isReadOnly ? 'Generated' : `Provide ${f.label || f.key}...`}
+                                        type={field.type || 'text'}
+                                        autoComplete="off" 
+                                        readOnly={field.isReadOnly}
+                                        value={newEntry[field.key] || ''}
+                                        onChange={(e) => {
+                                            const val = e.target.value;
+                                            setNewEntry(prev => {
+                                                const updated = { ...prev, [field.key]: val };
+                                                // AUTO-STAMP Generation Logic
+                                                if (field.key === 'member_name' && val.length > 1) {
+                                                    updated.digital_stamp = `AUTH-${val.toUpperCase().substring(0,3)}-${Date.now().toString().slice(-4)}`;
+                                                }
+                                                return updated;
+                                            });
+                                        }}
+                                        className={`w-full p-5 rounded-2xl bg-black border border-white/10 text-white text-sm focus:border-cyan-500 transition-all ${field.isReadOnly ? 'opacity-40 cursor-not-allowed border-dashed' : ''}`}
+                                        placeholder={field.isReadOnly ? 'Securely generated' : `Provide ${field.label}...`}
                                     />
                                 )}
                             </div>
@@ -3340,102 +2540,87 @@ const MultiEntryField = ({ label, entries, fieldConfig, onChange, glassClass }) 
                 <button
                     type="button"
                     onClick={handleAdd}
-                    className="w-full py-4 rounded-2xl bg-cyan-600/90 hover:bg-cyan-500 text-white text-xs font-black uppercase tracking-widest"
+                    className="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-black py-6 rounded-3xl text-[12px] uppercase tracking-widest transition-all shadow-2xl shadow-cyan-900/60 active:scale-95"
                 >
-                    + Add Entry
+                    + Append New Record To List
                 </button>
             </div>
         </div>
     );
 };
 
-
+// New Component: ContainerCard
+const ContainerCard = ({ title, Icon, children, glassClass, className = '' }) => {
+    const CardIcon = Icon ? getIcon(Icon) : Icons.File;
+    return (
+        <div className={`p-5 rounded-xl ${glassClass} shadow-xl backdrop-blur-sm ${className}`}>
+            <h2 className="flex items-center text-xl font-bold text-cyan-400 mb-4 border-b border-cyan-400/50 pb-2">
+                <CardIcon className="w-6 h-6 mr-2" />
+                {title}
+            </h2>
+            <div className="text-white">
+                {children}
+            </div>
+        </div>
+    );
+};
 const Modal = ({ isOpen, onClose, title, children, glassClass = '', footer }) => {
     if (!isOpen) return null;
 
-    const panel = (
+    return (
         <div
-            className={`w-full max-w-lg sm:max-w-xl md:max-w-2xl max-h-[min(88dvh,720px)] flex flex-col
-                        overflow-hidden rounded-2xl border border-white/25 bg-slate-900/95 backdrop-blur-xl
-                        text-white shadow-[0_20px_60px_rgba(0,0,0,0.55)] ring-1 ring-cyan-400/20
-                        ${glassClass || ''}`}
-            role="dialog"
-            aria-modal="true"
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => e.stopPropagation()}
-        >
-            <div className="h-1 w-full shrink-0 bg-gradient-to-r from-cyan-500 via-sky-400 to-violet-500" />
-            <div className="shrink-0 flex items-center justify-between gap-3 px-4 py-3 border-b border-white/15 bg-white/5">
-                <h3 className="text-sm sm:text-base font-black uppercase tracking-wide text-cyan-300 truncate">{title}</h3>
-                <button type="button" onClick={onClose}
-                    className="p-2 rounded-xl border border-white/20 bg-white/5 min-h-[40px] min-w-[40px]
-                               flex items-center justify-center text-gray-300 hover:text-red-300"
-                    aria-label="Close">
-                    <Icons.X className="w-5 h-5" />
-                </button>
-            </div>
-            <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-4 py-4 overscroll-contain custom-scrollbar">
-                {children}
-            </div>
-            <div className="shrink-0 flex flex-wrap justify-end gap-2 px-4 py-3 border-t border-white/15 bg-slate-900/95
-                            pb-[max(0.5rem,env(safe-area-inset-bottom))]">
-                {footer}
-                <button type="button" onClick={onClose}
-                    className="px-4 py-2.5 rounded-xl text-xs font-bold uppercase border border-white/20
-                               bg-white/5 text-gray-200 min-h-[40px]">
-                    Cancel
-                </button>
-            </div>
-        </div>
-    );
-
-    const shell = (
-        <div
-            style={{
-                position: 'fixed',
-                top: 0,
-                left: 0,
-                right: 0,
-                bottom: 0,
-                zIndex: 2147483000,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                padding: '12px',
-                boxSizing: 'border-box',
-            }}
+            className="fixed inset-0 z-[9999] flex items-end sm:items-center justify-center
+                       p-0 sm:p-5 bg-slate-950/50 backdrop-blur-md"
             role="presentation"
         >
             <div
-                style={{
-                    position: 'absolute',
-                    inset: 0,
-                    background: 'rgba(2, 6, 23, 0.35)',
-                    backdropFilter: 'blur(2px)',
-                    WebkitBackdropFilter: 'blur(2px)',
-                }}
-                aria-hidden="true"
-            />
-            <div style={{ position: 'relative', zIndex: 1, width: '100%', maxWidth: '42rem', display: 'flex', justifyContent: 'center' }}>
-                {panel}
+                className={`relative z-[10000] w-full sm:max-w-2xl max-h-[92dvh] flex flex-col
+                            overflow-hidden rounded-t-2xl sm:rounded-2xl
+                            border-2 border-white/25 bg-slate-900/95 backdrop-blur-xl text-white
+                            shadow-[0_25px_80px_rgba(0,0,0,0.65)] ring-1 ring-cyan-400/25
+                            ${glassClass || ''}`}
+                role="dialog"
+                aria-modal="true"
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => e.stopPropagation()}
+            >
+                <div className="h-1 w-full shrink-0 bg-gradient-to-r from-cyan-500 via-sky-400 to-violet-500" />
+
+                <div className="shrink-0 flex items-center justify-between gap-3 px-4 py-3 border-b border-white/15 bg-white/5">
+                    <h3 className="text-sm sm:text-lg font-black uppercase tracking-wide text-cyan-300 truncate">
+                        {title}
+                    </h3>
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        className="p-2.5 rounded-xl border border-white/20 bg-white/5 min-h-[44px] min-w-[44px]
+                                   flex items-center justify-center text-gray-300 hover:text-red-300"
+                        aria-label="Close"
+                    >
+                        <Icons.X className="w-5 h-5" />
+                    </button>
+                </div>
+
+                <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-4 py-4 overscroll-contain">
+                    {children}
+                </div>
+
+                <div className="shrink-0 flex flex-wrap justify-end gap-2 px-4 py-3 border-t border-white/15 bg-slate-900/95
+                                pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+                    {footer}
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        className="px-4 py-3 rounded-xl text-xs font-bold uppercase border border-white/20
+                                   bg-white/5 text-gray-200 min-h-[44px] flex-1 sm:flex-none"
+                    >
+                        Cancel
+                    </button>
+                </div>
             </div>
         </div>
     );
-
-    const portalFn = (typeof createPortal === 'function')
-        ? createPortal
-        : (typeof ReactDOM !== 'undefined' && ReactDOM.createPortal ? ReactDOM.createPortal : null);
-
-    if (portalFn && typeof document !== 'undefined' && document.body) {
-        return portalFn(shell, document.body);
-    }
-    return shell;
 };
-
-
-
-
-
 
 
 
@@ -3619,48 +2804,8 @@ const convertToDOCX = async (data, columns, filename) => {
 
 const ExportButton = ({ data, columns, filename, chartRef, isFinancial = false }) => {
     const [isOpen, setIsOpen] = useState(false);
-    const btnRef = useRef(null);
-    const [menuBox, setMenuBox] = useState(null);
-
     const getFilename = () => String(filename || 'Unity_Export').replace(/\s+/g, '_');
-    const visibleCols = () => (columns || []).filter((c) => c && !c.isHidden && c.type !== 'array');
-
-    const placeExportMenu = React.useCallback(() => {
-        const el = btnRef.current;
-        if (!el) return;
-        const r = el.getBoundingClientRect();
-        const width = 256;
-        let left = r.right - width;
-        if (left < 8) left = 8;
-        if (left + width > window.innerWidth - 8) left = Math.max(8, window.innerWidth - width - 8);
-        const gap = 8;
-        const spaceBelow = window.innerHeight - r.bottom - gap;
-        const openUp = spaceBelow < 220 && r.top > spaceBelow;
-        const maxHeight = Math.min(360, openUp ? r.top - gap : Math.max(spaceBelow, 180));
-        const top = openUp ? Math.max(8, r.top - gap - maxHeight) : r.bottom + gap;
-        setMenuBox({ top, left, width, maxHeight });
-    }, []);
-
-    useEffect(() => {
-        if (!isOpen) return undefined;
-        placeExportMenu();
-        const onDoc = (e) => {
-            if (btnRef.current && btnRef.current.contains(e.target)) return;
-            if (e.target && e.target.closest && e.target.closest('[data-uu-export-menu]')) return;
-            setIsOpen(false);
-        };
-        const onRepo = () => placeExportMenu();
-        document.addEventListener('mousedown', onDoc);
-        document.addEventListener('touchstart', onDoc);
-        window.addEventListener('resize', onRepo);
-        window.addEventListener('scroll', onRepo, true);
-        return () => {
-            document.removeEventListener('mousedown', onDoc);
-            document.removeEventListener('touchstart', onDoc);
-            window.removeEventListener('resize', onRepo);
-            window.removeEventListener('scroll', onRepo, true);
-        };
-    }, [isOpen, placeExportMenu]);
+    const visibleCols = () => (columns || []).filter(c => c && !c.isHidden && c.type !== 'array');
 
     const handleAction = async (type) => {
         setIsOpen(false);
@@ -3675,25 +2820,17 @@ const ExportButton = ({ data, columns, filename, chartRef, isFinancial = false }
                 return;
             }
             if (type === 'XLSX') {
-                if (typeof exportTableWorkbook === 'function') {
-                    await exportTableWorkbook(rows, cols.length ? cols : (columns || []), filename || fname, {
-                        sheetName: String(filename || 'Data').slice(0, 31),
-                    });
-                } else if (typeof generateRobustWorkbook === 'function' && isFinancial) {
-                    await generateRobustWorkbook(rows, filename || fname);
-                } else {
-                    alert('Excel export is not available in this module.');
-                }
+                await exportTableWorkbook(rows, cols.length ? cols : (columns || []), filename || fname, {
+                    sheetName: String(filename || 'Data').slice(0, 31)
+                });
                 return;
             }
             if (type === 'PDF') {
-                if (typeof convertToPDF === 'function') convertToPDF(rows, cols, filename || fname);
-                else alert('PDF export is not available.');
+                convertToPDF(rows, cols, filename || fname);
                 return;
             }
             if (type === 'DOCX') {
-                if (typeof convertToDOCX === 'function') await convertToDOCX(rows, cols, filename || fname);
-                else alert('Word export is not available.');
+                await convertToDOCX(rows, cols, filename || fname);
                 return;
             }
             if (type === 'CSV') {
@@ -3703,10 +2840,10 @@ const ExportButton = ({ data, columns, filename, chartRef, isFinancial = false }
                     String(filename || 'Export').toUpperCase() + ' (Official Record)',
                     `Generated ${new Date().toLocaleString()} · ${rows.length} records`,
                     '',
-                    cols.map((c) => esc(c.label || c.key)).join(','),
-                    ...rows.map((r) => cols.map((c) => esc(r[c.key])).join(',')),
+                    cols.map(c => esc(c.label || c.key)).join(','),
+                    ...rows.map(r => cols.map(c => esc(r[c.key])).join(',')),
                     '',
-                    'Unity University · Official system export · Confidential',
+                    'Unity University · Official system export · Confidential'
                 ];
                 saveAs(new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8' }), `${fname}_${new Date().toISOString().slice(0, 10)}.csv`);
             }
@@ -3716,60 +2853,26 @@ const ExportButton = ({ data, columns, filename, chartRef, isFinancial = false }
         }
     };
 
-    const menuItems = (
-        <div className="p-2 grid grid-cols-1 gap-1">
-            <button type="button" onClick={() => handleAction('XLSX')} className="w-full text-left px-4 py-3 text-[11px] font-bold text-emerald-400 hover:bg-white/5 transition flex items-center gap-3 rounded-xl"><Icons.FileSpreadsheet size={16}/> Excel Spreadsheet</button>
-            <button type="button" onClick={() => handleAction('DOCX')} className="w-full text-left px-4 py-3 text-[11px] font-bold text-blue-400 hover:bg-white/5 transition flex items-center gap-3 rounded-xl"><Icons.FileBox size={16}/> Word Document</button>
-            <button type="button" onClick={() => handleAction('PDF')} className="w-full text-left px-4 py-3 text-[11px] font-bold text-rose-400 hover:bg-white/5 transition flex items-center gap-3 rounded-xl"><Icons.FileText size={16}/> PDF Document</button>
-            <button type="button" onClick={() => handleAction('CSV')} className="w-full text-left px-4 py-3 text-[11px] font-bold text-gray-400 hover:bg-white/5 transition flex items-center gap-3 rounded-xl"><Icons.Filter size={16}/> CSV (Raw Data)</button>
-            <hr className="border-white/5 mx-2 my-1" />
-            <button type="button" onClick={() => handleAction('PNG')} className="w-full text-left px-4 py-3 text-[11px] font-bold text-cyan-400 hover:bg-white/5 transition flex items-center gap-3 rounded-xl"><Icons.Camera size={16}/> Image Capture (PNG)</button>
-        </div>
-    );
-
     return (
-        <div className="relative inline-block text-left shrink-0">
-            <button
-                ref={btnRef}
-                type="button"
-                onClick={() => setIsOpen((v) => !v)}
-                className="bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-2.5 px-6 rounded-xl flex items-center gap-2 shadow-lg transition-all active:scale-95 text-[11px] uppercase tracking-widest border border-white/20"
-            >
+        <div className="relative inline-block text-left z-30">
+            <button type="button" onClick={() => setIsOpen(!isOpen)} className="bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-2.5 px-6 rounded-xl flex items-center gap-2 shadow-lg transition-all active:scale-95 text-[11px] uppercase tracking-widest border border-white/20">
                 <Icons.Download size={16}/> Export Options
             </button>
-            {(() => {
-                if (!isOpen || !menuBox) return null;
-                const menu = (
-                    <div
-                        data-uu-export-menu="1"
-                        className="rounded-2xl bg-slate-900 border border-white/15 shadow-2xl overflow-hidden backdrop-blur-xl"
-                        style={{
-                            position: 'fixed',
-                            top: menuBox.top,
-                            left: menuBox.left,
-                            width: menuBox.width,
-                            maxHeight: menuBox.maxHeight,
-                            zIndex: 2147483646,
-                            overflowY: 'auto',
-                        }}
-                        onMouseDown={(e) => e.stopPropagation()}
-                    >
-                        {menuItems}
+            {isOpen && (
+                <div className="absolute right-0 top-full mt-2 w-64 rounded-2xl bg-slate-900 border border-white/10 shadow-2xl overflow-hidden backdrop-blur-xl z-[10001]">
+                    <div className="p-2 grid grid-cols-1 gap-1">
+                        <button type="button" onClick={() => handleAction('XLSX')} className="w-full text-left px-4 py-3 text-[11px] font-bold text-emerald-400 hover:bg-white/5 transition flex items-center gap-3 rounded-xl"><Icons.FileSpreadsheet size={16}/> Excel Spreadsheet</button>
+                        <button type="button" onClick={() => handleAction('DOCX')} className="w-full text-left px-4 py-3 text-[11px] font-bold text-blue-400 hover:bg-white/5 transition flex items-center gap-3 rounded-xl"><Icons.FileBox size={16}/> Word Document</button>
+                        <button type="button" onClick={() => handleAction('PDF')} className="w-full text-left px-4 py-3 text-[11px] font-bold text-rose-400 hover:bg-white/5 transition flex items-center gap-3 rounded-xl"><Icons.FileText size={16}/> PDF Document</button>
+                        <button type="button" onClick={() => handleAction('CSV')} className="w-full text-left px-4 py-3 text-[11px] font-bold text-gray-400 hover:bg-white/5 transition flex items-center gap-3 rounded-xl"><Icons.Filter size={16}/> CSV (Official)</button>
+                        <hr className="border-white/5 mx-2 my-1" />
+                        <button type="button" onClick={() => handleAction('PNG')} className="w-full text-left px-4 py-3 text-[11px] font-bold text-cyan-400 hover:bg-white/5 transition flex items-center gap-3 rounded-xl"><Icons.Camera size={16}/> Image Capture (PNG)</button>
                     </div>
-                );
-                const portalFn = (typeof createPortal === 'function')
-                    ? createPortal
-                    : (typeof ReactDOM !== 'undefined' && ReactDOM.createPortal ? ReactDOM.createPortal : null);
-                if (portalFn && typeof document !== 'undefined' && document.body) {
-                    return portalFn(menu, document.body);
-                }
-                return menu;
-            })()}
+                </div>
+            )}
         </div>
     );
 };
-
-
 
 
 const DataTable = ({ collectionName, data, columns, glassClass, title, getCollection }) => {
@@ -3930,7 +3033,7 @@ const DataTable = ({ collectionName, data, columns, glassClass, title, getCollec
 
                 <div className="flex flex-col xl:flex-row flex-wrap gap-2 items-stretch xl:items-center justify-between">
                     <div className="flex flex-wrap gap-2 items-center flex-1 min-w-0">
-                        <div className="relative min-w-[220px] flex-1 max-w-sm">
+                        <div className="relative min-w-[160px] flex-1 max-w-sm">
                             <Icons.Search className="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                             <input
                                 type="text"
@@ -4269,44 +3372,29 @@ const COLUMN_CONFIG = {
     { key: 'approved_by_signature', label: 'Authority Master Stamp', isReadOnly: true, placeholder: 'MASTER_APPROVAL_PROTOCOL_SECURE' }
 ],   // Update this in your COLUMN_CONFIG object
 'HR_COMPETENCE_CRUD': [
-        { key: 'employee_id', label: 'ID NO (HR)', type: 'text', isReadOnly: true },
-        { key: 'employee_name', label: 'Employee Name', type: 'select', isRequired: true, source: 'HR_EMPLOYEE_CRUD', sourceLabel: 'name', sourceValue: 'name' },
-        { key: 'department', label: 'Department', type: 'text', isReadOnly: true },
-        { key: 'position', label: 'Position', type: 'text', isReadOnly: true },
-        { key: 'skill_category', label: 'Competency Category', type: 'select', isRequired: true, options: (typeof NEW_MOCK_SKILLS !== 'undefined' ? Object.keys(NEW_MOCK_SKILLS) : ['Core', 'Communication', 'Technical']) },
-        { key: 'skill', label: 'Skill / Competency', type: 'select', isRequired: true, options: (typeof NEW_MOCK_SKILLS !== 'undefined' ? Object.values(NEW_MOCK_SKILLS).flat() : []) },
-        { key: 'score', label: 'Score (1–5)', type: 'select', options: ['1','2','3','4','5'], isRequired: true },
-        { key: 'rating_label', label: 'Proficiency', type: 'text', isReadOnly: true },
-        { key: 'weight', label: 'Weight', type: 'number', isReadOnly: true },
-        { key: 'weighted_score', label: 'Weighted Score', type: 'number', isReadOnly: true },
-        { key: 'period', label: 'Period', type: 'select', options: ['2025-H2','2026-H1','2026-H2'] },
-        { key: 'last_assessed', label: 'Assessment Date', type: 'date', isRequired: true },
-        { key: 'evaluator', label: 'Evaluator', type: 'text' },
-        { key: 'evidence', label: 'Evidence', type: 'text' },
-        { key: 'notes', label: 'Notes', type: 'text' },
-        { key: 'status', label: 'Status', type: 'select', options: ['Active', 'Development', 'Archived'] },
-    ],
+    { key: 'employee_name', label: 'Employee Name', type: 'select', isRequired: true, options: MOCK_EMPLOYEES.map(e => e.name) },
+    { 
+        key: 'skill', 
+        label: 'Skill / Competency', 
+        type: 'select', 
+        isRequired: true, 
+        // This ensures the dropdown in the "Add" form also has all skills
+        options: Object.values(NEW_MOCK_SKILLS).flat() 
+    },
+    { key: 'score', label: 'Score (1-5)', type: 'select', options: COMPETENCE_LEVELS.map(String), isRequired: true },
+    { key: 'last_assessed', label: 'Assessment Date', type: 'date', isRequired: true },
+    { key: 'department', label: 'Department', isReadOnly: true },
+    { key: 'evaluator', label: 'Evaluator', isReadOnly: true }
+],
     'HR_APPRAISAL_CRUD': [
         { key: 'id', label: 'ID', isHidden: true, isReadOnly: true },
-        { key: 'employee_id', label: 'ID NO (HR)', type: 'text', isReadOnly: true },
-        { key: 'employee_name', label: 'Employee Name', type: 'select', isRequired: true, source: 'HR_EMPLOYEE_CRUD', sourceLabel: 'name', sourceValue: 'name' },
-        { key: 'department', label: 'Department', type: 'text', isReadOnly: true },
-        { key: 'position', label: 'Position', type: 'text', isReadOnly: true },
-        { key: 'appraisal_period', label: 'Appraisal Period', type: 'select', options: ['2025-H2','2026-H1','2026-H2'], isRequired: true },
+        { key: 'employee_name', label: 'Employee Name', type: 'select', isRequired: true, options: MOCK_EMPLOYEES.map(e => e.name) },
         { key: 'appraisal_date', label: 'Appraisal Date', type: 'date', isRequired: true },
-        { key: 'skills_assessed', label: 'Skills Assessed (from Matrix)', type: 'number', isReadOnly: true },
-        { key: 'competence_avg', label: 'Competence Avg (Matrix)', type: 'number', isReadOnly: true },
-        { key: 'goals_score', label: 'Goals Score (1–5)', type: 'number' },
-        { key: 'conduct_score', label: 'Conduct Score (1–5)', type: 'number' },
-        { key: 'appraisal_score', label: 'Overall Score (1.0–5.0)', type: 'number', isRequired: true },
-        { key: 'performance_band', label: 'Performance Band', type: 'select', options: ['Outstanding','Exceeds Expectations','Meets Expectations','Needs Improvement','Unsatisfactory'], isReadOnly: true },
+        { key: 'appraisal_score', label: 'Score (1.0 - 5.0)', type: 'number', isRequired: true },
         { key: 'feedback_manager', label: 'Manager Feedback', type: 'textarea' },
         { key: 'feedback_peer', label: 'Peer Feedback', type: 'textarea' },
         { key: 'feedback_self', label: 'Self Review', type: 'textarea' },
-        { key: 'development_plan', label: 'Development Plan', type: 'textarea' },
-        { key: 'next_review_date', label: 'Next Review', type: 'date' },
-        { key: 'evaluator', label: 'Evaluator', type: 'text' },
-        { key: 'status', label: 'Status', type: 'select', options: ['Pending', 'In Review', 'Completed', 'Canceled'] },
+        { key: 'status', label: 'Status', type: 'select', options: ['Pending', 'Completed', 'Canceled'] },
     ],
     'HR_LEAVE_CRUD': [
         { key: 'id', label: 'ID', isHidden: true, isReadOnly: true },
@@ -4493,1030 +3581,357 @@ const COLUMN_CONFIG = {
    8. NOTIFICATION & UTILITY BAR (Standard)
    ---------------------------------------------------------------------- */
 
-/** Relative time for notification rows (e.g. "1 min ago"). */
-const formatRelativeTime = (isoOrDate) => {
-    if (!isoOrDate) return '';
-    const then = new Date(isoOrDate);
-    if (isNaN(then.getTime())) return String(isoOrDate).slice(0, 16);
-    const sec = Math.round((Date.now() - then.getTime()) / 1000);
-    if (sec < 10) return 'just now';
-    if (sec < 60) return sec + ' sec ago';
-    const min = Math.floor(sec / 60);
-    if (min < 60) return min + (min === 1 ? ' min ago' : ' mins ago');
-    const hr = Math.floor(min / 60);
-    if (hr < 24) return hr + (hr === 1 ? ' hour ago' : ' hours ago');
-    const day = Math.floor(hr / 24);
-    if (day < 30) return day + (day === 1 ? ' day ago' : ' days ago');
-    return then.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
-};
+const NotificationBar = ({ glassClass, currentUser, onClose }) => {
+    const { getCollection, notificationTrigger, leaveUpdateTrigger } = useData();
+    const [activeTab, setActiveTab] = useState('notifications');
 
-const NotificationBar = ({ glassClass, currentUser, onClose, onCountChange }) => {
-    const { getCollection, notificationTrigger, leaveUpdateTrigger, roleUpdateTrigger, allData } = useData();
-    const [activeTab, setActiveTab] = useState('all');
-    const [filter, setFilter] = useState('all'); // all | alert | warning | info
+    // Get today's reference point and NORMALIZE to midnight
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
 
-    const today = useMemo(() => {
-        const d = new Date();
-        d.setHours(0, 0, 0, 0);
-        return d;
-    }, []);
+    // --- 1. ETHIOPIAN HOLIDAYS LOGIC ---
+    const upcomingHolidays = useMemo(() => {
+        const holidays = [
+            { name: "Genna (Et. Christmas)", date: "2026-01-07" },
+            { name: "Timkat (Et. Epiphany)", date: "2026-01-19" },
+            { name: "Adwa Victory Day", date: "2026-03-02" },
+            { name: "Siklet (Good Friday)", date: "2026-04-10" },
+            { name: "Fasika (Easter)", date: "2026-04-12" },
+            { name: "Labour Day", date: "2026-05-01" }
+        ];
 
-    const daysUntil = (dateStr) => {
-        if (!dateStr) return null;
-        const t = new Date(String(dateStr).slice(0, 10));
-        if (isNaN(t.getTime())) return null;
-        t.setHours(0, 0, 0, 0);
-        return Math.round((t - today) / 86400000);
-    };
+        return holidays
+            .filter(h => {
+                const hDate = new Date(h.date);
+                hDate.setHours(0,0,0,0);
+                return hDate >= today;
+            })
+            .sort((a, b) => new Date(a.date) - new Date(b.date))
+            .slice(0, 3);
+    }, [today]);
 
+    // --- 2. GENERATE DYNAMIC NOTIFICATIONS ---
     const notifications = useMemo(() => {
         const list = [];
-        const push = (sev, cat, message, meta = {}) => {
-            list.push({
-                id: `${cat}-${list.length}-${String(message).slice(0, 24)}`,
-                severity: sev, // alert | warning | info | success
-                category: cat,
-                message,
-                time: meta.time || new Date().toISOString(),
-                ...meta
+        const userRole = currentUser?.role;
+        const isHR = userRole === 'hr_manager' || userRole === 'admin' || userRole === 'hr_staff';
+
+        // SECTION: UPCOMING HOLIDAYS
+        list.push({ type: 'Title', message: 'UPCOMING HOLIDAYS' });
+        upcomingHolidays.forEach(h => {
+            const displayDate = new Date(h.date).toLocaleDateString('en-US', { month: 'short', day: '2-digit' });
+            list.push({ type: 'Holiday', message: `📅 ${h.name} - ${displayDate}`, color: "bg-emerald-900/30" });
+        });
+
+        // SECTION: PROVISION HR WATCH
+        if (isHR) {
+            list.push({ type: 'Title', message: 'PROVISION HR WATCH' });
+            const employees = getCollection('HR_EMPLOYEE_CRUD');
+            const provisionStaff = employees.filter(emp => {
+                if (!emp.seniority_date_gc || emp.employment_type === 'Permanent') return false;
+                const startDate = new Date(emp.seniority_date_gc);
+                const provisionEnd = new Date(startDate.setMonth(startDate.getMonth() + 6));
+                provisionEnd.setHours(0,0,0,0);
+                return provisionEnd >= today;
             });
-        };
 
-        // ——— Collections ———
-        const txs = getCollection('transactions') || [];
-        const journals = getCollection('dayJournals') || [];
-        const coa = getCollection('chartsOfAccounts') || getCollection('FIN_COA_CRUD') || [];
-        const partners = getCollection('FIN_PARTNERS_CRUD') || [];
-        const process = getCollection('PAY_PROCESS_CRUD') || [];
-        const master = getCollection('PAY_MASTER_CRUD') || [];
-        const ot = getCollection('PAY_OVERTIME_CRUD') || [];
-        const ad = getCollection('PAY_AD_CRUD') || [];
-        const recon = getCollection('PAY_RECON_CRUD') || [];
-        const employees = getCollection('HR_EMPLOYEE_CRUD') || [];
-        const leave = getCollection('HR_LEAVE_CRUD') || [];
-        const vacancies = getCollection('HR_VACANCY_CRUD') || [];
-        const recruitment = getCollection('HR_RECRUITMENT_CRUD') || [];
-        const attrition = getCollection('HR_STAFF_ATTRITION_CRUD') || [];
-        const retirement = getCollection('RETIREMENT_CRUD') || [];
-        const resignation = getCollection('RESIGNATION_CRUD') || [];
-        const training = getCollection('HR_TRAINING_CRUD') || [];
-        const appraisal = getCollection('HR_APPRAISAL_CRUD') || [];
-        const insurance = getCollection('HR_INSURANCE_CRUD') || [];
-        const penalties = getCollection('HR_PENALTY_CRUD') || [];
-        const awards = getCollection('HR_AWARD_CRUD') || getCollection('HR_AWARD_CRUD_HR') || [];
-        const depts = getCollection('DEPARTMENTS_CRUD') || [];
-        const hiring = getCollection('DEPARTMENTS_HIRING_REQUESTS_CRUD') || [];
-        const roles = getCollection('ROLE_CRUD') || [];
-
-        // ——— FINANCE / BOOKS ———
-        let tb = [];
-        try {
-            if (typeof calculateTrialBalance === 'function') {
-                tb = calculateTrialBalance(txs, coa) || [];
+            if (provisionStaff.length > 0) {
+                provisionStaff.forEach(emp => {
+                    const startDate = new Date(emp.seniority_date_gc);
+                    const provisionEnd = new Date(startDate.setMonth(startDate.getMonth() + 6));
+                    list.push({ 
+                        type: 'Info', 
+                        message: `⏳ ${emp.name}: Provision ends ${provisionEnd.toLocaleDateString()}. Evaluate for permanency.`, 
+                        color: 'bg-purple-900/30' 
+                    });
+                });
+            } else {
+                list.push({ type: 'Info', message: 'No staff currently in provision.', color: 'bg-gray-800/30' });
             }
-        } catch (e) { /* ignore */ }
-        const totalD = tb.reduce((s, r) => s + Number(r.debit || 0), 0);
-        const totalC = tb.reduce((s, r) => s + Number(r.credit || 0), 0);
-        const gap = Math.abs(totalD - totalC);
-        if (gap > 0.05) {
-            push('alert', 'Finance', `Trial Balance unbalanced by ${gap.toLocaleString(undefined, { minimumFractionDigits: 2 })} ETB. Review journals and single transactions.`);
-        } else if (totalD > 0) {
-            push('success', 'Finance', `Books balanced · Σ Dr/Cr ${totalD.toLocaleString(undefined, { minimumFractionDigits: 2 })} ETB.`);
+        }
+
+        // SECTION: STAFF CURRENTLY ON LEAVE
+        list.push({ type: 'Title', message: 'STAFF CURRENTLY ON LEAVE' });
+        const approvedLeaves = getCollection('HR_LEAVE_CRUD').filter(rec => {
+            if (rec.status !== 'Approved') return false;
+            const endDate = new Date(rec.end_date);
+            endDate.setHours(0, 0, 0, 0);
+            return endDate >= today;
+        });
+
+        if (approvedLeaves.length > 0) {
+            approvedLeaves.forEach(onLeave => {
+                list.push({ 
+                    type: 'Info', 
+                    message: `✈️ ${onLeave.employee_name} (${onLeave.leave_type}) until ${onLeave.end_date}`, 
+                    color: 'bg-blue-900/30' 
+                });
+            });
         } else {
-            push('info', 'Finance', 'No posted ledger activity yet. Record single transactions or journals.');
+            list.push({ type: 'Info', message: 'No staff currently on leave.', color: 'bg-gray-800/30' });
         }
 
-        const draftJournals = journals.filter(j => !['posted', 'verified'].includes(String(j.status || '').toLowerCase()));
-        if (draftJournals.length) {
-            push('warning', 'Finance', `${draftJournals.length} day journal(s) not Posted/Verified.`);
+        // SECTION: RETIREMENT WATCH
+        if (userRole === 'hr_manager' || userRole === 'admin') {
+            list.push({ type: 'Title', message: `RETIREMENT WATCH` });
+            const employees = getCollection('HR_EMPLOYEE_CRUD');
+            let retirementAlertsCount = 0;
+
+            employees.forEach(emp => {
+                if (!emp.dob_gc) return;
+                const dob = new Date(emp.dob_gc);
+                const retirementDate = new Date(dob.getFullYear() + 60, dob.getMonth(), dob.getDate());
+                retirementDate.setHours(0,0,0,0);
+                
+                const timeDiff = retirementDate.getTime() - today.getTime();
+                const monthsRemaining = timeDiff / (1000 * 60 * 60 * 24 * 30.44);
+
+                if (monthsRemaining >= 0 && monthsRemaining <= 1) {
+                    retirementAlertsCount++;
+                    list.push({ 
+                        type: 'Warning', 
+                        message: `🚨 FINAL CALL: ${emp.name} retires soon (${retirementDate.toLocaleDateString()}).`, 
+                        color: 'bg-red-900/50' 
+                    });
+                } 
+                else if (monthsRemaining > 1 && monthsRemaining <= 6) {
+                    retirementAlertsCount++;
+                    list.push({ 
+                        type: 'Warning', 
+                        message: `⚠️ PREPARATION: ${emp.name} retires in ~${Math.ceil(monthsRemaining)} months.`, 
+                        color: 'bg-orange-900/30' 
+                    });
+                }
+            });
+            if (retirementAlertsCount === 0) list.push({ type: 'Info', message: 'No retirements due.', color: 'bg-gray-800/30' });
         }
-        const unbalancedTxn = txs.filter(t => {
-            const d = Number(t.debit || 0), c = Number(t.credit || 0);
-            const a = Number(t.amount || 0);
-            if (String(t.is_balanced || '').toLowerCase() === 'no') return true;
-            return false;
-        });
-        if (unbalancedTxn.length) {
-            push('alert', 'Finance', `${unbalancedTxn.length} transaction leg(s) marked not balanced.`);
-        }
-        const matLegs = txs.filter(t => String(t.module || '').toUpperCase() === 'MATERIAL' || String(t.source || '').startsWith('MAT_'));
-        if (matLegs.length) {
-            push('info', 'Finance', `${matLegs.length} material-linked ledger leg(s) in books (GRV/GIV/PO).`);
-        }
 
-        // Partners
-        const inactiveP = partners.filter(p => String(p.status || '').toLowerCase() === 'inactive');
-        const highAR = partners.filter(p => Number(p.outstanding_balance || 0) > 100000 && String(p.partner_type || '').toLowerCase().includes('customer'));
-        const highAP = partners.filter(p => Number(p.outstanding_balance || 0) > 50000 && String(p.partner_type || '').toLowerCase().includes('supplier'));
-        if (highAR.length) push('warning', 'Partners', `${highAR.length} customer(s) with AR outstanding over 100,000 ETB.`);
-        if (highAP.length) push('warning', 'Partners', `${highAP.length} supplier(s) with AP outstanding over 50,000 ETB.`);
-        if (inactiveP.length) push('info', 'Partners', `${inactiveP.length} inactive partner record(s).`);
-        if (!partners.length) push('warning', 'Partners', 'Partner master is empty — single transactions cannot autofill entities.');
+        // SECTION: RESIGNATION REMINDERS (FIXED FOR TODAY)
+        if (isHR) {
+            list.push({ type: 'Title', message: 'RESIGNATION REMINDERS' });
+            const resignations = getCollection('RESIGNATION_CRUD').filter(r => {
+                const lastDay = new Date(r.last_working_day);
+                lastDay.setHours(0, 0, 0, 0); // Normalize to midnight
+                // Inclusion check: if lastDay is today or in the future
+                return lastDay.getTime() >= today.getTime() && r.acceptance_status === 'Accepted';
+            });
 
-        // ——— PAYROLL ———
-        const draftPay = process.filter(r => ['draft', 'pending'].includes(String(r.status || '').toLowerCase()));
-        const committedPay = process.filter(r => String(r.status || '').toLowerCase() === 'committed');
-        const postedPay = process.filter(r => String(r.status || '').toLowerCase().includes('post'));
-        if (draftPay.length) push('warning', 'Payroll', `${draftPay.length} payroll process row(s) still Draft/Pending — commit to post to finance.`);
-        if (committedPay.length && !postedPay.length) {
-            push('info', 'Payroll', `${committedPay.length} committed process row(s). Confirm ledger legs on Trial Balance.`);
-        }
-        const missingMaster = process.filter(r => {
-            const name = r.employee_name;
-            return name && !(master || []).some(m => m.employee_name === name);
-        });
-        if (missingMaster.length) push('alert', 'Payroll', `${missingMaster.length} process row(s) without salary master match.`);
-        if (ot.length) {
-            const openOt = ot.filter(r => !['approved', 'posted', 'closed'].includes(String(r.status || '').toLowerCase()));
-            if (openOt.length) push('info', 'Payroll', `${openOt.length} overtime record(s) awaiting approval/close.`);
-        }
-        if (ad.length) push('info', 'Payroll', `${ad.length} allowance/deduction master line(s) on file.`);
-        const openRecon = recon.filter(r => String(r.status || '').toLowerCase() !== 'closed' && Math.abs(Number(r.net_balance || 0)) > 0.05);
-        if (openRecon.length) push('warning', 'Payroll', `${openRecon.length} payroll reconciliation(s) with non-zero net balance.`);
-        if (!process.length) push('info', 'Payroll', 'No payroll process rows this period.');
+            if (resignations.length > 0) {
+                resignations.forEach(r => {
+                    const lDay = new Date(r.last_working_day);
+                    lDay.setHours(0,0,0,0);
+                    const isToday = lDay.getTime() === today.getTime();
 
-        // ——— HR: Leave ———
-        const pendingLeave = leave.filter(r => ['pending', 'submitted', 'requested'].includes(String(r.status || '').toLowerCase()));
-        if (pendingLeave.length) push('warning', 'HR Leave', `${pendingLeave.length} leave request(s) pending approval.`);
-        const onLeaveNow = leave.filter(r => {
-            const st = String(r.status || '').toLowerCase();
-            if (!(st.includes('approv') || st === 'active' || st === 'ongoing')) return false;
-            const a = daysUntil(r.start_date || r.from_date);
-            const b = daysUntil(r.end_date || r.to_date);
-            if (a == null || b == null) return false;
-            return a <= 0 && b >= 0;
-        });
-        if (onLeaveNow.length) push('info', 'HR Leave', `${onLeaveNow.length} staff currently on approved leave.`);
-        const leaveSoon = leave.filter(r => {
-            const d = daysUntil(r.start_date || r.from_date);
-            return d != null && d > 0 && d <= 7 && String(r.status || '').toLowerCase().includes('approv');
-        });
-        if (leaveSoon.length) push('info', 'HR Leave', `${leaveSoon.length} approved leave starting within 7 days.`);
-
-        // ——— HR: Headcount / masters ———
-        if (!employees.length) push('alert', 'HR', 'Employee master is empty.');
-        else push('success', 'HR', `${employees.length} employee record(s) · ${depts.length} department(s).`);
-        const noDept = employees.filter(e => !e.department && !e.dept);
-        if (noDept.length) push('warning', 'HR', `${noDept.length} employee(s) missing department.`);
-        const inactiveEmp = employees.filter(e => ['inactive', 'terminated', 'resigned'].includes(String(e.status || '').toLowerCase()));
-        if (inactiveEmp.length) push('info', 'HR', `${inactiveEmp.length} inactive/terminated employee flag(s).`);
-
-        // Vacancies / recruitment / hiring
-        const openVac = vacancies.filter(v => ['open', 'published', 'active'].includes(String(v.status || '').toLowerCase()));
-        if (openVac.length) push('info', 'Recruitment', `${openVac.length} open vacancy(ies).`);
-        const pendingRec = recruitment.filter(r => !['hired', 'rejected', 'closed'].includes(String(r.status || '').toLowerCase()));
-        if (pendingRec.length) push('warning', 'Recruitment', `${pendingRec.length} recruitment case(s) in progress.`);
-        const openHiring = hiring.filter(h => ['pending', 'submitted', 'open'].includes(String(h.status || '').toLowerCase()));
-        if (openHiring.length) push('warning', 'Recruitment', `${openHiring.length} department hiring request(s) pending.`);
-
-        // Attrition / retirement / resignation
-        if (attrition.length) push('info', 'HR Exit', `${attrition.length} attrition record(s) on file.`);
-        const retireSoon = (retirement.length ? retirement : employees).filter(r => {
-            const d = daysUntil(r.retirement_date || r.expected_date);
-            return d != null && d >= 0 && d <= 90;
-        });
-        if (retireSoon.length) push('warning', 'HR Exit', `${retireSoon.length} retirement(s) within 90 days.`);
-        const openRes = resignation.filter(r => !['processed', 'completed', 'closed'].includes(String(r.status || '').toLowerCase()));
-        if (openRes.length) push('warning', 'HR Exit', `${openRes.length} resignation(s) not fully processed.`);
-
-        // Training / appraisal / insurance / discipline / awards
-        const openTrain = training.filter(t => !['completed', 'cancelled'].includes(String(t.status || '').toLowerCase()));
-        if (openTrain.length) push('info', 'HR Dev', `${openTrain.length} training item(s) open.`);
-        const dueAppraisal = appraisal.filter(a => {
-            const d = daysUntil(a.due_date || a.appraisal_date);
-            return d != null && d <= 14;
-        });
-        if (dueAppraisal.length) push('warning', 'HR Dev', `${dueAppraisal.length} appraisal(s) due within 14 days.`);
-        const insExpire = insurance.filter(i => {
-            const d = daysUntil(i.expiry_date || i.end_date);
-            return d != null && d >= 0 && d <= 30;
-        });
-        if (insExpire.length) push('alert', 'HR', `${insExpire.length} insurance policy(ies) expiring within 30 days.`);
-        const openPen = penalties.filter(p => !['closed', 'resolved'].includes(String(p.status || '').toLowerCase()));
-        if (openPen.length) push('warning', 'HR', `${openPen.length} open disciplinary case(s).`);
-        if (awards.length) push('success', 'HR', `${awards.length} award record(s) registered.`);
-
-        // Roles
-        if (!roles.length) push('warning', 'Security', 'ROLE_CRUD empty — relying on default permission map.');
-        else push('info', 'Security', `${roles.length} role definition(s) loaded.`);
-
-        // Holidays
-        const holidays = [
-            { name: 'Genna (Ethiopian Christmas)', date: '2026-01-07' },
-            { name: 'Timkat (Epiphany)', date: '2026-01-19' },
-            { name: 'Adwa Victory Day', date: '2026-03-02' },
-            { name: 'Siklet (Good Friday)', date: '2026-04-10' },
-            { name: 'Fasika (Easter)', date: '2026-04-12' },
-            { name: 'Labour Day', date: '2026-05-01' },
-            { name: 'Ethiopian New Year', date: '2026-09-11' },
-            { name: 'Meskel', date: '2026-09-27' },
-        ];
-        holidays.forEach(h => {
-            const d = daysUntil(h.date);
-            if (d != null && d >= 0 && d <= 45) {
-                push(d <= 7 ? 'warning' : 'info', 'Calendar', `${h.name} in ${d} day(s) (${h.date}).`);
+                    list.push({ 
+                        type: 'Alert', 
+                        message: isToday 
+                            ? `🔥 TODAY: ${r.employee_name}'s final working day! Complete handover.` 
+                            : `🏃 ${r.employee_name}: Resignation final on ${r.last_working_day}.`, 
+                        color: isToday ? 'bg-red-600/40' : 'bg-rose-900/30' 
+                    });
+                });
+            } else {
+                list.push({ type: 'Info', message: 'No upcoming resignations.', color: 'bg-gray-800/30' });
             }
-        });
-
-        // Compliance reminders
-        push('info', 'Compliance', 'VAT / withholding calendar: confirm monthly filing with Finance (Ato Eyob).');
-        push('info', 'Compliance', 'Payroll statutory (tax & pension) must match process totals before bank advice.');
-
-        // Sort: alerts first
-        const order = { alert: 0, warning: 1, info: 2, success: 3 };
-        list.sort((a, b) => (order[a.severity] ?? 9) - (order[b.severity] ?? 9));
-        return list;
-    }, [getCollection, notificationTrigger, leaveUpdateTrigger, roleUpdateTrigger, today]);
-
-    const filtered = useMemo(() => {
-        let rows = notifications;
-        if (filter !== 'all') rows = rows.filter(n => n.severity === filter);
-        if (activeTab !== 'all') rows = rows.filter(n => String(n.category || '').toLowerCase().includes(activeTab.toLowerCase()));
-        return rows;
-    }, [notifications, filter, activeTab]);
-
-    const counts = useMemo(() => ({
-        all: notifications.length,
-        alert: notifications.filter(n => n.severity === 'alert').length,
-        warning: notifications.filter(n => n.severity === 'warning').length,
-        info: notifications.filter(n => n.severity === 'info').length,
-        success: notifications.filter(n => n.severity === 'success').length,
-    }), [notifications]);
-
-    useEffect(() => {
-        if (typeof onCountChange === 'function') {
-            const badge = (counts.alert || 0) + (counts.warning || 0) || counts.all || 0;
-            onCountChange(badge, counts);
         }
-    }, [counts, onCountChange]);
 
-    const sevStyle = {
-        alert: 'border-rose-500/40 bg-rose-950/40 text-rose-100',
-        warning: 'border-amber-500/40 bg-amber-950/30 text-amber-100',
-        info: 'border-cyan-500/30 bg-cyan-950/30 text-cyan-100',
-        success: 'border-emerald-500/30 bg-emerald-950/30 text-emerald-100',
-    };
-    const sevIcon = { alert: 'AlertTriangle', warning: 'AlertCircle', info: 'Info', success: 'CheckCircle2' };
+        // SECTION: PENDING ACTIONS
+        list.push({ type: 'Title', message: 'PENDING ACTIONS' });
+        if (isHR) {
+            const pendingLeaves = getCollection('HR_LEAVE_CRUD').filter(rec => rec.status === 'Pending').length;
+            if (pendingLeaves > 0) list.push({ type: 'Alert', message: `⚠️ ${pendingLeaves} Leave requests need review.`, color: 'bg-yellow-900/30' });
 
-    const tabs = [
-        { id: 'all', label: 'All' },
-        { id: 'Finance', label: 'Finance' },
-        { id: 'Payroll', label: 'Payroll' },
-        { id: 'HR', label: 'HR' },
-        { id: 'Partners', label: 'Partners' },
-        { id: 'Security', label: 'Security' },
-        { id: 'Calendar', label: 'Calendar' },
-    ];
+            const pendingAppraisals = getCollection('HR_APPRAISAL_CRUD').filter(rec => rec.status === 'Pending').length;
+            if (pendingAppraisals > 0) list.push({ type: 'Alert', message: `📝 ${pendingAppraisals} Appraisals pending completion.`, color: 'bg-yellow-800/30' });
+        }
+
+        return list;
+    }, [notificationTrigger, leaveUpdateTrigger, currentUser, getCollection, upcomingHolidays, today]);
+
+    // SECTION: ACTIVITY LOG
+    const activityLog = useMemo(() => {
+        const logs = [];
+        const logsData = getCollection('HR_LEAVE_CRUD').slice(-3);
+        logsData.forEach(l => logs.push({ time: 'Recent', text: `Record updated for ${l.employee_name}.`, icon: 'Clock' }));
+        return logs.length > 0 ? logs : [{ time: 'System', text: 'Database synchronized.', icon: 'RefreshCw' }];
+    }, [getCollection]);
 
     return (
-        <div className={`h-full flex flex-col ${glassClass} border-l border-white/10`}>
-            <div className="p-4 border-b border-white/10 flex items-center justify-between gap-2">
-                <div>
-                    <h3 className="text-sm font-black text-white uppercase tracking-widest flex items-center gap-2">
-                        <Icons.Bell className="w-4 h-4 text-cyan-400" /> Notifications
-                    </h3>
-                    <p className="text-[9px] text-gray-500 mt-0.5">
-                        {counts.alert} alert · {counts.warning} warning · {counts.info} info · signed in as {currentUser?.username || 'user'}
+        <div className="h-full flex flex-col p-4 text-white relative">
+            <div className="flex justify-between items-center mb-4 border-b border-cyan-500/50 pb-2">
+                <div className="flex items-center text-cyan-400">
+                    <button onClick={onClose} className="mr-2 hover:bg-white/10 p-1 rounded transition-colors"><Icons.ChevronRight className="w-5 h-5" /></button>
+                    <h3 className="text-lg font-bold italic tracking-tight">Utility Hub</h3>
+                </div>
+            </div>
+            
+            <div className="flex space-x-2 mb-4">
+                <button onClick={() => setActiveTab('notifications')} className={`flex-1 p-2 rounded-t-lg text-xs font-bold transition-all ${activeTab === 'notifications' ? 'bg-cyan-600 border-b-2 border-white' : 'bg-gray-700/50 text-gray-400'}`}>Notifications</button>
+                <button onClick={() => setActiveTab('activity')} className={`flex-1 p-2 rounded-t-lg text-xs font-bold transition-all ${activeTab === 'activity' ? 'bg-cyan-600 border-b-2 border-white' : 'bg-gray-700/50 text-gray-400'}`}>Activity Log</button>
+            </div>
+
+            <div className="flex-grow overflow-y-auto space-y-2 custom-scrollbar pr-1">
+                {activeTab === 'notifications' ? (
+                    notifications.map((item, index) => (
+                        item.type === 'Title' 
+                        ? <div key={index} className="pt-4 pb-1"><span className="text-[10px] font-black text-cyan-400 uppercase tracking-[0.2em]">{item.message}</span></div>
+                        : <div key={index} className={`p-3 rounded-lg text-[11px] border-l-2 border-white/20 hover:bg-white/5 transition-colors ${item.color}`}>{item.message}</div>
+                    ))
+                ) : (
+                    activityLog.map((log, index) => (
+                        <div key={index} className="p-3 rounded-lg bg-white/5 border border-white/10 flex items-start gap-3">
+                            <Icons.Clock className="w-4 h-4 text-cyan-500 mt-0.5" />
+                            <div>
+                                <p className="text-[11px] text-gray-300">{log.text}</p>
+                                <span className="text-[9px] text-gray-500 font-bold uppercase">{log.time}</span>
+                            </div>
+                        </div>
+                    ))
+                )}
+            </div>
+        </div>
+    );
+};
+
+/* ----------------------------------------------------------------------
+   9. VIEW COMPONENTS (Standard)
+   ---------------------------------------------------------------------- */
+
+const AuthScreen = ({ glassClass }) => {
+    const { login } = useAuth();
+    const { getCollection } = useData();
+    // ADDED: Get the logo from UI Context
+    const { uiSettings } = useUI(); 
+    
+    const [username, setUsername] = useState('');
+    const [password, setPassword] = useState('');
+    const [error, setError] = useState('');
+    const [isSubmitting, setIsSubmitting] = useState(false);
+
+    const handleSignIn = async (e) => {
+        e.preventDefault();
+        setError('');
+        setIsSubmitting(true);
+        try {
+            const allEmployees = getCollection('HR_EMPLOYEE_CRUD') || [];
+            const result = await login(username, password, allEmployees);
+            if (!result.success) {
+                setError(result.message || 'Invalid username or password.');
+            }
+        } catch (err) {
+            setError('An unexpected error occurred.');
+            console.error("Login Error:", err);
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    return (
+        <div className="h-full w-full min-h-0 flex items-center justify-center p-4 bg-slate-950 overflow-y-auto">
+            <div className={`max-w-md w-full p-8 rounded-3xl shadow-2xl border border-white/10 ${glassClass} transform transition-all`}>
+                
+                <div className="flex flex-col items-center mb-8">
+                    {/* FIXED: Conditional Logo Logic */}
+                    <div className="mb-4">
+                        {uiSettings?.logoURL ? (
+                            // Show your UPLOADED logo if it exists
+                            <img 
+                                src={uiSettings.logoURL} 
+                                alt="University Logo" 
+                                className="w-20 h-20 object-contain drop-shadow-lg"
+                            />
+                        ) : (
+                            // Fallback to the icon if no logo is set in UICustomization
+                            <div className="p-4 bg-cyan-500/20 rounded-2xl shadow-inner">
+                                <Icons.Monitor className="w-12 h-12 text-cyan-400" />
+                            </div>
+                        )}
+                    </div>
+                    
+                    <h1 className="text-3xl font-black text-white tracking-tighter italic uppercase text-center">
+                        HRM UNITY UNIVERSITY
+                    </h1>
+                    <p className="text-gray-400 mt-2 text-sm font-medium">Human Resources Terminal</p>
+                </div>
+
+                <form onSubmit={handleSignIn} className="space-y-5">
+                    {error && (
+                        <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/50 text-red-400 text-xs flex items-center animate-shake">
+                            <Icons.AlertCircle className="w-4 h-4 mr-2 flex-shrink-0" />
+                            {error}
+                        </div>
+                    )}
+
+                    <div className="space-y-1">
+                        <Input 
+                            label="Username"
+                            value={username}
+                            onChange={(val) => setUsername(val)}
+                            placeholder="Enter your username"
+                            isRequired
+                        />
+                    </div>
+
+                    <div className="space-y-1">
+                        <Input 
+                            label="Password"
+                            type="password"
+                            placeholder="Password"
+                            autoComplete="current-password"
+                            value={password}
+                            onChange={(val) => setPassword(val)}
+                            isRequired
+                        />
+                    </div>
+
+                    <button 
+                        type="submit"
+                        disabled={isSubmitting}
+                        className={`w-full py-4 rounded-2xl font-bold text-white transition-all flex items-center justify-center text-lg
+                            ${isSubmitting 
+                                ? 'bg-gray-700 cursor-not-allowed' 
+                                : 'bg-cyan-600 hover:bg-cyan-500 active:scale-[0.97] shadow-xl shadow-cyan-900/40'
+                            }`}
+                    >
+                        {isSubmitting ? (
+                            <Icons.Loader2 className="w-6 h-6 animate-spin" />
+                        ) : (
+                            <>
+                                <Icons.LogIn className="w-5 h-5 mr-2" />
+                                Sign In
+                            </>
+                        )}
+                    </button>
+                
+                    
+
+                
+                    <LoginModuleSwitcher current="hr" />
+                </form>
+
+                <div className="mt-8 pt-6 border-t border-white/5 text-center">
+                    
+                    
+
+                    <p className="text-[10px] text-gray-500 uppercase tracking-[0.2em] font-bold opacity-60">
+                        Secure Access Terminal
                     </p>
                 </div>
-                <button type="button" onClick={onClose} className="p-2 rounded-lg hover:bg-white/10 text-gray-400">
-                    <Icons.X className="w-4 h-4" />
-                </button>
-            </div>
-
-            <div className="px-3 py-2 flex flex-wrap gap-1.5 border-b border-white/5">
-                {['all', 'alert', 'warning', 'info', 'success'].map(f => (
-                    <button
-                        key={f}
-                        type="button"
-                        onClick={() => setFilter(f)}
-                        className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase ${
-                            filter === f ? 'bg-cyan-600 text-white' : 'bg-white/5 text-gray-400 hover:bg-white/10'
-                        }`}
-                    >
-                        {f}{f !== 'all' ? ` (${counts[f] || 0})` : ` (${counts.all})`}
-                    </button>
-                ))}
-            </div>
-
-            <div className="px-3 py-2 flex flex-wrap gap-1 border-b border-white/5">
-                {tabs.map(t => (
-                    <button
-                        key={t.id}
-                        type="button"
-                        onClick={() => setActiveTab(t.id)}
-                        className={`px-2 py-1 rounded-md text-[9px] font-bold uppercase ${
-                            activeTab === t.id ? 'bg-white/15 text-cyan-300' : 'text-gray-500 hover:text-gray-300'
-                        }`}
-                    >
-                        {t.label}
-                    </button>
-                ))}
-            </div>
-
-            <div className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-2">
-                {!filtered.length ? (
-                    <p className="text-center text-gray-500 text-xs py-10">No notifications for this filter.</p>
-                ) : filtered.map(n => {
-                    const Icon = Icons[sevIcon[n.severity]] || Icons.Bell;
-                    return (
-                        <div key={n.id} className={`rounded-xl border p-3 ${sevStyle[n.severity] || sevStyle.info}`}>
-                            <div className="flex items-start gap-2">
-                                <Icon className="w-4 h-4 shrink-0 mt-0.5 opacity-90" />
-                                <div className="min-w-0 flex-1">
-                                    <div className="flex items-center gap-2 flex-wrap">
-                                        <span className="text-[9px] font-black uppercase tracking-wider opacity-80">{n.category}</span>
-                                        <span className="text-[8px] uppercase opacity-50">{n.severity}</span>
-                                        <span className="text-[9px] text-white/50 ml-auto font-mono tabular-nums" title={n.time ? new Date(n.time).toLocaleString() : ''}>
-                                            {formatRelativeTime(n.time)}
-                                        </span>
-                                    </div>
-                                    <p className="text-[11px] font-medium mt-0.5 leading-snug">{n.message}</p>
-                                </div>
-                            </div>
-                        </div>
-                    );
-                })}
-            </div>
-
-            <div className="p-3 border-t border-white/10 text-[9px] text-gray-500 text-center">
-                Live from HR · Finance · Payroll masters · refresh on data change
             </div>
         </div>
     );
 };
 
-const FormModal = ({ collectionName, initialData, onSave, onCancel, glassClass }) => {
-    const { addRecord, updateRecord, getCollection, allData } = useData();
-    const [formData, setFormData] = React.useState({});
-    const isNew = React.useMemo(() => !initialData || !initialData.id, [initialData]);
-    const columns = COLUMN_CONFIG[collectionName] || [];
 
-    const isEmployee = collectionName === 'HR_EMPLOYEE_CRUD';
-    const isRecruitment = collectionName === 'HR_RECRUITMENT_CRUD';
-    const isLeave = collectionName === 'HR_LEAVE_CRUD';
-    const isTransfer = collectionName === 'HR_TRANSFER_CRUD';
-    const isTraining = collectionName === 'HR_TRAINING_CRUD';
-    const isRetirement = collectionName === 'RETIREMENT_CRUD';
-    const isCompetence = collectionName === 'HR_COMPETENCE_CRUD';
-    const isAppraisal = collectionName === 'HR_APPRAISAL_CRUD';
-
-    /* --- 100% EXACT CALENDAR ENGINE (JDN Algorithm) --- */
-    const ethToGc = (ethStr) => {
-        const parts = ethStr.split('/');
-        if (parts.length !== 3) return null;
-        const [d, m, y] = parts.map(n => parseInt(n));
-        const era = 1724220; 
-        const jdn = (y - 1) * 365 + Math.floor(y / 4) + (m - 1) * 30 + d + era;
-        return new Date((jdn - 2440587.5) * 86400000).toISOString().split('T')[0];
-    };
-
-    const gcToEth = (gcStr) => {
-        const date = new Date(gcStr);
-        if (isNaN(date.getTime())) return null;
-        const jdn = Math.floor(date.getTime() / 86400000) + 2440588;
-        const era = 1723856;
-        const r = (jdn - era) % 1461;
-        const n = (r % 365) + 365 * Math.floor(r / 1460);
-        const y = 4 * Math.floor((jdn - era) / 1461) + Math.floor(r / 365) - Math.floor(r / 1460);
-        const m = Math.floor(n / 30) + 1;
-        const d = (n % 30) + 1;
-        return { 
-            full: `${String(d).padStart(2, '0')}/${String(m > 13 ? 13 : m).padStart(2, '0')}/${y}`,
-            year: y
-        };
-    };
-
-    /* --- DATA LOOKUP LOGIC --- */
-    const handleDataLookup = (lookupValue) => {
-        if (!lookupValue || isLeave || isTransfer || isTraining || isRetirement) return;
-        const allRecords = getCollection(collectionName) || [];
-        const keyToMatch = isRecruitment ? 'form_no' : 'id_number';
-        const existing = allRecords.find(r => r[keyToMatch]?.trim().toLowerCase() === lookupValue.trim().toLowerCase());
-        if (existing) {
-            setFormData(prev => ({ ...prev, ...existing, id: existing.id }));
-        }
-    };
-
-    /* --- INITIALIZATION & AUTO-ID --- */
-    React.useEffect(() => {
-        const allRecords = getCollection(collectionName) || [];
-        const sanitized = {};
-        columns.forEach(field => {
-            let val = initialData?.[field.key];
-            if (isNew && !val) {
-                if (field.key === 'id_number' && isEmployee) {
-                    const max = allRecords.reduce((m, r) => Math.max(m, parseInt(r.id_number?.split('-')[1]) || 0), 0);
-                    val = `UU-${String(max + 1).padStart(3, '0')}`;
-                }
-                if (field.key === 'form_no' && isRecruitment) val = `HRS/036-01${allRecords.length + 1}`;
-            }
-            sanitized[field.key] = field.type === 'array' ? (Array.isArray(val) ? val : []) : (val ?? '');
-        });
-        setFormData(sanitized);
-    }, [initialData, columns, isNew, getCollection]);
-
-    const renderField = (field) => {
-        if (!field || !field.key) return null;
-        if (field.isHidden) return null;
-
-        const handleJump = () => {
-            const lbl = field.label.toLowerCase();
-            let tid = "";
-            if (lbl.includes('educational status')) tid = "anchor-education";
-            if (lbl.includes('family contact')) tid = "anchor-beneficiaries";
-            const el = document.getElementById(tid);
-            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        };
-
-        if (field.type === 'array') {
-            const anchorId = (field.key === 'education_entries' || field.key === 'experience_entries') 
-                ? "anchor-education" 
-                : (field.key === 'beneficiaries' ? "anchor-beneficiaries" : "");
-
-            return (
-                <div key={field.key} id={anchorId} className="md:col-span-2 pt-4">
-                    <MultiEntryField
-                        label={field.label}
-                        entries={formData[field.key] || []}
-                        fieldConfig={Array.isArray(field.arrayConfig) ? field.arrayConfig : []}
-                        glassClass={glassClass}
-                        onChange={(entries) => {
-                            let updates = { [field.key]: entries };
-                            if (isRecruitment && field.key === 'missing_documents' && entries.length > 0) {
-                                const docList = entries.map(d => d.doc_name).join(', ');
-                                updates.recommendation = (formData.recommendation || '') + `\n[PENDING DOCUMENTS: ${docList}]`;
-                            }
-                            setFormData(prev => ({ ...prev, ...updates }));
-                        }}
-                    />
-                </div>
-            );
-        }
-
-        /* --- DYNAMIC DROPDOWN SOURCING --- */
-        let options = field.options || [];
-        
-        if (isLeave && field.key === 'leave_type') {
-            options = ['Annual Leave', 'Sick Leave', 'Maternity Leave', 'Pre-maternity Leave', 'Paternity Leave', 'Wedding Leave', 'Funeral Leave', 'Educational Leave', 'Unpaid Leave', 'Special Leave'];
-        }
-        
-        // Department Source for Transfer Destinations and Employee Records
-        if ((field.key === 'department' || field.key === 'new_department' || field.key === 'current_department') && allData['DEPARTMENTS_CRUD']) {
-            options = allData['DEPARTMENTS_CRUD'].map(d => d.name);
-        }
-
-        // Employee master — always prefer live HR_EMPLOYEE_CRUD names
-        const hrEmployees = (allData['HR_EMPLOYEE_CRUD'] || []).filter(Boolean);
-        const hrEmployeeNames = hrEmployees.map(e => e.name || e.full_name || e.employee_name).filter(Boolean);
-
-        if (field.source === 'HR_EMPLOYEE_CRUD' || field.key === 'employee_name' || field.key === 'name') {
-            if (hrEmployeeNames.length) {
-                options = hrEmployeeNames;
-            } else if (typeof MOCK_EMPLOYEES !== 'undefined' && Array.isArray(MOCK_EMPLOYEES)) {
-                options = MOCK_EMPLOYEES.map(e => e.name || e.full_name || e.employee_name).filter(Boolean);
-            }
-        }
-
-        if ((isLeave || isTransfer || isTraining || isRetirement || isCompetence || isAppraisal) && (field.key === 'employee_name' || field.key === 'name')) {
-            if (hrEmployeeNames.length) options = hrEmployeeNames;
-        }
-
-        if (isTraining && field.key === 'score') {
-            options = ['Yes', 'No'];
-        }
-
-        if (isTransfer && field.key === 'new_location') {
-            options = ['Gerji', 'Adama', 'Burayu', 'Dessie'];
-        }
-
-        if (isEmployee && field.key === 'reporting_to' && allData['HR_EMPLOYEE_CRUD']) {
-            options = allData['HR_EMPLOYEE_CRUD']
-                .filter(e => e.system_role === 'hr_manager' || e.system_role === 'admin' || (e.job_title && e.job_title.toLowerCase().includes('head')))
-                .map(e => e.name);
-        }
-
-        return (
-            <div key={field.key} className={field.type === 'textarea' ? "md:col-span-2" : "md:col-span-1"}>
-                <div onClick={handleJump} className={field.label.includes('Jump') ? "cursor-pointer hover:text-cyan-400 font-bold" : ""}>
-                    <Input
-                        label={isTraining && field.key === 'score' ? 'Obtained Certificate?' : field.label}
-                        fieldKey={field.key}
-                        hint={field.help || field.intel}
-                        intelCollection={collectionName}
-                        type={options.length > 0 ? 'select' : field.type}
-                        options={options}
-                        value={formData[field.key] || ''}
-                        onChange={(v) => {
-                            let updates = { [field.key]: v };
-                            
-                            if ((field.key === 'form_no' && isRecruitment) || (field.key === 'id_number' && isEmployee)) {
-                                handleDataLookup(v);
-                            }
-
-                            // --- AUTO-POPULATE from HR Employee Master ---
-                            if ((isRetirement || isTransfer || isTraining || isCompetence || isAppraisal || isLeave) && (field.key === 'employee_name' || field.key === 'name')) {
-                                const emp = (allData['HR_EMPLOYEE_CRUD'] || []).find(e =>
-                                    (e.name === v) || (e.full_name === v) || (e.employee_name === v)
-                                );
-                                if (emp) {
-                                    updates.department = emp.department || '';
-                                    updates.current_department = emp.department || '';
-                                    updates.current_location = emp.work_location || '';
-                                    updates.job_title = emp.job_title || emp.current_position || '';
-                                    updates.position = emp.job_title || emp.current_position || '';
-                                    updates.id_number = emp.id_number || '';
-                                    updates.employee_id = emp.id_number || emp.id || '';
-                                    if (isRetirement) {
-                                        updates.dob_ec = emp.dob_ec || '';
-                                        updates.retirement_date_ec = emp.retirement_date_ec || '';
-                                    }
-                                    // Appraisal: roll up competence matrix scores for this employee
-                                    if (isAppraisal) {
-                                        const matrix = (allData['HR_COMPETENCE_CRUD'] || []).filter(r =>
-                                            r && (r.employee_name === v || r.employee_id === emp.id_number)
-                                        );
-                                        if (matrix.length) {
-                                            let wSum = 0, wTot = 0;
-                                            matrix.forEach(r => {
-                                                const sc = Number(r.score) || 0;
-                                                const w = Number(r.weight) || 1;
-                                                wSum += sc * w;
-                                                wTot += w;
-                                            });
-                                            const avg = wTot ? Math.round((wSum / wTot) * 100) / 100 : 0;
-                                            updates.skills_assessed = matrix.length;
-                                            updates.competence_avg = avg;
-                                            updates.appraisal_score = avg;
-                                            updates.performance_band =
-                                                avg >= 4.5 ? 'Outstanding' :
-                                                avg >= 4.0 ? 'Exceeds Expectations' :
-                                                avg >= 3.0 ? 'Meets Expectations' :
-                                                avg >= 2.0 ? 'Needs Improvement' : 'Unsatisfactory';
-                                        }
-                                    }
-                                }
-                            }
-                            // Competence scoring labels
-                            if (isCompetence && field.key === 'score') {
-                                const sc = Number(v) || 0;
-                                updates.rating_label = ({ 1: 'Novice', 2: 'Developing', 3: 'Competent', 4: 'Proficient', 5: 'Expert' })[sc] || '';
-                                const w = Number(formData.weight) || 1;
-                                updates.weight = w;
-                                updates.weighted_score = Math.round(sc * w * 100) / 100;
-                            }
-                            
-
-                            // --- LEAVE & DATE LOGIC ---
-                            if (isLeave && (field.key === 'start_date' || field.key === 'end_date')) {
-                                const start = field.key === 'start_date' ? v : formData.start_date;
-                                const end = field.key === 'end_date' ? v : formData.end_date;
-                                if (start && end) {
-                                    const diff = Math.ceil(Math.abs(new Date(end) - new Date(start)) / (1000 * 60 * 60 * 24)) + 1;
-                                    updates.days_taken = diff > 0 ? diff : 0;
-                                }
-                            }
-
-                            if (isEmployee) {
-                                if (field.key === 'dob_gc' && v) {
-                                    const conv = gcToEth(v);
-                                    if (conv) {
-                                        updates.dob_ec = conv.full;
-                                        updates.age = 2026 - new Date(v).getFullYear();
-                                        updates.retirement_date_ec = `${conv.full.split('/')[0]}/${conv.full.split('/')[1]}/${conv.year + 60}`;
-                                    }
-                                }
-                                if (field.key === 'dob_ec' && v.includes('/') && v.length >= 8) {
-                                    const rev = ethToGc(v); if (rev) updates.dob_gc = rev;
-                                }
-                                if (field.key === 'seniority_date_gc' && v) {
-                                    const conv = gcToEth(v); if (conv) updates.seniority_date_ec = conv.full;
-                                }
-                                if (field.key === 'seniority_date_ec' && v.includes('/') && v.length >= 8) {
-                                    const rev = ethToGc(v); if (rev) updates.seniority_date_gc = rev;
-                                }
-                            }
-                            setFormData(prev => ({ ...prev, ...updates }));
-                        }}
-                        isRequired={field.isRequired}
-                    />
-                </div>
-            </div>
-        );
-    };
-
-    return (
-        <form onSubmit={async (e) => { e.preventDefault(); (formData.id ? await updateRecord(collectionName, formData.id, formData) : await addRecord(collectionName, formData)) && onSave(); }} 
-              className="space-y-6 max-h-[85vh] overflow-y-auto p-6 bg-slate-900/60 rounded-3xl custom-scrollbar">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                {(Array.isArray(columns) ? columns : []).filter(Boolean).map((field) => {
-                    try {
-                        return renderField(field);
-                    } catch (err) {
-                        console.error('FormModal field render error', field?.key, err);
-                        return (
-                            <div key={field?.key || Math.random()} className="text-rose-400 text-xs p-2 border border-rose-500/30 rounded-lg">
-                                Field error: {field?.key || 'unknown'}
-                            </div>
-                        );
-                    }
-                })}
-            </div>
-            <div className="flex justify-end gap-6 pt-10 sticky bottom-0 bg-gray-900 p-4 rounded-b-3xl border-t border-white/5 z-50">
-                <button type="button" onClick={onCancel} className="text-gray-500 font-bold uppercase text-[10px]">Discard</button>
-                <button type="submit" className="bg-cyan-600 px-14 py-4 rounded-2xl font-black text-white text-[11px] uppercase shadow-2xl hover:bg-cyan-500 transition-all">
-                    Commit To Registry
-                </button>
-            </div>
-        </form>
-    );
-};
-
-
-// Helper for dynamic button text
-const getAddLabel = (slug) => {
-    const parts = slug.split('_');
-    return parts[1] ? parts[1].charAt(0) + parts[1].slice(1).toLowerCase() : 'Record';
-};
-const Sidebar = ({ currentView, setCurrentView, glassClass }) => {
-    const { checkPermission, logout } = useAuth();
-    const { getCollection } = useData();
-    
-    // FETCH THE LIVE ROLES HERE
-    const allRoles = getCollection('ROLE_CRUD') || [];
-
-    const filteredMenuItems = useMemo(() => {
-        const filterItems = (items) => {
-            return items
-                .filter(item => {
-                    // CRITICAL: Pass the allRoles list into the checkPermission function
-                    return checkPermission(item.id, allRoles);
-                })
-                .map(item => ({
-                    ...item,
-                    children: item.children ? filterItems(item.children) : null
-                }));
-        };
-        return filterItems(MENU_ITEMS);
-    }, [checkPermission, allRoles]); // Re-run whenever roles change
-
-    // ... rest of Sidebar JSX
-};
-/* —— Ethiopian (Geez) ↔ Gregorian calendar —— */
-const ethiopianMonthNames = [
-    'Meskerem', 'Tikimt', 'Hidar', 'Tahsas', 'Tir', 'Yekatit',
-    'Megabit', 'Miazia', 'Genbot', 'Sene', 'Hamle', 'Nehase', 'Pagumen'
-];
-
-const isGregorianLeap = (y) => (y % 4 === 0 && y % 100 !== 0) || (y % 400 === 0);
-const isEthiopianLeap = (y) => (y % 4) === 3;
-
-const gregorianToJDN = (year, month, day) => {
-    const a = Math.floor((14 - month) / 12);
-    const y = year + 4800 - a;
-    const m = month + 12 * a - 3;
-    return day + Math.floor((153 * m + 2) / 5) + 365 * y + Math.floor(y / 4) - Math.floor(y / 100) + Math.floor(y / 400) - 32045;
-};
-
-const jdnToGregorian = (jdn) => {
-    const a = jdn + 32044;
-    const b = Math.floor((4 * a + 3) / 146097);
-    const c = a - Math.floor((146097 * b) / 4);
-    const d = Math.floor((4 * c + 3) / 1461);
-    const e = c - Math.floor((1461 * d) / 4);
-    const m = Math.floor((5 * e + 2) / 153);
-    const day = e - Math.floor((153 * m + 2) / 5) + 1;
-    const month = m + 3 - 12 * Math.floor(m / 10);
-    const year = 100 * b + d - 4800 + Math.floor(m / 10);
-    return { year, month, day };
-};
-
-const ethiopianToJDNCore = (year, month, day) => {
-    // Standard: JDN = 1723856 + 365*(y-1) + floor(y/4) + 30*(m-1) + d
-    return 1723856 + 365 * (year - 1) + Math.floor(year / 4) + 30 * (month - 1) + day;
-};
-
-const jdnToEthiopian = (jdn) => {
-    const r = jdn - 1723855;
-    const year = Math.floor((4 * r - 1) / 1461);
-    const t = Math.floor((4 * r - 1) % 1461);
-    const n = Math.floor(t / 4);
-    const month = Math.floor(n / 30) + 1;
-    const day = (n % 30) + 1;
-    return { year, month, day };
-};
-
-const gregorianToEthiopian = (y, m, d) => jdnToEthiopian(gregorianToJDN(y, m, d));
-const ethiopianToGregorian = (y, m, d) => jdnToGregorian(ethiopianToJDNCore(y, m, d));
-
-const EthiopianCalendarPanel = ({ glassClass }) => {
-    const now = new Date();
-    const [gY, setGY] = React.useState(now.getFullYear());
-    const [gM, setGM] = React.useState(now.getMonth() + 1);
-    const [gD, setGD] = React.useState(now.getDate());
-    const ethToday = gregorianToEthiopian(now.getFullYear(), now.getMonth() + 1, now.getDate());
-    const [eY, setEY] = React.useState(ethToday.year);
-    const [eM, setEM] = React.useState(ethToday.month);
-    const [eD, setED] = React.useState(ethToday.day);
-    const [mode, setMode] = React.useState('g2e'); // g2e | e2g
-    const [calMonth, setCalMonth] = React.useState(now.getMonth() + 1);
-    const [calYear, setCalYear] = React.useState(now.getFullYear());
-
-    const g2e = gregorianToEthiopian(gY, gM, gD);
-    const e2g = ethiopianToGregorian(eY, eM, eD);
-
-    const daysInGregorianMonth = (y, m) => new Date(y, m, 0).getDate();
-    const firstWeekday = (y, m) => new Date(y, m - 1, 1).getDay();
-    const dim = daysInGregorianMonth(calYear, calMonth);
-    const start = firstWeekday(calYear, calMonth);
-    const cells = [];
-    for (let i = 0; i < start; i++) cells.push(null);
-    for (let d = 1; d <= dim; d++) cells.push(d);
-
-    return (
-        <div className={`p-6 rounded-[2.5rem] border border-amber-500/20 ${glassClass} shadow-2xl`}>
-            <div className="flex items-center gap-4 mb-6">
-                <div className="p-3 bg-amber-500/20 rounded-2xl">
-                    <Icons.Calendar className="w-6 h-6 text-amber-400" />
-                </div>
-                <div>
-                    <h2 className="text-xl font-black uppercase italic tracking-tighter text-white">Geez ↔ Gregorian</h2>
-                    <p className="text-[10px] text-amber-400/80 font-black uppercase tracking-[0.25em]">Ethiopian calendar converter</p>
-                </div>
-            </div>
-
-            <div className="flex gap-2 mb-4">
-                <button type="button" onClick={() => setMode('g2e')}
-                    className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase ${mode === 'g2e' ? 'bg-amber-500 text-black' : 'bg-white/10 text-gray-300'}`}>
-                    Gregorian → Geez
-                </button>
-                <button type="button" onClick={() => setMode('e2g')}
-                    className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase ${mode === 'e2g' ? 'bg-amber-500 text-black' : 'bg-white/10 text-gray-300'}`}>
-                    Geez → Gregorian
-                </button>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div className="space-y-3 p-4 rounded-2xl bg-black/30 border border-white/10">
-                    {mode === 'g2e' ? (
-                        <>
-                            <p className="text-[10px] font-black text-cyan-400 uppercase tracking-widest">Gregorian input</p>
-                            <div className="grid grid-cols-3 gap-2">
-                                <label className="text-[9px] text-gray-400 uppercase">Year<input type="number" value={gY} onChange={e => setGY(+e.target.value)} className="w-full mt-1 bg-black/50 border border-white/15 rounded-lg px-2 py-2 text-white text-sm" /></label>
-                                <label className="text-[9px] text-gray-400 uppercase">Month<input type="number" min={1} max={12} value={gM} onChange={e => setGM(+e.target.value)} className="w-full mt-1 bg-black/50 border border-white/15 rounded-lg px-2 py-2 text-white text-sm" /></label>
-                                <label className="text-[9px] text-gray-400 uppercase">Day<input type="number" min={1} max={31} value={gD} onChange={e => setGD(+e.target.value)} className="w-full mt-1 bg-black/50 border border-white/15 rounded-lg px-2 py-2 text-white text-sm" /></label>
-                            </div>
-                            <div className="mt-3 p-3 rounded-xl bg-amber-500/10 border border-amber-500/30">
-                                <p className="text-[9px] text-amber-400/80 uppercase font-black">Ethiopian (Geez)</p>
-                                <p className="text-lg font-black text-white mt-1">
-                                    {g2e.day} {ethiopianMonthNames[Math.max(0, Math.min(12, g2e.month - 1))] || g2e.month} {g2e.year}
-                                </p>
-                                <p className="text-[10px] text-gray-400 font-mono mt-1">{g2e.year}-{String(g2e.month).padStart(2,'0')}-{String(g2e.day).padStart(2,'0')}</p>
-                            </div>
-                        </>
-                    ) : (
-                        <>
-                            <p className="text-[10px] font-black text-amber-400 uppercase tracking-widest">Ethiopian input</p>
-                            <div className="grid grid-cols-3 gap-2">
-                                <label className="text-[9px] text-gray-400 uppercase">Year<input type="number" value={eY} onChange={e => setEY(+e.target.value)} className="w-full mt-1 bg-black/50 border border-white/15 rounded-lg px-2 py-2 text-white text-sm" /></label>
-                                <label className="text-[9px] text-gray-400 uppercase">Month (1–13)<input type="number" min={1} max={13} value={eM} onChange={e => setEM(+e.target.value)} className="w-full mt-1 bg-black/50 border border-white/15 rounded-lg px-2 py-2 text-white text-sm" /></label>
-                                <label className="text-[9px] text-gray-400 uppercase">Day<input type="number" min={1} max={30} value={eD} onChange={e => setED(+e.target.value)} className="w-full mt-1 bg-black/50 border border-white/15 rounded-lg px-2 py-2 text-white text-sm" /></label>
-                            </div>
-                            <div className="mt-3 p-3 rounded-xl bg-cyan-500/10 border border-cyan-500/30">
-                                <p className="text-[9px] text-cyan-400/80 uppercase font-black">Gregorian</p>
-                                <p className="text-lg font-black text-white mt-1">
-                                    {e2g.day}/{e2g.month}/{e2g.year}
-                                </p>
-                                <p className="text-[10px] text-gray-400 font-mono mt-1">{e2g.year}-{String(e2g.month).padStart(2,'0')}-{String(e2g.day).padStart(2,'0')}</p>
-                            </div>
-                        </>
-                    )}
-                </div>
-
-                <div className="p-4 rounded-2xl bg-black/30 border border-white/10">
-                    <div className="flex items-center justify-between mb-3">
-                        <p className="text-[10px] font-black text-white uppercase tracking-widest">Gregorian month</p>
-                        <div className="flex gap-1">
-                            <button type="button" className="px-2 py-1 rounded bg-white/10 text-xs text-white" onClick={() => {
-                                if (calMonth === 1) { setCalMonth(12); setCalYear(y => y - 1); }
-                                else setCalMonth(m => m - 1);
-                            }}>‹</button>
-                            <span className="text-xs text-cyan-300 font-bold px-2">{calMonth}/{calYear}</span>
-                            <button type="button" className="px-2 py-1 rounded bg-white/10 text-xs text-white" onClick={() => {
-                                if (calMonth === 12) { setCalMonth(1); setCalYear(y => y + 1); }
-                                else setCalMonth(m => m + 1);
-                            }}>›</button>
-                        </div>
-                    </div>
-                    <div className="grid grid-cols-7 gap-1 text-center text-[9px] text-gray-500 mb-1">
-                        {['Su','Mo','Tu','We','Th','Fr','Sa'].map(d => <div key={d}>{d}</div>)}
-                    </div>
-                    <div className="grid grid-cols-7 gap-1">
-                        {cells.map((d, i) => {
-                            if (!d) return <div key={'e'+i} />;
-                            const eth = gregorianToEthiopian(calYear, calMonth, d);
-                            const isToday = d === now.getDate() && calMonth === now.getMonth()+1 && calYear === now.getFullYear();
-                            return (
-                                <button
-                                    key={d}
-                                    type="button"
-                                    onClick={() => { setGY(calYear); setGM(calMonth); setGD(d); setMode('g2e'); }}
-                                    className={`rounded-lg p-1 border text-left min-h-[42px] ${isToday ? 'border-cyan-400 bg-cyan-500/20' : 'border-white/10 bg-white/5 hover:bg-white/10'}`}
-                                >
-                                    <div className="text-[11px] font-bold text-white">{d}</div>
-                                    <div className="text-[8px] text-amber-400/90 truncate">{eth.day} {ethiopianMonthNames[eth.month-1]?.slice(0,3)}</div>
-                                </button>
-                            );
-                        })}
-                    </div>
-                    <p className="text-[9px] text-gray-500 mt-3">Click a day to convert · Ethiopian month names shown under each Gregorian date.</p>
-                </div>
-            </div>
-        </div>
-    );
-};
-
-const UICustomization = ({ glassClass }) => {
-    const { uiSettings, updateUISettings, resetToDefault } = useContext(UIContext);
-    const [qrText, setQrText] = useState('');
-
-    // --- Asset Upload Handlers ---
-    const handleBackgroundUpload = (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = (event) => {
-            updateUISettings({ backgroundImage: event.target.result });
-        };
-        reader.readAsDataURL(file);
-    };
-
-    const handleLogoUpload = (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = (event) => {
-            updateUISettings({ logoURL: event.target.result });
-        };
-        reader.readAsDataURL(file);
-    };
-
-    const exportCSV = (slug) => {
-        const data = allData[slug] || [];
-        if (!data.length) return;
-        const csv = [Object.keys(data[0]).join(','), ...data.map(r => Object.values(r).join(','))].join('\n');
-        const blob = new Blob([csv], { type: 'text/csv' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a'); a.href = url; a.download = `${slug}.csv`; a.click();
-    };
-
-    return (
-        <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700">
-            <FieldIntelligenceSettings glassClass={glassClass} />
-            <EthiopianCalendarPanel glassClass={glassClass} />
-            {/* 1. THE ATMOSPHERIC ENGINE (Scale & Transparency Fixes) */}
-            <div className={`p-6 rounded-[2.5rem] border border-white/10 ${glassClass} shadow-2xl`}>
-                <div className="flex items-center gap-4 mb-8">
-                    <div className="p-3 bg-cyan-500/20 rounded-2xl">
-                        <Icons.Settings2 className="w-6 h-6 text-cyan-400" />
-                    </div>
-                    <div>
-                        <h2 className="text-2xl font-black uppercase italic tracking-tighter text-white">System Architect</h2>
-                        <p className="text-[10px] text-cyan-400 font-black uppercase tracking-[0.3em] opacity-70">Atmospheric Tuning Protocol</p>
-                    </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-10">
-                    {/* SCALE: Fixes the "too close" magnification */}
-                    <div className="space-y-4">
-                        <div className="flex justify-between items-center">
-                            <span className="text-[10px] font-black uppercase text-white/40 tracking-widest flex items-center gap-2">
-                                <Icons.Maximize2 size={12}/> Viewport Scale
-                            </span>
-                            <span className="text-xs font-mono text-cyan-400">{Math.round(uiSettings.bgScale * 100)}%</span>
-                        </div>
-                        <input 
-                            type="range" min="0.7" max="1.3" step="0.01" 
-                            value={uiSettings.bgScale}
-                            onChange={(e) => updateUISettings({ bgScale: parseFloat(e.target.value) })}
-                            className="w-full h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer accent-cyan-500"
-                        />
-                    </div>
-
-                    {/* BLUR: Fixes the transparency depth */}
-                    <div className="space-y-4">
-                        <div className="flex justify-between items-center">
-                            <span className="text-[10px] font-black uppercase text-white/40 tracking-widest flex items-center gap-2">
-                                <Icons.Layers size={12}/> Glass Blur
-                            </span>
-                            <span className="text-xs font-mono text-cyan-400">{uiSettings.bgBlur}px</span>
-                        </div>
-                        <input 
-                            type="range" min="0" max="25" 
-                            value={uiSettings.bgBlur}
-                            onChange={(e) => updateUISettings({ bgBlur: parseInt(e.target.value) })}
-                            className="w-full h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer accent-cyan-500"
-                        />
-                    </div>
-
-                    {/* EXPOSURE: Brightness Control */}
-                    <div className="space-y-4">
-                        <div className="flex justify-between items-center">
-                            <span className="text-[10px] font-black uppercase text-white/40 tracking-widest flex items-center gap-2">
-                                <Icons.Sun size={12}/> Exposure
-                            </span>
-                            <span className="text-xs font-mono text-cyan-400">{uiSettings.bgBrightness}%</span>
-                        </div>
-                        <input 
-                            type="range" min="50" max="150" 
-                            value={uiSettings.bgBrightness}
-                            onChange={(e) => updateUISettings({ bgBrightness: parseInt(e.target.value) })}
-                            className="w-full h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer accent-cyan-500"
-                        />
-                    </div>
-                </div>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* 2. ASSET SLOTS (Background & Logo) */}
-                <div className={`p-8 rounded-[2.5rem] border border-white/10 ${glassClass} space-y-6`}>
-                    <h4 className="text-[10px] font-black uppercase tracking-[0.3em] text-cyan-400">Identity Assets</h4>
-                    
-                    <div className="grid grid-cols-2 gap-6">
-                        {/* Background Slot */}
-                        <div className="relative group aspect-square rounded-3xl border-2 border-dashed border-white/10 bg-black/40 flex flex-col items-center justify-center transition-all hover:border-cyan-500/50 cursor-pointer overflow-hidden">
-                            {uiSettings.backgroundImage ? (
-                                <img src={uiSettings.backgroundImage} className="absolute inset-0 w-full h-full object-cover opacity-40 group-hover:scale-110 transition-transform duration-700" alt="BG" />
-                            ) : null}
-                            <div className="relative z-10 flex flex-col items-center text-center p-4">
-                                <Icons.Image className="text-white/20 mb-2 group-hover:text-cyan-400 transition-colors" size={32} />
-                                <span className="text-[9px] font-bold uppercase text-white/40 tracking-tighter">Environment Map</span>
-                            </div>
-                            <input type="file" accept="image/*" onChange={handleBackgroundUpload} className="absolute inset-0 opacity-0 cursor-pointer" />
-                        </div>
-
-                        {/* Logo Slot (Added per your request) */}
-                        <div className="relative group aspect-square rounded-3xl border-2 border-dashed border-white/10 bg-black/40 flex flex-col items-center justify-center transition-all hover:border-cyan-500/50 cursor-pointer overflow-hidden">
-                            {uiSettings.logoURL ? (
-                                <div className="absolute inset-0 flex items-center justify-center bg-black/20 p-6">
-                                    <img src={uiSettings.logoURL} className="max-w-full max-h-full object-contain drop-shadow-[0_0_15px_rgba(255,255,255,0.3)]" alt="Logo" />
-                                </div>
-                            ) : null}
-                            <div className="relative z-10 flex flex-col items-center text-center p-4">
-                                <Icons.ShieldCheck className="text-white/20 mb-2 group-hover:text-cyan-400 transition-colors" size={32} />
-                                <span className="text-[9px] font-bold uppercase text-white/40 tracking-tighter">Corporate Seal</span>
-                            </div>
-                            <input type="file" accept="image/*" onChange={handleLogoUpload} className="absolute inset-0 opacity-0 cursor-pointer" />
-                        </div>
-                    </div>
-
-                    <div className="flex gap-3">
-                        <button 
-                            onClick={() => updateUISettings({ backgroundImage: null, logoURL: null })}
-                            className="flex-1 py-4 rounded-2xl border border-red-500/20 text-red-500 text-[10px] font-black uppercase tracking-[0.2em] hover:bg-red-500 hover:text-white transition-all shadow-lg"
-                        >
-                            Purge All Assets
-                        </button>
-                    </div>
-                </div>
-
-                {/* 3. UTILITY MODULES (QR & Reset) */}
-                <div className={`p-8 rounded-[2.5rem] border border-white/10 ${glassClass} flex flex-col justify-between`}>
-                    <div className="space-y-6">
-                        <h4 className="text-[10px] font-black uppercase tracking-[0.3em] text-cyan-400">System Utilities</h4>
-                        
-                        <div className="group">
-                            <label className="text-[9px] font-black text-white/30 uppercase ml-1 tracking-widest">QR Transmission Key</label>
-                            <div className="flex gap-2 mt-2">
-                                <input 
-                                    className="flex-1 h-14 bg-black/40 border border-white/5 rounded-2xl px-5 text-sm text-white focus:border-cyan-500/50 outline-none transition-all placeholder:text-white/10"
-                                    placeholder="Input secure data..." autoComplete="off" spellCheck="false"
-                                    value={qrText}
-                                    onChange={(e) => setQrText(e.target.value)}
-                                />
-                                <button 
-                                    onClick={() => qrText && window.open(`https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${qrText}`, '_blank')}
-                                    className="h-14 w-14 flex items-center justify-center bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl transition-all shadow-xl shadow-indigo-500/20 active:scale-95"
-                                >
-                                    <Icons.QrCode size={24} />
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div className="pt-8 mt-8 border-t border-white/5">
-                        <button 
-                            onClick={resetToDefault}
-                            className="w-full py-5 bg-white/5 hover:bg-red-500/10 text-white/40 hover:text-red-500 text-[10px] font-black uppercase rounded-2xl transition-all border border-transparent hover:border-red-500/20 flex items-center justify-center gap-3"
-                        >
-                            <Icons.RefreshCw size={14} /> Full System Re-Initialization
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </div>
-    );
-};
+/* ----------------------------------------------------------------------
+   MODIFIED HR DASHBOARD COMPONENT (With Custom Analytics & PNG Export)
+   ---------------------------------------------------------------------- */
+/* ----------------------------------------------------------------------
+   MODIFIED HR DASHBOARD COMPONENT (With Explaining Text)
+   ---------------------------------------------------------------------- */
+/* ----------------------------------------------------------------------
+   MODIFIED HR DASHBOARD COMPONENT (With Explaining Text)
+   ---------------------------------------------------------------------- */
 
 const HrDashboard = ({ glassClass }) => {
     const { getCollection, allData } = useData();
@@ -5895,154 +4310,127 @@ const HrDashboard = ({ glassClass }) => {
     );
 };
 
-const AccessDenied = ({ glassClass }) => (
-    <ContainerCard  Icon='Lock' glassClass={glassClass} className="h-full flex items-center justify-center">
-        <div className="text-center text-red-400 p-8">
-            <Icons.AlertTriangle className="w-16 h-16 mx-auto mb-4" />
-            <p className="text-2xl font-bold">You do not have permission to view this resource.</p>
-            <p className="text-lg text-gray-400 mt-2">Please contact your administrator for assistance.</p>
+
+
+// Internal KPI Component Updated to show Explanations
+const KPI = ({ title, value, iconName, glassClass, colorClass, explanation }) => {
+    const IconComponent = Icons[iconName] || Icons.Activity;
+
+    return (
+        <div className={`p-4 rounded-2xl flex flex-col justify-between ${glassClass} border border-white/5 shadow-xl h-28 hover:border-cyan-500/50 transition-all`}>
+            <div className="flex items-center justify-between w-full">
+                <div className="flex-1">
+                    <p className="text-[9px] font-black text-gray-400 uppercase tracking-[0.2em]">{title}</p>
+                    <p className="text-sm font-black text-white mt-1 tabular-nums tracking-tighter uppercase">
+                        {value}
+                    </p>
+                </div>
+                <div className={`p-2 rounded-xl bg-white/5 ${colorClass}`}>
+                    <IconComponent className="w-5 h-5" />
+                </div>
+            </div>
+            {/* Added Explaining Text here */}
+            <div className="mt-2 pt-2 border-t border-white/10">
+                <p className="text-[8px] leading-tight text-gray-500 italic">
+                    {explanation}
+                </p>
+            </div>
         </div>
-    </ContainerCard>
-);
+    );
+};
+// // Internal KPI Component with text-sm
+// const KPI = ({ title, value, iconName, glassClass, colorClass, trend }) => {
+//     const IconComponent = Icons[iconName] || Icons.Activity;
+//     const TrendIcon = trend === 'up' ? Icons.ArrowUp : trend === 'down' ? Icons.ArrowDown : Icons.Minus;
+//     const trendColor = trend === 'up' ? 'text-green-500' : trend === 'down' ? 'text-red-500' : 'text-gray-400';
 
-const RoleAssignmentManager = ({ glassClass }) => {
-    const { getCollection, updateRecord } = useData();
+//     return (
+//         <div className={`p-4 rounded-2xl flex items-center justify-between ${glassClass} border border-white/5 shadow-xl h-24`}>
+//             <div className="flex-1">
+//                 <p className="text-[9px] font-bold text-gray-500 uppercase tracking-widest">{title}</p>
+//                 <p className="text-sm font-black text-white mt-1 tabular-nums tracking-tighter uppercase">
+//                     {value}
+//                 </p>
+//                 {/* {trend !== 'none' && (
+//                     <div className={`flex items-center text-[8px] font-black mt-1 ${trendColor} uppercase`}>
+//                         <TrendIcon className="w-2.5 h-2.5 mr-1" />
+//                         Live
+//                     </div>
+//                 )} */}
+//             </div>
+//             <div className={`p-2 rounded-xl bg-white/5 ${colorClass}`}>
+//                 <IconComponent className="w-5 h-5" />
+//             </div>
+//         </div>
+//     );
+// };
+/* ----------------------------------------------------------------------
+   FIXED STAT CARD COMPONENT
+   ---------------------------------------------------------------------- */
+const StatCard = ({ label, value, Icon, color, glassClass }) => {
+    // If Icon is passed as a component from the Icons object (e.g. Icons.Clock)
+    // We must ensure it is rendered as a JSX tag <Icon />
+    return (
+        <div className={`p-4 rounded-xl ${glassClass} border border-white/10 flex items-center space-x-4`}>
+            <div className={`p-3 rounded-lg bg-gray-800/50 ${color}`}>
+                {/* This is where the error happens if Icon is undefined */}
+                {Icon && <Icon className="w-6 h-6" />}
+            </div>
+            <div>
+                <p className="text-xs text-gray-400 font-medium uppercase tracking-wider">{label}</p>
+                <p className="text-xl font-bold text-white">{value}</p>
+            </div>
+        </div>
+    );
+};
+// This component uses the existing XLSX, jsPDF, and docx libraries from your file [cite: 380, 381]
+const ChartExportButton = ({ data, chartTitle, glassClass }) => {
     
-    // Use getCollection directly to ensure we get the latest database state
-    const employees = getCollection('HR_EMPLOYEE_CRUD') || [];
-    const roles = getCollection('ROLE_CRUD') || []; 
-    
-    const [selectedEmployeeId, setSelectedEmployeeId] = useState('');
-    const [selectedRoleId, setSelectedRoleId] = useState('');
-
-    const selectStyle = {
-        backgroundColor: '#000000',
-        color: '#ffffff',         
-        appearance: 'none', 
-        WebkitAppearance: 'none'
+    // Handler for XLSX (Excel) [cite: 380]
+    const handleExcelExport = () => {
+        const worksheet = XLSX.utils.json_to_sheet(data);
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, "Chart Data");
+        XLSX.writeFile(workbook, `${chartTitle}_Data.xlsx`);
     };
 
-    const handleAssignment = async () => {
-        if (!selectedEmployeeId || !selectedRoleId) {
-            return alert("Please select both an employee and a role.");
-        }
-
-        const employee = employees.find(e => e.id === selectedEmployeeId);
-        const role = roles.find(r => r.id === selectedRoleId);
-
-        if (!employee) {
-            alert("Selected employee not found. Please try again.");
-            return;
-        }
-        if (!role) {
-            alert("Selected role not found. Please try again.");
-            return;
-        }
-
-        try {
-            await updateRecord('HR_EMPLOYEE_CRUD', selectedEmployeeId, {
-                ...employee, 
-                role: selectedRoleId, 
-                system_role: role.roleName || role.name 
-            });
-            alert(`Role "${role.roleName || role.name}" assigned to ${employee.name}`);
-            setSelectedEmployeeId('');
-            setSelectedRoleId('');
-        } catch (error) {
-            console.error("Role assignment failed:", error);
-            alert("Role assignment failed. Please check the console for errors.");
-        }
+    // Handler for PDF using jsPDF [cite: 381]
+    const handlePDFExport = () => {
+        const doc = new jsPDF();
+        doc.text(chartTitle, 14, 15);
+        // Extracts keys for headers and values for rows [cite: 403-405]
+        const headers = [Object.keys(data[0])];
+        const rows = data.map(item => Object.values(item));
+        
+        doc.autoTable({
+            head: headers,
+            body: rows,
+            startY: 20,
+        });
+        doc.save(`${chartTitle}.pdf`);
     };
 
     return (
-        <div className="space-y-6 pb-40"> 
-            <ContainerCard glassClass={glassClass}>
-                <div className="p-6 space-y-6">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        
-                        {/* EMPLOYEE SELECT */}
-                        <div className="relative">
-                            <label className="text-cyan-400 text-[10px] font-bold mb-2 block uppercase tracking-widest">
-                                1. Select Staff Member ({employees.length} users found)
-                            </label>
-                            <select 
-                                style={selectStyle} 
-                                className="w-full bg-black border border-white/20 rounded-xl p-4 text-white focus:border-cyan-500 outline-none cursor-pointer shadow-2xl"
-                                value={selectedEmployeeId}
-                                onChange={(e) => setSelectedEmployeeId(e.target.value)}
-                            >
-                                <option value="">-- Click to view list --</option> 
-                                {employees.map(emp => (
-                                    <option key={emp.id} value={emp.id}>
-                                        {/* FIXED THE CHARACTER ENCODING BELOW */}
-                                        {emp.name} - {emp.email || 'No Email'}
-                                    </option>
-                                ))}
-                            </select>
-                        </div>
+        <div className="flex space-x-2 mb-4">
+            {/* CSV Export using existing react-csv link [cite: 380] */}
+            <CSVLink 
+                data={data} 
+                filename={`${chartTitle}.csv`}
+                className={`flex items-center px-3 py-1 rounded-md bg-cyan-600 text-white text-xs font-bold hover:bg-cyan-500 transition`}
+            >
+                <Icons.Download className="w-4 h-4 mr-1" /> Export CSV
+            </CSVLink>
 
-                        {/* ROLE SELECT */}
-                        <div className="relative">
-                            <label className="text-cyan-400 text-[10px] font-bold mb-2 block uppercase tracking-widest">
-                                2. Choose New Permissions Role
-                            </label>
-                            <select 
-                                style={selectStyle} 
-                                className="w-full bg-black border border-white/20 rounded-xl p-4 text-white focus:border-cyan-500 outline-none cursor-pointer shadow-2xl"
-                                value={selectedRoleId}
-                                onChange={(e) => setSelectedRoleId(e.target.value)}
-                            >
-                                <option value="">-- Click to view roles --</option> 
-                                {roles.map(role => (
-                                    <option key={role.id} value={role.id}>
-                                        {role.roleName || role.name}
-                                    </option>
-                                ))}
-                            </select>
-                        </div>
-                    </div>
+            <button onClick={handleExcelExport} className="flex items-center px-3 py-1 rounded-md bg-green-600 text-white text-xs font-bold hover:bg-green-500">
+                <Icons.FileSpreadsheet className="w-4 h-4 mr-1" /> Excel
+            </button>
 
-                    <button 
-                        onClick={handleAssignment}
-                        className="w-full bg-cyan-600 hover:bg-cyan-500 py-4 rounded-xl font-black text-white transition-all shadow-lg flex items-center justify-center gap-2 uppercase tracking-tighter"
-                    >
-                        <Icons.UserCheck className="w-5 h-5" /> Confirm Role Assignment
-                    </button>
-                </div>
-            </ContainerCard>
-
-            <ContainerCard glassClass={glassClass}>
-                <div className="p-4">
-                    <table className="w-full text-left">
-                        <thead>
-                            <tr className="text-gray-500 text-[10px] uppercase border-b border-white/10">
-                                <th className="p-3">Staff</th>
-                                <th className="p-3">Current Role</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-white/5">
-                            {employees.length === 0 ? (
-                                <tr><td colSpan="2" className="p-4 text-center text-gray-500">No users in database.</td></tr>
-                            ) : (
-                                employees.map(emp => (
-                                    <tr key={emp.id} className="hover:bg-white/5 transition-colors">
-                                        <td className="p-3 text-white font-medium">{emp.name}</td>
-                                        <td className="p-3">
-                                            <span className="bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 px-2 py-1 rounded text-xs">
-                                                {emp.system_role || emp.role || 'N/A'}
-                                            </span>
-                                        </td>
-                                    </tr>
-                                ))
-                            )}
-                        </tbody>
-                    </table>
-                </div>
-            </ContainerCard>
+            <button onClick={handlePDFExport} className="flex items-center px-3 py-1 rounded-md bg-red-600 text-white text-xs font-bold hover:bg-red-500">
+                <Icons.FileText className="w-4 h-4 mr-1" /> PDF
+            </button>
         </div>
     );
-}
-
+};
 const RoleManagement = ({ glassClass }) => {
     const { getCollection, addRecord, updateRecord, deleteRecord } = useData();
     const [roleName, setRoleName] = useState(''); // This state holds the display name
@@ -6223,82 +4611,1012 @@ const RoleManagement = ({ glassClass }) => {
             </ContainerCard>
         </div>
     );
-}
+};
 
-const StaffSignup = ({ glassClass }) => {
-    const { getCollection, addRecord } = useData();
-    const [formData, setFormData] = useState({
-        username: '',
-        fullName: '',
-        password: '',
-        role: '' // Stores the ID from ROLE_CRUD
-    });
 
-    // Populate dropdown with Dynamic Roles from ROLE_CRUD
-    const dynamicRoleOptions = useMemo(() => {
-        const savedRoles = getCollection('ROLE_CRUD') || [];
-        const base = [
-            { label: 'Admin (System)', value: 'admin' },
-            { label: 'Standard Employee', value: 'employee' }
-        ];
+    const convertGCToEC = (gcDateString) => {
+        const date = new Date(gcDateString);
+        if (isNaN(date.getTime())) return '';
         
-        const custom = savedRoles.map(role => ({
-            label: role.name || role.roleName,
-            value: role.id 
-        }));
+        const year = date.getFullYear();
+        const month = date.getMonth() + 1;
+        const day = date.getDate();
 
-        return [...base, ...custom];
-    }, [getCollection]);
+        // Approximate Ethiopia Calendar logic:
+        // New Year (Meskerem 1) is Sept 11 (or Sept 12 in leap years)
+        let etYear = year - 8;
+        if (month > 9 || (month === 9 && day >= 11)) {
+            etYear = year - 7;
+        }
 
-    const handleSubmit = async (e) => {
-        e.preventDefault();
-        try {
-            // Find display name for system_role
-            const roleObj = dynamicRoleOptions.find(o => o.value === formData.role);
-            
-            await addRecord('HR_EMPLOYEE_CRUD', {
-                ...formData,
-                name: formData.fullName,
-                status: 'active',
-                system_role: roleObj?.label || 'Employee',
-                createdAt: new Date().toISOString()
-            });
-            
-            alert(`Staff Registered Successfully: ${formData.username}`);
-            setFormData({ username: '', fullName: '', password: '', role: '' });
-        } catch (error) {
-            alert("Signup failed.");
+        // Ethiopian months are 30 days each. 
+        // We calculate the day of the year to find the exact month/day
+        const start = new Date(year, 0, 0);
+        const diff = (date - start) + ((start.getTimezoneOffset() - date.getTimezoneOffset()) * 60 * 1000);
+        const dayOfYear = Math.floor(diff / (1000 * 60 * 60 * 24));
+        
+        // Meskerem 1 is Gregorian Day 254 (non-leap) or 255 (leap)
+        const isLeap = (year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0));
+        const newYearDay = isLeap ? 255 : 254;
+        
+        let ethDayOfYear = dayOfYear - newYearDay + 1;
+        if (ethDayOfYear <= 0) {
+            ethDayOfYear += isLeap ? 366 : 365;
+        }
+
+        const etMonth = Math.ceil(ethDayOfYear / 30);
+        const etDay = ethDayOfYear % 30 || 30;
+
+        return `${etYear}-${String(etMonth).padStart(2, '0')}-${String(etDay).padStart(2, '0')}`;
+    };
+
+const FormModal = ({ collectionName, initialData, onSave, onCancel, glassClass }) => {
+    const { addRecord, updateRecord, getCollection, allData } = useData();
+    const [formData, setFormData] = React.useState({});
+    const isNew = React.useMemo(() => !initialData || !initialData.id, [initialData]);
+    const columns = COLUMN_CONFIG[collectionName] || [];
+
+    const isEmployee = collectionName === 'HR_EMPLOYEE_CRUD';
+    const isRecruitment = collectionName === 'HR_RECRUITMENT_CRUD';
+    const isLeave = collectionName === 'HR_LEAVE_CRUD';
+    const isTransfer = collectionName === 'HR_TRANSFER_CRUD';
+    const isTraining = collectionName === 'HR_TRAINING_CRUD';
+    const isRetirement = collectionName === 'RETIREMENT_CRUD';
+
+    /* --- 100% EXACT CALENDAR ENGINE (JDN Algorithm) --- */
+    const ethToGc = (ethStr) => {
+        const parts = ethStr.split('/');
+        if (parts.length !== 3) return null;
+        const [d, m, y] = parts.map(n => parseInt(n));
+        const era = 1724220; 
+        const jdn = (y - 1) * 365 + Math.floor(y / 4) + (m - 1) * 30 + d + era;
+        return new Date((jdn - 2440587.5) * 86400000).toISOString().split('T')[0];
+    };
+
+    const gcToEth = (gcStr) => {
+        const date = new Date(gcStr);
+        if (isNaN(date.getTime())) return null;
+        const jdn = Math.floor(date.getTime() / 86400000) + 2440588;
+        const era = 1723856;
+        const r = (jdn - era) % 1461;
+        const n = (r % 365) + 365 * Math.floor(r / 1460);
+        const y = 4 * Math.floor((jdn - era) / 1461) + Math.floor(r / 365) - Math.floor(r / 1460);
+        const m = Math.floor(n / 30) + 1;
+        const d = (n % 30) + 1;
+        return { 
+            full: `${String(d).padStart(2, '0')}/${String(m > 13 ? 13 : m).padStart(2, '0')}/${y}`,
+            year: y
+        };
+    };
+
+    /* --- DATA LOOKUP LOGIC --- */
+    const handleDataLookup = (lookupValue) => {
+        if (!lookupValue || isLeave || isTransfer || isTraining || isRetirement) return;
+        const allRecords = getCollection(collectionName) || [];
+        const keyToMatch = isRecruitment ? 'form_no' : 'id_number';
+        const existing = allRecords.find(r => r[keyToMatch]?.trim().toLowerCase() === lookupValue.trim().toLowerCase());
+        if (existing) {
+            setFormData(prev => ({ ...prev, ...existing, id: existing.id }));
         }
     };
 
-    return (
-        <ContainerCard Icon="UserPlus" glassClass={glassClass}>
-            <form onSubmit={handleSubmit} className="p-6 space-y-4 max-w-2xl mx-auto">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <Input label="Full Name" value={formData.fullName} onChange={(v) => setFormData({...formData, fullName: v})} isRequired />
-                    <Input label="Username" value={formData.username} onChange={(v) => setFormData({...formData, username: v})} isRequired />
+    /* --- INITIALIZATION & AUTO-ID --- */
+    React.useEffect(() => {
+        const allRecords = getCollection(collectionName) || [];
+        const sanitized = {};
+        columns.forEach(field => {
+            let val = initialData?.[field.key];
+            if (isNew && !val) {
+                if (field.key === 'id_number' && isEmployee) {
+                    const max = allRecords.reduce((m, r) => Math.max(m, parseInt(r.id_number?.split('-')[1]) || 0), 0);
+                    val = `UU-${String(max + 1).padStart(3, '0')}`;
+                }
+                if (field.key === 'form_no' && isRecruitment) val = `HRS/036-01${allRecords.length + 1}`;
+            }
+            sanitized[field.key] = field.type === 'array' ? (Array.isArray(val) ? val : []) : (val ?? '');
+        });
+        setFormData(sanitized);
+    }, [initialData, columns, isNew, getCollection]);
+
+    const renderField = (field) => {
+        if (field.isHidden) return null;
+
+        const handleJump = () => {
+            const lbl = field.label.toLowerCase();
+            let tid = "";
+            if (lbl.includes('educational status')) tid = "anchor-education";
+            if (lbl.includes('family contact')) tid = "anchor-beneficiaries";
+            const el = document.getElementById(tid);
+            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        };
+
+        if (field.type === 'array') {
+            const anchorId = (field.key === 'education_entries' || field.key === 'experience_entries') 
+                ? "anchor-education" 
+                : (field.key === 'beneficiaries' ? "anchor-beneficiaries" : "");
+
+            return (
+                <div key={field.key} id={anchorId} className="md:col-span-2 pt-4">
+                    <MultiEntryField
+                        label={field.label}
+                        entries={formData[field.key] || []}
+                        fieldConfig={field.arrayConfig}
+                        glassClass={glassClass}
+                        onChange={(entries) => {
+                            let updates = { [field.key]: entries };
+                            if (isRecruitment && field.key === 'missing_documents' && entries.length > 0) {
+                                const docList = entries.map(d => d.doc_name).join(', ');
+                                updates.recommendation = (formData.recommendation || '') + `\n[PENDING DOCUMENTS: ${docList}]`;
+                            }
+                            setFormData(prev => ({ ...prev, ...updates }));
+                        }}
+                    />
                 </div>
-                <Input label="Initial Password" type="password" placeholder="Enter password" value={formData.password} onChange={(v) => setFormData({...formData, password: v})} isRequired />
-                
-                <div className="flex flex-col space-y-2">
-                    <label className="text-[10px] font-black text-cyan-400 uppercase tracking-widest">Assign Permission Role</label>
-                    <select 
-                        value={formData.role} 
-                        onChange={(e) => setFormData({...formData, role: e.target.value})} 
-                        className="w-full bg-black/60 border border-white/20 p-4 rounded-xl text-white outline-none focus:border-cyan-500 transition-all font-bold"
-                    >
-                        <option value="">-- Choose Access Level --</option>
-                        {dynamicRoleOptions.map(opt => <option key={opt.value} value={opt.value} className="bg-slate-900">{opt.label}</option>)}
-                    </select>
+            );
+        }
+
+        /* --- DYNAMIC DROPDOWN SOURCING --- */
+        let options = field.options || [];
+        
+        if (isLeave && field.key === 'leave_type') {
+            options = ['Annual Leave', 'Sick Leave', 'Maternity Leave', 'Pre-maternity Leave', 'Paternity Leave', 'Wedding Leave', 'Funeral Leave', 'Educational Leave', 'Unpaid Leave', 'Special Leave'];
+        }
+        
+        // Department Source for Transfer Destinations and Employee Records
+        if ((field.key === 'department' || field.key === 'new_department' || field.key === 'current_department') && allData['DEPARTMENTS_CRUD']) {
+            options = allData['DEPARTMENTS_CRUD'].map(d => d.name);
+        }
+
+        if ((isLeave || isTransfer || isTraining || isRetirement) && (field.key === 'employee_name' || field.key === 'name')) {
+            options = (allData['HR_EMPLOYEE_CRUD'] || []).map(e => e.name);
+        }
+
+        if (isTraining && field.key === 'score') {
+            options = ['Yes', 'No'];
+        }
+
+        if (isTransfer && field.key === 'new_location') {
+            options = ['Gerji', 'Adama', 'Burayu', 'Dessie'];
+        }
+
+        if (isEmployee && field.key === 'reporting_to' && allData['HR_EMPLOYEE_CRUD']) {
+            options = allData['HR_EMPLOYEE_CRUD']
+                .filter(e => e.system_role === 'hr_manager' || e.system_role === 'admin' || (e.job_title && e.job_title.toLowerCase().includes('head')))
+                .map(e => e.name);
+        }
+
+        return (
+            <div key={field.key} className={field.type === 'textarea' ? "md:col-span-2" : "md:col-span-1"}>
+                <div onClick={handleJump} className={field.label.includes('Jump') ? "cursor-pointer hover:text-cyan-400 font-bold" : ""}>
+                    <Input
+                        label={isTraining && field.key === 'score' ? 'Obtained Certificate?' : field.label}
+                        type={options.length > 0 ? 'select' : field.type}
+                        options={options}
+                        value={formData[field.key] || ''}
+                        onChange={(v) => {
+                            let updates = { [field.key]: v };
+                            
+                            if ((field.key === 'form_no' && isRecruitment) || (field.key === 'id_number' && isEmployee)) {
+                                handleDataLookup(v);
+                            }
+
+                            // --- AUTO-POPULATE (Transfer, Retirement, Training) ---
+                            if ((isRetirement || isTransfer || isTraining) && (field.key === 'employee_name' || field.key === 'name')) {
+                                const emp = (allData['HR_EMPLOYEE_CRUD'] || []).find(e => e.name === v);
+                                if (emp) {
+                                    updates.department = emp.department || '';
+                                    updates.current_department = emp.department || ''; // TRANSFER: Current Dept
+                                    updates.current_location = emp.work_location || ''; // TRANSFER: Current Loc
+                                    updates.job_title = emp.job_title || '';
+                                    updates.id_number = emp.id_number || '';
+                                    if (isRetirement) {
+                                        updates.dob_ec = emp.dob_ec || '';
+                                        updates.retirement_date_ec = emp.retirement_date_ec || '';
+                                    }
+                                }
+                            }
+
+                            // --- LEAVE & DATE LOGIC ---
+                            if (isLeave && (field.key === 'start_date' || field.key === 'end_date')) {
+                                const start = field.key === 'start_date' ? v : formData.start_date;
+                                const end = field.key === 'end_date' ? v : formData.end_date;
+                                if (start && end) {
+                                    const diff = Math.ceil(Math.abs(new Date(end) - new Date(start)) / (1000 * 60 * 60 * 24)) + 1;
+                                    updates.days_taken = diff > 0 ? diff : 0;
+                                }
+                            }
+
+                            if (isEmployee) {
+                                if (field.key === 'dob_gc' && v) {
+                                    const conv = gcToEth(v);
+                                    if (conv) {
+                                        updates.dob_ec = conv.full;
+                                        updates.age = 2026 - new Date(v).getFullYear();
+                                        updates.retirement_date_ec = `${conv.full.split('/')[0]}/${conv.full.split('/')[1]}/${conv.year + 60}`;
+                                    }
+                                }
+                                if (field.key === 'dob_ec' && v.includes('/') && v.length >= 8) {
+                                    const rev = ethToGc(v); if (rev) updates.dob_gc = rev;
+                                }
+                                if (field.key === 'seniority_date_gc' && v) {
+                                    const conv = gcToEth(v); if (conv) updates.seniority_date_ec = conv.full;
+                                }
+                                if (field.key === 'seniority_date_ec' && v.includes('/') && v.length >= 8) {
+                                    const rev = ethToGc(v); if (rev) updates.seniority_date_gc = rev;
+                                }
+                            }
+                            setFormData(prev => ({ ...prev, ...updates }));
+                        }}
+                        isRequired={field.isRequired}
+                    />
+                </div>
+            </div>
+        );
+    };
+
+    return (
+        <form onSubmit={async (e) => { e.preventDefault(); (formData.id ? await updateRecord(collectionName, formData.id, formData) : await addRecord(collectionName, formData)) && onSave(); }} 
+              className="space-y-6 max-h-[85vh] overflow-y-auto p-6 bg-slate-900/60 rounded-3xl custom-scrollbar">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">{columns.map(renderField)}</div>
+            <div className="flex justify-end gap-6 pt-10 sticky bottom-0 bg-gray-900 p-4 rounded-b-3xl border-t border-white/5 z-50">
+                <button type="button" onClick={onCancel} className="text-gray-500 font-bold uppercase text-[10px]">Discard</button>
+                <button type="submit" className="bg-cyan-600 px-14 py-4 rounded-2xl font-black text-white text-[11px] uppercase shadow-2xl hover:bg-cyan-500 transition-all">
+                    Commit To Registry
+                </button>
+            </div>
+        </form>
+    );
+};
+
+
+// Helper for dynamic button text
+const getAddLabel = (slug) => {
+    const parts = slug.split('_');
+    return parts[1] ? parts[1].charAt(0) + parts[1].slice(1).toLowerCase() : 'Record';
+};
+const Sidebar = ({ currentView, setCurrentView, glassClass }) => {
+    const { checkPermission, logout } = useAuth();
+    const { getCollection } = useData();
+    
+    // FETCH THE LIVE ROLES HERE
+    const allRoles = getCollection('ROLE_CRUD') || [];
+
+    const filteredMenuItems = useMemo(() => {
+        const filterItems = (items) => {
+            return items
+                .filter(item => {
+                    // CRITICAL: Pass the allRoles list into the checkPermission function
+                    return checkPermission(item.id, allRoles);
+                })
+                .map(item => ({
+                    ...item,
+                    children: item.children ? filterItems(item.children) : null
+                }));
+        };
+        return filterItems(MENU_ITEMS);
+    }, [checkPermission, allRoles]); // Re-run whenever roles change
+
+    // ... rest of Sidebar JSX
+};
+
+/* ===== unityUniversity AI (live + knowledge) ===== */
+const UU_FEMALE_FIRST_DUP = new Set(['lomi','saba','tigist','eleni','hanna','aster','netsanet','sara','sarah','bethlehem','mahlet','selam','rahel','helen','meseret','hiwot','kidist','marta','martha','yeshi','almaz','tsion','beten','sosina','liya','ruth','meron','eden','abeba','tsehay','worknesh','senait','bezawit','hawi','meaza','frehiwot','genet','ayelech','mekdes','selamawit','tsehaynesh','bethel','hirut','firehiwot','yelena']);
+const UU_MALE_FIRST_DUP = new Set(['abebe','kebede','chala','jemal','fasil','bereket','yonas','henok','kalab','tadesse','dawit','lemma','daniel','samuel','solomon','yared','mulugeta','getachew','tesfaye','hailu','mekonnen','assefa','girma','wolde','negash','bekele','yonatan','nahom','abel','kaleb','biruk','natnael','robelt','kirubel','ammanuel','amanuel','eyob','yohannes','melaku','sisay','asfaw','desta','haile','tewodros','mengistu','berhanu','gashaw','tamiru','fikadu','teklu','damte']);
+const uuGuessGenderFromName_UNUSED = (fullName) => {
+    const first = String(fullName || '').trim().split(/\s+/)[0].toLowerCase();
+    if (!first) return '';
+    if (UU_FEMALE_FIRST.has(first)) return 'Female';
+    if (UU_MALE_FIRST.has(first)) return 'Male';
+    return '';
+};
+const uuCorrectEmployeeGender_DUP = (e) => {
+    if (!e || typeof e !== 'object') return e;
+    const name = e.full_name || e.employee_name || e.name || e.Name || '';
+    const guessed = uuGuessGenderFromName(name);
+    if (!guessed) return e;
+    return Object.assign({}, e, { gender: guessed, Gender: guessed });
+};
+const uuCorrectEmployeeList_DUP = (list) => Array.isArray(list) ? list.map(uuCorrectEmployeeGender) : [];
+
+const UU_AI_KNOWLEDGE = [
+    { id: 'sis', title: 'Unity SIS overview', tags: ['sis', 'unity', 'overview', 'modules', 'system'], body: 'Unity SIS integrates Finance, HR, and Material under shared login/RBAC. Finance: COA, journals, TB/GL, payroll, partners, FP/P&L/cash flow. HR: employee master, leave, recruitment, training, transfer, appraisal. Material: inventory, GRV, GIV, purchases; posts stock events to Finance.' },
+    { id: 'finance', title: 'Finance module', tags: ['finance', 'coa', 'journal', 'payroll', 'trial', 'ledger'], body: 'Finance covers chart of accounts, single/journal transactions, trial balance, general ledger, partners, payroll process & reconciliation, and statements (FP, P&L, cash flow).' },
+    { id: 'hr', title: 'HR module', tags: ['hr', 'employee', 'staff', 'leave', 'recruitment'], body: 'HR is the staff system of record: employee master (ID, names, department, position, salary, TIN, pension), leave, recruitment, training, transfer, appraisal, competence, awards.' },
+    { id: 'material', title: 'Material module', tags: ['material', 'inventory', 'grv', 'giv', 'sku', 'store'], body: 'Material manages inventory SKUs, GRV (goods received), GIV (goods issued), local/foreign purchase, and parts robbing. GRV/GIV can post toward Finance stock/expense accounts.' },
+    { id: 'students', title: 'SIS students', tags: ['student', 'students', 'tuition', 'registrar', 'qms'], body: 'Students connect via registrar/QMS/attendance concepts, tuition partners in Finance, and campus stores in Material.' },
+];
+
+const uuSafeList = (data, key) => {
+    try {
+        if (!data) return [];
+        if (Array.isArray(data[key])) return data[key];
+    } catch (e) {}
+    return [];
+};
+const uuPull = (allData, getCollection, key) => {
+    try {
+        if (typeof getCollection === 'function') {
+            const v = getCollection(key);
+            if (Array.isArray(v)) return v;
+        }
+    } catch (e) {}
+    const aliases = {
+        MAT_ITEM_CRUD: ['MAT_ITEM_CRUD', 'MAT_INVENTORY_CRUD', 'MAT_MASTER_CRUD', 'inventoryItems', 'items'],
+        HR_EMPLOYEE_CRUD: ['HR_EMPLOYEE_CRUD', 'employees'],
+        MAT_GRV_CRUD: ['MAT_GRV_CRUD', 'grv'],
+        MAT_GIV_CRUD: ['MAT_GIV_CRUD', 'giv'],
+        FIN_PARTNERS_CRUD: ['FIN_PARTNERS_CRUD', 'partners'],
+        FIN_COA_CRUD: ['FIN_COA_CRUD', 'chartsOfAccounts', 'coa'],
+        transactions: ['transactions', 'dayJournals', 'FIN_TRANSACTIONS'],
+        PAY_PROCESS_CRUD: ['PAY_PROCESS_CRUD'],
+        HR_LEAVE_CRUD: ['HR_LEAVE_CRUD'],
+    };
+    try {
+        for (const k of (aliases[key] || [key])) {
+            const arr = uuSafeList(allData || {}, k);
+            if (arr.length) return arr;
+        }
+    } catch (e) {}
+    return uuSafeList(allData || {}, key);
+};
+const uuEmpName = (e) => { try { return String((e && (e.full_name || e.employee_name || e.name || e.Name)) || '—').trim(); } catch (err) { return '—'; } };
+const uuEmpId = (e) => { try { return String((e && (e.id_number || e.employee_id || e.emp_id || e.id)) || '—').trim(); } catch (err) { return '—'; } };
+const uuEmpDept = (e) => { try { return String((e && (e.department || e.dept || e.Department)) || '—').trim(); } catch (err) { return '—'; } };
+const uuEmpPos = (e) => { try { return String((e && (e.current_position || e.job_title || e.position || e.title)) || '—').trim(); } catch (err) { return '—'; } };
+const uuEmpGenderRaw = (e) => {
+    try {
+        if (!e || typeof e !== 'object') return '';
+        if (e.gender != null) return e.gender;
+        if (e.Gender != null) return e.Gender;
+        if (e.sex != null) return e.sex;
+        if (e.Sex != null) return e.Sex;
+        return '';
+    } catch (err) { return ''; }
+};
+const uuNormalizeGender = (g) => {
+    try {
+        const x = String(g == null ? '' : g).toLowerCase().trim();
+        if (!x) return 'unknown';
+        if (x === 'f' || x === 'female' || x === 'woman' || x === 'women' || x === 'girl') return 'female';
+        if (x === 'm' || x === 'male' || x === 'man' || x === 'men' || x === 'boy') return 'male';
+        if (/\bfemale\b|\bwomen\b|\bwoman\b/.test(x)) return 'female';
+        if (/\bmale\b|\bmen\b|\bman\b/.test(x) && !/\bfemale\b|\bwomen\b|\bwoman\b/.test(x)) return 'male';
+        if (x.startsWith('fem')) return 'female';
+        if (x.startsWith('mal')) return 'male';
+        return 'unknown';
+    } catch (err) { return 'unknown'; }
+};
+const uuMatchGender = (recordGender, want) => !want || uuNormalizeGender(recordGender) === want;
+const uuParseEmployeeFilters = (q) => {
+    try {
+        const s = String(q || '').toLowerCase();
+        let gender = null;
+        if (/\bfemale\b|\bwomen\b|\bwoman\b|\bfemales\b/.test(s)) gender = 'female';
+        else if (/\bmale\b|\bmen\b|\bman\b|\bmales\b/.test(s) && !/\bfemale\b|\bwomen\b|\bwoman\b/.test(s)) gender = 'male';
+        let department = null;
+        const deptMatch = s.match(/\b(?:in|from|at)\s+([a-z][a-z\s]{1,40}?)(?:\s+department|\s+dept)?(?:\s|$)/);
+        if (deptMatch) {
+            const d = deptMatch[1].trim();
+            if (!/^(unity|university|the|a|an|hr|finance|material)$/.test(d)) department = d;
+        }
+        let location = null;
+        for (const loc of ['gerji', 'burayu', 'dessie', 'adama', 'torhailoch', 'bole', 'addis ababa', 'west campus']) {
+            if (s.includes(loc)) { location = loc; break; }
+        }
+        return { gender, department, location };
+    } catch (err) {
+        return { gender: null, department: null, location: null };
+    }
+};
+const uuFilterEmployees = (list, filters) => {
+    try {
+        const rows = Array.isArray(list) ? list : [];
+        const f = filters || {};
+        return rows.filter((e) => {
+            if (!e) return false;
+            if (f.gender && !uuMatchGender(uuEmpGenderRaw(e), f.gender)) return false;
+            if (f.department && !uuEmpDept(e).toLowerCase().includes(String(f.department).toLowerCase())) return false;
+            if (f.location) {
+                const loc = String((e.work_location || e.location || '')).toLowerCase();
+                if (!loc.includes(String(f.location).toLowerCase())) return false;
+            }
+            return true;
+        });
+    } catch (err) { return []; }
+};
+const uuGenderCensus = (list) => {
+    try {
+        const rows = Array.isArray(list) ? list : [];
+        let female = 0, male = 0, unknown = 0;
+        rows.forEach((e) => {
+            const g = uuNormalizeGender(uuEmpGenderRaw(e));
+            if (g === 'female') female += 1;
+            else if (g === 'male') male += 1;
+            else unknown += 1;
+        });
+        return { total: rows.length, female, male, unknown };
+    } catch (err) { return { total: 0, female: 0, male: 0, unknown: 0 }; }
+};
+const uuResolveQuery = (question, priorTopic, priorQuestion) => {
+    try {
+        const raw = String(question || '').trim();
+        const q = raw.toLowerCase();
+        if (!q) return { query: '', topic: priorTopic || '', filters: {}, followUp: false };
+        const followUp = /^(be )?specific|more detail|tell me more|what about|who are they|those|them|same|again|elaborate|details?|narrow|focus|only the/.test(q)
+            || (q.split(/\s+/).length <= 8 && priorTopic && !/\b(grv|giv|payroll|inventory|sku|partner|coa|student)\b/.test(q));
+        let topic = priorTopic || '';
+        if (/\b(sku|skus|item|items|inventory|stock|product|tables?)\b/.test(q)) topic = 'sku';
+        else if (/\b(employee|employees|staff|worker|personnel|female|male|women|men)\b/.test(q)) topic = 'employee';
+        else if (/\b(grv|goods received)\b/.test(q)) topic = 'grv';
+        else if (/\b(giv|goods issued)\b/.test(q)) topic = 'giv';
+        else if (/\bleave\b/.test(q)) topic = 'leave';
+        else if (/\b(partner|supplier|customer|vendor)\b/.test(q)) topic = 'partner';
+        else if (/\b(coa|chart of account)/.test(q)) topic = 'coa';
+        else if (/\b(payroll|payslip|salary process)\b/.test(q)) topic = 'payroll';
+        else if (/\b(transaction|journal|trial balance|\btb\b)\b/.test(q)) topic = 'tx';
+        else if (followUp && priorTopic) topic = priorTopic;
+        let query = raw;
+        if (followUp && priorTopic) query = raw + ' (about ' + priorTopic + (priorQuestion ? '; earlier: ' + priorQuestion : '') + ')';
+        const filterSrc = query + (followUp && priorQuestion ? ' ' + priorQuestion : '');
+        return { query, topic, followUp: !!followUp, filters: uuParseEmployeeFilters(filterSrc) };
+    } catch (err) {
+        return { query: String(question || ''), topic: priorTopic || '', filters: {}, followUp: false };
+    }
+};
+const unityUniversityLiveAnswer = (question, allData, getCollection, topicHint, filtersIn) => {
+    try {
+        const q = String(question || '').toLowerCase().trim();
+        if (!q && !topicHint) return null;
+        const filters = filtersIn || uuParseEmployeeFilters(q) || {};
+        let topic = topicHint || '';
+        if (!topic) {
+            if (/\b(sku|skus|item|items|inventory|stock|tables?)\b/.test(q)) topic = 'sku';
+            else if (/\b(employee|staff|female|male|women|men|personnel)\b/.test(q) || filters.gender) topic = 'employee';
+            else if (/\bgrv\b/.test(q)) topic = 'grv';
+            else if (/\bgiv\b/.test(q)) topic = 'giv';
+            else if (/\bleave\b/.test(q)) topic = 'leave';
+            else if (/\b(partner|supplier|customer)\b/.test(q)) topic = 'partner';
+            else if (/\b(coa|chart of account)/.test(q)) topic = 'coa';
+            else if (/\b(payroll|payslip)\b/.test(q)) topic = 'payroll';
+            else if (/\b(transaction|journal|\btb\b)\b/.test(q)) topic = 'tx';
+        }
+        const employees = uuCorrectEmployeeList(uuPull(allData, getCollection, 'HR_EMPLOYEE_CRUD'));
+        const leave = uuPull(allData, getCollection, 'HR_LEAVE_CRUD');
+        const items = uuPull(allData, getCollection, 'MAT_ITEM_CRUD');
+        const grv = uuPull(allData, getCollection, 'MAT_GRV_CRUD');
+        const giv = uuPull(allData, getCollection, 'MAT_GIV_CRUD');
+        const partners = uuPull(allData, getCollection, 'FIN_PARTNERS_CRUD');
+        const coa = uuPull(allData, getCollection, 'FIN_COA_CRUD');
+        const tx = uuPull(allData, getCollection, 'transactions');
+        const process = uuPull(allData, getCollection, 'PAY_PROCESS_CRUD');
+
+        if (topic === 'employee' || filters.gender || /\b(employee|staff|female|male|women|men|personnel)\b/.test(q)) {
+            const census = uuGenderCensus(employees);
+            const filtered = uuFilterEmployees(employees, filters);
+            const filteredCensus = uuGenderCensus(filtered);
+            const n = filtered.length;
+            let logicNote = filters.gender
+                ? ('Logic check: list length ' + n + ' vs ' + filters.gender + ' in list ' + (filters.gender === 'female' ? filteredCensus.female : filteredCensus.male) + '.')
+                : '';
+            const depts = {};
+            filtered.forEach((e) => { const d = uuEmpDept(e); depts[d] = (depts[d] || 0) + 1; });
+            const deptLines = Object.entries(depts).sort((a, b) => b[1] - a[1]).slice(0, 12).map(([d, c]) => '• ' + d + ': ' + c).join('\n');
+            const lines = filtered.slice(0, 30).map((e) => '• ' + uuEmpId(e) + ' | ' + uuEmpName(e) + ' | ' + uuNormalizeGender(uuEmpGenderRaw(e)) + ' | ' + uuEmpPos(e) + ' | ' + uuEmpDept(e));
+            const filterBits = [];
+            if (filters.gender) filterBits.push('gender=' + filters.gender);
+            if (filters.department) filterBits.push('department~' + filters.department);
+            if (filters.location) filterBits.push('location~' + filters.location);
+            let head = 'Employees (live HR data)\n• Matching: ' + n + '\n• Total in master: ' + census.total + '\n• Full split: female ' + census.female + ' · male ' + census.male + ' · unspecified ' + census.unknown + '\n';
+            if (n === 0) {
+                return { title: filters.gender ? ('Live · ' + filters.gender + ' employees') : 'Live · HR employees', body: head + '• Filters: ' + (filterBits.join(', ') || 'none') + '\n\nNo rows match.\n' + logicNote + '\nSource: HR_EMPLOYEE_CRUD.' };
+            }
+            return {
+                title: filters.gender ? ('Live · ' + filters.gender + ' employees (' + n + ')') : ('Live · HR employees (' + n + ')'),
+                body: head + '• Active filters: ' + (filterBits.join(', ') || 'none') + '\n\nBy department:\n' + (deptLines || '• —') + '\n\nPeople (' + Math.min(n, 30) + (n > 30 ? ' of ' + n : '') + '):\n' + lines.join('\n') + '\n\n' + logicNote + '\nGender uses the record field, corrected from first name when the name is a known male/female Ethiopian name.\nSource: HR_EMPLOYEE_CRUD.',
+            };
+        }
+        if (topic === 'sku' || /\b(sku|skus|inventory|stock|tables?)\b/.test(q)) {
+            const n = items.length;
+            const lines = items.slice(0, 15).map((r) => {
+                const sku = (r && (r.sku || r.item_sku || r.item_code || r.code || r.id)) || '—';
+                const name = (r && (r.name || r.item_name || r.description)) || '';
+                return '• ' + sku + (name ? ' — ' + name : '') + ' | qty ' + ((r && (r.quantity != null ? r.quantity : r.qty)) ?? '—');
+            });
+            const stores = {};
+            items.forEach((r) => {
+                const s = (r && (r.location || r.store || r.warehouse || r.receiving_store)) || 'Main store';
+                stores[s] = (stores[s] || 0) + 1;
+            });
+            const storeLines = Object.entries(stores).sort((a, b) => b[1] - a[1]).map(([s, c]) => '• ' + s + ': ' + c + ' item row(s)').join('\n');
+            const tableHint = /table/.test(q) ? '\n\n"Tables in store" = inventory item rows by store (not SQL tables).' : '';
+            return { title: 'Live · Store / SKUs (' + n + ')', body: n ? ('Inventory SKU rows: ' + n + '\nBy store:\n' + (storeLines || '• —') + '\n\nSample:\n' + lines.join('\n') + tableHint) : ('No inventory rows.' + tableHint) };
+        }
+        if (topic === 'grv' || /\bgrv\b/.test(q)) return { title: 'Live · GRV', body: grv.length + ' GRV record(s). SKUs: ' + items.length + '.' };
+        if (topic === 'giv' || /\bgiv\b/.test(q)) return { title: 'Live · GIV', body: giv.length + ' GIV record(s).' };
+        if (topic === 'leave' || /\bleave\b/.test(q)) return { title: 'Live · Leave', body: leave.length + ' leave record(s). Employees: ' + employees.length + '.' };
+        if (topic === 'partner' || /\b(partner|supplier|customer)\b/.test(q)) return { title: 'Live · Partners', body: partners.length + ' partner(s).' };
+        if (topic === 'coa' || /\bcoa\b/.test(q)) return { title: 'Live · COA', body: coa.length + ' chart-of-account row(s).' };
+        if (topic === 'payroll' || /\bpayroll\b/.test(q)) return { title: 'Live · Payroll process', body: process.length + ' payroll process row(s).' };
+        if (topic === 'tx' || /\b(transaction|journal|\btb\b)\b/.test(q)) return { title: 'Live · Transactions', body: tx.length + ' transaction/journal row(s).' };
+        return null;
+    } catch (err) {
+        return { title: 'unityUniversity AI', body: 'Live data step failed: ' + String(err && err.message ? err.message : err) };
+    }
+};
+const unityUniversityAnswer = (question, allData, getCollection, priorTopic, priorQuestion) => {
+    try {
+        const raw = String(question || '').trim();
+        const resolved = uuResolveQuery(raw, priorTopic, priorQuestion);
+        if (!raw) {
+            return { title: 'unityUniversity AI', body: 'Ask live questions:\n• how many female employees\n• how many male staff\n• how many skus\n• how many GRV', topic: '' };
+        }
+        const live = unityUniversityLiveAnswer(resolved.query, allData, getCollection, resolved.topic, resolved.filters);
+        if (live && live.body) return Object.assign({}, live, { topic: resolved.topic || priorTopic || '' });
+        const q = String(resolved.query || '').toLowerCase();
+        const words = q.split(/[^a-z0-9]+/).filter((w) => w.length > 2);
+        let best = null, bestScore = 0;
+        const knowledge = Array.isArray(UU_AI_KNOWLEDGE) ? UU_AI_KNOWLEDGE : [];
+        for (let i = 0; i < knowledge.length; i++) {
+            const item = knowledge[i];
+            if (!item) continue;
+            let score = 0;
+            const titleL = String(item.title || '').toLowerCase();
+            if (q.includes(titleL)) score += 6;
+            const tags = Array.isArray(item.tags) ? item.tags : [];
+            for (let t = 0; t < tags.length; t++) {
+                const tag = String(tags[t] || '');
+                if (q.includes(tag)) score += 4;
+                for (let w = 0; w < words.length; w++) {
+                    if (tag === words[w]) score += 3;
+                    else if (tag.includes(words[w]) || words[w].includes(tag)) score += 1;
+                }
+            }
+            for (let w = 0; w < words.length; w++) {
+                if (titleL.includes(words[w])) score += 2;
+                if (String(item.body || '').toLowerCase().includes(words[w])) score += 0.2;
+            }
+            if (score > bestScore) { bestScore = score; best = item; }
+        }
+        if (best && bestScore >= 1.5) return { title: best.title, body: best.body, topic: resolved.topic || best.id };
+        return { title: 'unityUniversity AI', body: 'No strong match. Try: how many female employees · how many SKUs · what is Unity SIS', topic: resolved.topic || priorTopic || '' };
+    } catch (err) {
+        return { title: 'unityUniversity AI', body: 'Answer error: ' + String(err && err.message ? err.message : err), topic: priorTopic || '' };
+    }
+};
+const UnityUniversityAI = ({ glassClass = '' }) => {
+    let allData = {};
+    let getCollection = null;
+    try {
+        const dataApi = useData();
+        allData = (dataApi && dataApi.allData) || {};
+        getCollection = dataApi && dataApi.getCollection;
+    } catch (e) { allData = {}; }
+    try {
+        if ((!allData || !Object.keys(allData).length) && typeof window !== 'undefined' && window.__UU_ALL_DATA__) allData = window.__UU_ALL_DATA__;
+    } catch (e) {}
+    const [question, setQuestion] = useState('');
+    const [answer, setAnswer] = useState({ title: 'unityUniversity AI', body: 'Ask live questions — answers appear here at the top.\nExamples: how many female employees · how many SKUs · what is Unity SIS', topic: '' });
+    const [history, setHistory] = useState([]);
+    const [priorTopic, setPriorTopic] = useState('');
+    const [priorQuestion, setPriorQuestion] = useState('');
+    const [busy, setBusy] = useState(false);
+    const answerRef = useRef(null);
+    const ask = (q) => {
+        const query = String(q != null && String(q).length ? q : question).trim();
+        setBusy(true);
+        let ad = allData;
+        let gc = getCollection;
+        try { if (typeof window !== 'undefined' && window.__UU_ALL_DATA__) ad = window.__UU_ALL_DATA__; } catch (e) {}
+        window.setTimeout(() => {
+            try {
+                const res = unityUniversityAnswer(query, ad, gc, priorTopic, priorQuestion);
+                const safe = (res && res.body) ? res : { title: 'unityUniversity AI', body: 'No answer.', topic: priorTopic };
+                setAnswer(safe);
+                if (safe.topic) setPriorTopic(safe.topic);
+                if (query) {
+                    setPriorQuestion(query);
+                    setHistory((h) => [{ q: query, title: safe.title }, ...(Array.isArray(h) ? h : [])].slice(0, 12));
+                }
+                setQuestion('');
+                window.setTimeout(() => { try { answerRef.current && answerRef.current.scrollIntoView && answerRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e2) {} }, 20);
+            } catch (err) {
+                setAnswer({ title: 'unityUniversity AI', body: 'Could not answer: ' + String(err && err.message ? err.message : err), topic: priorTopic });
+            } finally { setBusy(false); }
+        }, 40);
+    };
+    const quick = ['How many female employees?', 'How many male employees?', 'How many employees?', 'Who are the female staff?', 'How many SKUs?', 'How many GRV?', 'Payroll process count', 'What is Unity SIS?'];
+    return (
+        <div className={'mt-6 rounded-[1.75rem] border border-cyan-500/30 bg-gradient-to-br from-cyan-950/50 to-slate-950/80 ' + (glassClass || '') + ' overflow-hidden'}>
+            <div className="px-5 py-4 border-b border-cyan-500/20 flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-2xl bg-cyan-500/20 border border-cyan-400/40 flex items-center justify-center text-cyan-300 text-lg font-black">AI</div>
+                    <div>
+                        <h3 className="text-sm font-black uppercase tracking-widest text-cyan-300">unityUniversity AI</h3>
+                        <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Consistent live logic{priorTopic ? ' · ' + priorTopic : ''}</p>
+                    </div>
+                </div>
+                <span className="text-[9px] font-black uppercase px-2 py-1 rounded-lg bg-cyan-500/10 text-cyan-200/90 border border-cyan-500/20">{busy ? 'Thinking…' : 'Ask anything'}</span>
+            </div>
+            <div className="p-5 space-y-4">
+                <div ref={answerRef} className="rounded-2xl border border-cyan-400/30 bg-black/60 p-4 space-y-2 min-h-[8rem]">
+                    <h4 className="text-xs font-black uppercase tracking-widest text-cyan-300">{(answer && answer.title) || 'unityUniversity AI'}</h4>
+                    <p className="text-[13px] text-gray-100 leading-relaxed whitespace-pre-wrap">{(answer && answer.body) || 'Answer appears here at the top.'}</p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                    {quick.map((label) => (
+                        <button key={label} type="button" onClick={() => ask(label)} disabled={busy} className="px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wide bg-white/5 border border-white/10 text-gray-300 hover:border-cyan-400/40 hover:text-cyan-200 transition disabled:opacity-50">{label}</button>
+                    ))}
+                </div>
+                <div className="flex flex-col sm:flex-row gap-2">
+                    <input type="text" value={question} onChange={(e) => setQuestion(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); ask(); } }} placeholder="e.g. how many female employees" className="flex-1 min-w-0 px-4 py-3 rounded-xl bg-black/50 border border-cyan-500/25 text-sm text-white outline-none focus:border-cyan-400" disabled={busy} />
+                    <button type="button" onClick={() => ask()} disabled={busy} className="px-5 py-3 rounded-xl bg-cyan-600 hover:bg-cyan-500 disabled:bg-cyan-900 text-white text-xs font-black uppercase tracking-wider shrink-0">{busy ? '…' : 'Ask'}</button>
+                </div>
+                {history.length > 0 && (
+                    <div className="space-y-1">
+                        <p className="text-[9px] font-black uppercase tracking-widest text-gray-500">Recent</p>
+                        <div className="flex flex-wrap gap-2">
+                            {history.map((h, idx) => (
+                                <button key={String(h.q) + '-' + idx} type="button" onClick={() => ask(h.q)} className="text-[10px] px-2 py-1 rounded-lg bg-white/5 text-gray-400 hover:text-cyan-200">{h.q}</button>
+                            ))}
+                        </div>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+};
+
+
+
+/* —— Ethiopian (Geez) ↔ Gregorian · Power Geez calendar —— */
+const ethiopianMonthNames = [
+    'Meskerem', 'Tikimt', 'Hidar', 'Tahsas', 'Tir', 'Yekatit',
+    'Megabit', 'Miazia', 'Genbot', 'Sene', 'Hamle', 'Nehase', 'Pagumen'
+];
+
+const isGregorianLeap = (y) => (y % 4 === 0 && y % 100 !== 0) || (y % 400 === 0);
+const isEthiopianLeap = (y) => (y % 4) === 3;
+
+const gregorianToJDN = (year, month, day) => {
+    const a = Math.floor((14 - month) / 12);
+    const y = year + 4800 - a;
+    const m = month + 12 * a - 3;
+    return day + Math.floor((153 * m + 2) / 5) + 365 * y + Math.floor(y / 4) - Math.floor(y / 100) + Math.floor(y / 400) - 32045;
+};
+
+const jdnToGregorian = (jdn) => {
+    const a = jdn + 32044;
+    const b = Math.floor((4 * a + 3) / 146097);
+    const c = a - Math.floor((146097 * b) / 4);
+    const d = Math.floor((4 * c + 3) / 1461);
+    const e = c - Math.floor((1461 * d) / 4);
+    const m = Math.floor((5 * e + 2) / 153);
+    const day = e - Math.floor((153 * m + 2) / 5) + 1;
+    const month = m + 3 - 12 * Math.floor(m / 10);
+    const year = 100 * b + d - 4800 + Math.floor(m / 10);
+    return { year, month, day };
+};
+
+const ethiopianToJDNCore = (year, month, day) => {
+    // Standard: JDN = 1723856 + 365*(y-1) + floor(y/4) + 30*(m-1) + d
+    return 1723856 + 365 * (year - 1) + Math.floor(year / 4) + 30 * (month - 1) + day;
+};
+
+const jdnToEthiopian = (jdn) => {
+    const r = jdn - 1723855;
+    const year = Math.floor((4 * r - 1) / 1461);
+    const t = Math.floor((4 * r - 1) % 1461);
+    const n = Math.floor(t / 4);
+    const month = Math.floor(n / 30) + 1;
+    const day = (n % 30) + 1;
+    return { year, month, day };
+};
+
+const gregorianToEthiopian = (y, m, d) => jdnToEthiopian(gregorianToJDN(y, m, d));
+const ethiopianToGregorian = (y, m, d) => jdnToGregorian(ethiopianToJDNCore(y, m, d));
+
+const EthiopianCalendarPanel = ({ glassClass }) => {
+    const now = new Date();
+    const [gY, setGY] = React.useState(now.getFullYear());
+    const [gM, setGM] = React.useState(now.getMonth() + 1);
+    const [gD, setGD] = React.useState(now.getDate());
+    const ethToday = gregorianToEthiopian(now.getFullYear(), now.getMonth() + 1, now.getDate());
+    const [eY, setEY] = React.useState(ethToday.year);
+    const [eM, setEM] = React.useState(ethToday.month);
+    const [eD, setED] = React.useState(ethToday.day);
+    const [mode, setMode] = React.useState('g2e'); // g2e | e2g
+    const [calMonth, setCalMonth] = React.useState(now.getMonth() + 1);
+    const [calYear, setCalYear] = React.useState(now.getFullYear());
+
+    const g2e = gregorianToEthiopian(gY, gM, gD);
+    const e2g = ethiopianToGregorian(eY, eM, eD);
+
+    const daysInGregorianMonth = (y, m) => new Date(y, m, 0).getDate();
+    const firstWeekday = (y, m) => new Date(y, m - 1, 1).getDay();
+    const dim = daysInGregorianMonth(calYear, calMonth);
+    const start = firstWeekday(calYear, calMonth);
+    const cells = [];
+    for (let i = 0; i < start; i++) cells.push(null);
+    for (let d = 1; d <= dim; d++) cells.push(d);
+
+    return (
+        <div className={`p-6 rounded-[2.5rem] border border-amber-500/20 ${glassClass} shadow-2xl`}>
+            <div className="flex items-center gap-4 mb-6">
+                <div className="p-3 bg-amber-500/20 rounded-2xl">
+                    <Icons.Calendar className="w-6 h-6 text-amber-400" />
+                </div>
+                <div>
+                    <h2 className="text-xl font-black uppercase italic tracking-tighter text-white">Power Geez · Geez ↔ Gregorian</h2>
+                    <p className="text-[10px] text-amber-400/80 font-black uppercase tracking-[0.25em]">Power Geez · Ethiopian calendar converter</p>
+                </div>
+            </div>
+
+            <div className="flex gap-2 mb-4">
+                <button type="button" onClick={() => setMode('g2e')}
+                    className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase ${mode === 'g2e' ? 'bg-amber-500 text-black' : 'bg-white/10 text-gray-300'}`}>
+                    Gregorian → Geez
+                </button>
+                <button type="button" onClick={() => setMode('e2g')}
+                    className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase ${mode === 'e2g' ? 'bg-amber-500 text-black' : 'bg-white/10 text-gray-300'}`}>
+                    Geez → Gregorian
+                </button>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="space-y-3 p-4 rounded-2xl bg-black/30 border border-white/10">
+                    {mode === 'g2e' ? (
+                        <>
+                            <p className="text-[10px] font-black text-cyan-400 uppercase tracking-widest">Gregorian input</p>
+                            <div className="grid grid-cols-3 gap-2">
+                                <label className="text-[9px] text-gray-400 uppercase">Year<input type="number" value={gY} onChange={e => setGY(+e.target.value)} className="w-full mt-1 bg-black/50 border border-white/15 rounded-lg px-2 py-2 text-white text-sm" /></label>
+                                <label className="text-[9px] text-gray-400 uppercase">Month<input type="number" min={1} max={12} value={gM} onChange={e => setGM(+e.target.value)} className="w-full mt-1 bg-black/50 border border-white/15 rounded-lg px-2 py-2 text-white text-sm" /></label>
+                                <label className="text-[9px] text-gray-400 uppercase">Day<input type="number" min={1} max={31} value={gD} onChange={e => setGD(+e.target.value)} className="w-full mt-1 bg-black/50 border border-white/15 rounded-lg px-2 py-2 text-white text-sm" /></label>
+                            </div>
+                            <div className="mt-3 p-3 rounded-xl bg-amber-500/10 border border-amber-500/30">
+                                <p className="text-[9px] text-amber-400/80 uppercase font-black">Ethiopian (Geez)</p>
+                                <p className="text-lg font-black text-white mt-1">
+                                    {g2e.day} {ethiopianMonthNames[Math.max(0, Math.min(12, g2e.month - 1))] || g2e.month} {g2e.year}
+                                </p>
+                                <p className="text-[10px] text-gray-400 font-mono mt-1">{g2e.year}-{String(g2e.month).padStart(2,'0')}-{String(g2e.day).padStart(2,'0')}</p>
+                            </div>
+                        </>
+                    ) : (
+                        <>
+                            <p className="text-[10px] font-black text-amber-400 uppercase tracking-widest">Ethiopian input</p>
+                            <div className="grid grid-cols-3 gap-2">
+                                <label className="text-[9px] text-gray-400 uppercase">Year<input type="number" value={eY} onChange={e => setEY(+e.target.value)} className="w-full mt-1 bg-black/50 border border-white/15 rounded-lg px-2 py-2 text-white text-sm" /></label>
+                                <label className="text-[9px] text-gray-400 uppercase">Month (1–13)<input type="number" min={1} max={13} value={eM} onChange={e => setEM(+e.target.value)} className="w-full mt-1 bg-black/50 border border-white/15 rounded-lg px-2 py-2 text-white text-sm" /></label>
+                                <label className="text-[9px] text-gray-400 uppercase">Day<input type="number" min={1} max={30} value={eD} onChange={e => setED(+e.target.value)} className="w-full mt-1 bg-black/50 border border-white/15 rounded-lg px-2 py-2 text-white text-sm" /></label>
+                            </div>
+                            <div className="mt-3 p-3 rounded-xl bg-cyan-500/10 border border-cyan-500/30">
+                                <p className="text-[9px] text-cyan-400/80 uppercase font-black">Gregorian</p>
+                                <p className="text-lg font-black text-white mt-1">
+                                    {e2g.day}/{e2g.month}/{e2g.year}
+                                </p>
+                                <p className="text-[10px] text-gray-400 font-mono mt-1">{e2g.year}-{String(e2g.month).padStart(2,'0')}-{String(e2g.day).padStart(2,'0')}</p>
+                            </div>
+                        </>
+                    )}
                 </div>
 
-                <button type="submit" className="w-full bg-cyan-600 hover:bg-cyan-500 p-4 rounded-xl font-black text-white shadow-lg mt-6 uppercase tracking-tighter transition-transform active:scale-95">
-                    Generate Staff Account
-                </button>
-            </form>
-        </ContainerCard>
+                <div className="p-4 rounded-2xl bg-black/30 border border-white/10">
+                    <div className="flex items-center justify-between mb-3">
+                        <p className="text-[10px] font-black text-white uppercase tracking-widest">Gregorian month</p>
+                        <div className="flex gap-1">
+                            <button type="button" className="px-2 py-1 rounded bg-white/10 text-xs text-white" onClick={() => {
+                                if (calMonth === 1) { setCalMonth(12); setCalYear(y => y - 1); }
+                                else setCalMonth(m => m - 1);
+                            }}>‹</button>
+                            <span className="text-xs text-cyan-300 font-bold px-2">{calMonth}/{calYear}</span>
+                            <button type="button" className="px-2 py-1 rounded bg-white/10 text-xs text-white" onClick={() => {
+                                if (calMonth === 12) { setCalMonth(1); setCalYear(y => y + 1); }
+                                else setCalMonth(m => m + 1);
+                            }}>›</button>
+                        </div>
+                    </div>
+                    <div className="grid grid-cols-7 gap-1 text-center text-[9px] text-gray-500 mb-1">
+                        {['Su','Mo','Tu','We','Th','Fr','Sa'].map(d => <div key={d}>{d}</div>)}
+                    </div>
+                    <div className="grid grid-cols-7 gap-1">
+                        {cells.map((d, i) => {
+                            if (!d) return <div key={'e'+i} />;
+                            const eth = gregorianToEthiopian(calYear, calMonth, d);
+                            const isToday = d === now.getDate() && calMonth === now.getMonth()+1 && calYear === now.getFullYear();
+                            return (
+                                <button
+                                    key={d}
+                                    type="button"
+                                    onClick={() => { setGY(calYear); setGM(calMonth); setGD(d); setMode('g2e'); }}
+                                    className={`rounded-lg p-1 border text-left min-h-[42px] ${isToday ? 'border-cyan-400 bg-cyan-500/20' : 'border-white/10 bg-white/5 hover:bg-white/10'}`}
+                                >
+                                    <div className="text-[11px] font-bold text-white">{d}</div>
+                                    <div className="text-[8px] text-amber-400/90 truncate">{eth.day} {ethiopianMonthNames[eth.month-1]?.slice(0,3)}</div>
+                                </button>
+                            );
+                        })}
+                    </div>
+                    <p className="text-[9px] text-gray-500 mt-3">Click a day to convert · Ethiopian month names shown under each Gregorian date.</p>
+                </div>
+            </div>
+        </div>
     );
-}
+};
+
+
+const UICustomization = ({ glassClass }) => {
+    const { uiSettings, updateUISettings, resetToDefault } = useContext(UIContext);
+    const [qrText, setQrText] = useState('');
+
+    // --- Asset Upload Handlers ---
+    const handleBackgroundUpload = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            updateUISettings({ backgroundImage: event.target.result });
+        };
+        reader.readAsDataURL(file);
+    };
+
+    const handleLogoUpload = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            updateUISettings({ logoURL: event.target.result });
+        };
+        reader.readAsDataURL(file);
+    };
+
+    return (
+        <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700">
+            <EthiopianCalendarPanel glassClass={glassClass} />
+
+            <UnityUniversityAI glassClass={glassClass} />
+
+            {/* 1. THE ATMOSPHERIC ENGINE (Scale & Transparency Fixes) */}
+            <div className={`p-6 rounded-[2.5rem] border border-white/10 ${glassClass} shadow-2xl`}>
+                <div className="flex items-center gap-4 mb-8">
+                    <div className="p-3 bg-cyan-500/20 rounded-2xl">
+                        <Icons.Settings2 className="w-6 h-6 text-cyan-400" />
+                    </div>
+                    <div>
+                        <h2 className="text-2xl font-black uppercase italic tracking-tighter text-white">System Architect</h2>
+                        <p className="text-[10px] text-cyan-400 font-black uppercase tracking-[0.3em] opacity-70">Atmospheric Tuning Protocol</p>
+                    </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-10">
+                    {/* SCALE: Fixes the "too close" magnification */}
+                    <div className="space-y-4">
+                        <div className="flex justify-between items-center">
+                            <span className="text-[10px] font-black uppercase text-white/40 tracking-widest flex items-center gap-2">
+                                <Icons.Maximize2 size={12}/> Viewport Scale
+                            </span>
+                            <span className="text-xs font-mono text-cyan-400">{Math.round(uiSettings.bgScale * 100)}%</span>
+                        </div>
+                        <input 
+                            type="range" min="0.7" max="1.3" step="0.01" 
+                            value={uiSettings.bgScale}
+                            onChange={(e) => updateUISettings({ bgScale: parseFloat(e.target.value) })}
+                            className="w-full h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+                        />
+                    </div>
+
+                    {/* BLUR: Fixes the transparency depth */}
+                    <div className="space-y-4">
+                        <div className="flex justify-between items-center">
+                            <span className="text-[10px] font-black uppercase text-white/40 tracking-widest flex items-center gap-2">
+                                <Icons.Layers size={12}/> Glass Blur
+                            </span>
+                            <span className="text-xs font-mono text-cyan-400">{uiSettings.bgBlur}px</span>
+                        </div>
+                        <input 
+                            type="range" min="0" max="25" 
+                            value={uiSettings.bgBlur}
+                            onChange={(e) => updateUISettings({ bgBlur: parseInt(e.target.value) })}
+                            className="w-full h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+                        />
+                    </div>
+
+                    {/* EXPOSURE: Brightness Control */}
+                    <div className="space-y-4">
+                        <div className="flex justify-between items-center">
+                            <span className="text-[10px] font-black uppercase text-white/40 tracking-widest flex items-center gap-2">
+                                <Icons.Sun size={12}/> Exposure
+                            </span>
+                            <span className="text-xs font-mono text-cyan-400">{uiSettings.bgBrightness}%</span>
+                        </div>
+                        <input 
+                            type="range" min="50" max="150" 
+                            value={uiSettings.bgBrightness}
+                            onChange={(e) => updateUISettings({ bgBrightness: parseInt(e.target.value) })}
+                            className="w-full h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+                        />
+                    </div>
+                </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* 2. ASSET SLOTS (Background & Logo) */}
+                <div className={`p-8 rounded-[2.5rem] border border-white/10 ${glassClass} space-y-6`}>
+                    <h4 className="text-[10px] font-black uppercase tracking-[0.3em] text-cyan-400">Identity Assets</h4>
+                    
+                    <div className="grid grid-cols-2 gap-6">
+                        {/* Background Slot */}
+                        <div className="relative group aspect-square rounded-3xl border-2 border-dashed border-white/10 bg-black/40 flex flex-col items-center justify-center transition-all hover:border-cyan-500/50 cursor-pointer overflow-hidden">
+                            {uiSettings.backgroundImage ? (
+                                <img src={uiSettings.backgroundImage} className="absolute inset-0 w-full h-full object-cover opacity-40 group-hover:scale-110 transition-transform duration-700" alt="BG" />
+                            ) : null}
+                            <div className="relative z-10 flex flex-col items-center text-center p-4">
+                                <Icons.Image className="text-white/20 mb-2 group-hover:text-cyan-400 transition-colors" size={32} />
+                                <span className="text-[9px] font-bold uppercase text-white/40 tracking-tighter">Environment Map</span>
+                            </div>
+                            <input type="file" accept="image/*" onChange={handleBackgroundUpload} className="absolute inset-0 opacity-0 cursor-pointer" />
+                        </div>
+
+                        {/* Logo Slot (Added per your request) */}
+                        <div className="relative group aspect-square rounded-3xl border-2 border-dashed border-white/10 bg-black/40 flex flex-col items-center justify-center transition-all hover:border-cyan-500/50 cursor-pointer overflow-hidden">
+                            {uiSettings.logoURL ? (
+                                <div className="absolute inset-0 flex items-center justify-center bg-black/20 p-6">
+                                    <img src={uiSettings.logoURL} className="max-w-full max-h-full object-contain drop-shadow-[0_0_15px_rgba(255,255,255,0.3)]" alt="Logo" />
+                                </div>
+                            ) : null}
+                            <div className="relative z-10 flex flex-col items-center text-center p-4">
+                                <Icons.ShieldCheck className="text-white/20 mb-2 group-hover:text-cyan-400 transition-colors" size={32} />
+                                <span className="text-[9px] font-bold uppercase text-white/40 tracking-tighter">Corporate Seal</span>
+                            </div>
+                            <input type="file" accept="image/*" onChange={handleLogoUpload} className="absolute inset-0 opacity-0 cursor-pointer" />
+                        </div>
+                    </div>
+
+                    <div className="flex gap-3">
+                        <button 
+                            onClick={() => updateUISettings({ backgroundImage: null, logoURL: null })}
+                            className="flex-1 py-4 rounded-2xl border border-red-500/20 text-red-500 text-[10px] font-black uppercase tracking-[0.2em] hover:bg-red-500 hover:text-white transition-all shadow-lg"
+                        >
+                            Purge All Assets
+                        </button>
+                    </div>
+                </div>
+
+                {/* 3. UTILITY MODULES (QR & Reset) */}
+                <div className={`p-8 rounded-[2.5rem] border border-white/10 ${glassClass} flex flex-col justify-between`}>
+                    <div className="space-y-6">
+                        <h4 className="text-[10px] font-black uppercase tracking-[0.3em] text-cyan-400">System Utilities</h4>
+                        
+                        <div className="group">
+                            <label className="text-[9px] font-black text-white/30 uppercase ml-1 tracking-widest">QR Transmission Key</label>
+                            <div className="flex gap-2 mt-2">
+                                <input 
+                                    className="flex-1 h-14 bg-black/40 border border-white/5 rounded-2xl px-5 text-sm text-white focus:border-cyan-500/50 outline-none transition-all placeholder:text-white/10"
+                                    placeholder="Input secure data..." autoComplete="off" spellCheck="false"
+                                    value={qrText}
+                                    onChange={(e) => setQrText(e.target.value)}
+                                />
+                                <button 
+                                    onClick={() => qrText && window.open(`https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${qrText}`, '_blank')}
+                                    className="h-14 w-14 flex items-center justify-center bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl transition-all shadow-xl shadow-indigo-500/20 active:scale-95"
+                                >
+                                    <Icons.QrCode size={24} />
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="pt-8 mt-8 border-t border-white/5">
+                        <button 
+                            onClick={resetToDefault}
+                            className="w-full py-5 bg-white/5 hover:bg-red-500/10 text-white/40 hover:text-red-500 text-[10px] font-black uppercase rounded-2xl transition-all border border-transparent hover:border-red-500/20 flex items-center justify-center gap-3"
+                        >
+                            <Icons.RefreshCw size={14} /> Full System Re-Initialization
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
 
 const StaffChangePassword = ({ glassClass }) => {
     const { changePassword, logout } = useAuth();
@@ -6374,8 +5692,7 @@ const StaffChangePassword = ({ glassClass }) => {
             </form>
         </ContainerCard>
     );
-}
-
+};
 const StaffUpdateProfile = ({ glassClass }) => {
     const { currentUser } = useAuth();
     const { getCollection, updateRecord, addRecord } = useData();
@@ -6452,44 +5769,436 @@ const StaffUpdateProfile = ({ glassClass }) => {
             </form>
         </ContainerCard>
     );
-}
+};
 
+const StaffSignup = ({ glassClass }) => {
+    const { getCollection, addRecord } = useData();
+    const [formData, setFormData] = useState({
+        username: '',
+        fullName: '',
+        password: '',
+        role: '' // Stores the ID from ROLE_CRUD
+    });
+
+    // Populate dropdown with Dynamic Roles from ROLE_CRUD
+    const dynamicRoleOptions = useMemo(() => {
+        const savedRoles = getCollection('ROLE_CRUD') || [];
+        const base = [
+            { label: 'Admin (System)', value: 'admin' },
+            { label: 'Standard Employee', value: 'employee' }
+        ];
+        
+        const custom = savedRoles.map(role => ({
+            label: role.name || role.roleName,
+            value: role.id 
+        }));
+
+        return [...base, ...custom];
+    }, [getCollection]);
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        try {
+            // Find display name for system_role
+            const roleObj = dynamicRoleOptions.find(o => o.value === formData.role);
+            
+            await addRecord('HR_EMPLOYEE_CRUD', {
+                ...formData,
+                name: formData.fullName,
+                status: 'active',
+                system_role: roleObj?.label || 'Employee',
+                createdAt: new Date().toISOString()
+            });
+            
+            alert(`Staff Registered Successfully: ${formData.username}`);
+            setFormData({ username: '', fullName: '', password: '', role: '' });
+        } catch (error) {
+            alert("Signup failed.");
+        }
+    };
+
+    return (
+        <ContainerCard Icon="UserPlus" glassClass={glassClass}>
+            <form onSubmit={handleSubmit} className="p-6 space-y-4 max-w-2xl mx-auto">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <Input label="Full Name" value={formData.fullName} onChange={(v) => setFormData({...formData, fullName: v})} isRequired />
+                    <Input label="Username" value={formData.username} onChange={(v) => setFormData({...formData, username: v})} isRequired />
+                </div>
+                <Input label="Initial Password" type="password" placeholder="Enter password" value={formData.password} onChange={(v) => setFormData({...formData, password: v})} isRequired />
+                
+                <div className="flex flex-col space-y-2">
+                    <label className="text-[10px] font-black text-cyan-400 uppercase tracking-widest">Assign Permission Role</label>
+                    <select 
+                        value={formData.role} 
+                        onChange={(e) => setFormData({...formData, role: e.target.value})} 
+                        className="w-full bg-black/60 border border-white/20 p-4 rounded-xl text-white outline-none focus:border-cyan-500 transition-all font-bold"
+                    >
+                        <option value="">-- Choose Access Level --</option>
+                        {dynamicRoleOptions.map(opt => <option key={opt.value} value={opt.value} className="bg-slate-900">{opt.label}</option>)}
+                    </select>
+                </div>
+
+                <button type="submit" className="w-full bg-cyan-600 hover:bg-cyan-500 p-4 rounded-xl font-black text-white shadow-lg mt-6 uppercase tracking-tighter transition-transform active:scale-95">
+                    Generate Staff Account
+                </button>
+            </form>
+        </ContainerCard>
+    );
+};
+// Access Denied Fallback
+const AccessDenied = ({ glassClass }) => (
+    <ContainerCard  Icon='Lock' glassClass={glassClass} className="h-full flex items-center justify-center">
+        <div className="text-center text-red-400 p-8">
+            <Icons.AlertTriangle className="w-16 h-16 mx-auto mb-4" />
+            <p className="text-2xl font-bold">You do not have permission to view this resource.</p>
+            <p className="text-lg text-gray-400 mt-2">Please contact your administrator for assistance.</p>
+        </div>
+    </ContainerCard>
+);
+
+/* ----------------------------------------------------------------------
+   10. MAIN APP & NAVIGATION (Standard)
+   ---------------------------------------------------------------------- */
+const RoleAssignmentManager = ({ glassClass }) => {
+    const { getCollection, updateRecord } = useData();
+    
+    // Use getCollection directly to ensure we get the latest database state
+    const employees = getCollection('HR_EMPLOYEE_CRUD') || [];
+    const roles = getCollection('ROLE_CRUD') || []; 
+    
+    const [selectedEmployeeId, setSelectedEmployeeId] = useState('');
+    const [selectedRoleId, setSelectedRoleId] = useState('');
+
+    const selectStyle = {
+        backgroundColor: '#000000',
+        color: '#ffffff',         
+        appearance: 'none', 
+        WebkitAppearance: 'none'
+    };
+
+    const handleAssignment = async () => {
+        if (!selectedEmployeeId || !selectedRoleId) {
+            return alert("Please select both an employee and a role.");
+        }
+
+        const employee = employees.find(e => e.id === selectedEmployeeId);
+        const role = roles.find(r => r.id === selectedRoleId);
+
+        if (!employee) {
+            alert("Selected employee not found. Please try again.");
+            return;
+        }
+        if (!role) {
+            alert("Selected role not found. Please try again.");
+            return;
+        }
+
+        try {
+            await updateRecord('HR_EMPLOYEE_CRUD', selectedEmployeeId, {
+                ...employee, 
+                role: selectedRoleId, 
+                system_role: role.roleName || role.name 
+            });
+            alert(`Role "${role.roleName || role.name}" assigned to ${employee.name}`);
+            setSelectedEmployeeId('');
+            setSelectedRoleId('');
+        } catch (error) {
+            console.error("Role assignment failed:", error);
+            alert("Role assignment failed. Please check the console for errors.");
+        }
+    };
+
+    return (
+        <div className="space-y-6 pb-40"> 
+            <ContainerCard glassClass={glassClass}>
+                <div className="p-6 space-y-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        
+                        {/* EMPLOYEE SELECT */}
+                        <div className="relative">
+                            <label className="text-cyan-400 text-[10px] font-bold mb-2 block uppercase tracking-widest">
+                                1. Select Staff Member ({employees.length} users found)
+                            </label>
+                            <select 
+                                style={selectStyle} 
+                                className="w-full bg-black border border-white/20 rounded-xl p-4 text-white focus:border-cyan-500 outline-none cursor-pointer shadow-2xl"
+                                value={selectedEmployeeId}
+                                onChange={(e) => setSelectedEmployeeId(e.target.value)}
+                            >
+                                <option value="">-- Click to view list --</option> 
+                                {employees.map(emp => (
+                                    <option key={emp.id} value={emp.id}>
+                                        {/* FIXED THE CHARACTER ENCODING BELOW */}
+                                        {emp.name} - {emp.email || 'No Email'}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+
+                        {/* ROLE SELECT */}
+                        <div className="relative">
+                            <label className="text-cyan-400 text-[10px] font-bold mb-2 block uppercase tracking-widest">
+                                2. Choose New Permissions Role
+                            </label>
+                            <select 
+                                style={selectStyle} 
+                                className="w-full bg-black border border-white/20 rounded-xl p-4 text-white focus:border-cyan-500 outline-none cursor-pointer shadow-2xl"
+                                value={selectedRoleId}
+                                onChange={(e) => setSelectedRoleId(e.target.value)}
+                            >
+                                <option value="">-- Click to view roles --</option> 
+                                {roles.map(role => (
+                                    <option key={role.id} value={role.id}>
+                                        {role.roleName || role.name}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                    </div>
+
+                    <button 
+                        onClick={handleAssignment}
+                        className="w-full bg-cyan-600 hover:bg-cyan-500 py-4 rounded-xl font-black text-white transition-all shadow-lg flex items-center justify-center gap-2 uppercase tracking-tighter"
+                    >
+                        <Icons.UserCheck className="w-5 h-5" /> Confirm Role Assignment
+                    </button>
+                </div>
+            </ContainerCard>
+
+            <ContainerCard glassClass={glassClass}>
+                <div className="p-4">
+                    <table className="w-full text-left">
+                        <thead>
+                            <tr className="text-gray-500 text-[10px] uppercase border-b border-white/10">
+                                <th className="p-3">Staff</th>
+                                <th className="p-3">Current Role</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/5">
+                            {employees.length === 0 ? (
+                                <tr><td colSpan="2" className="p-4 text-center text-gray-500">No users in database.</td></tr>
+                            ) : (
+                                employees.map(emp => (
+                                    <tr key={emp.id} className="hover:bg-white/5 transition-colors">
+                                        <td className="p-3 text-white font-medium">{emp.name}</td>
+                                        <td className="p-3">
+                                            <span className="bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 px-2 py-1 rounded text-xs">
+                                                {emp.system_role || emp.role || 'N/A'}
+                                            </span>
+                                        </td>
+                                    </tr>
+                                ))
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+            </ContainerCard>
+        </div>
+    );
+};
+// 1. STANDALONE HELPER FUNCTION (Fixes the ReferenceError)
+const findMenuItemTitle = (items, currentId) => {
+    if (!items || !Array.isArray(items)) return null;
+    for (const item of items) {
+        if (item.id === currentId) return item.label || item.title;
+        if (item.children) {
+            const childTitle = findMenuItemTitle(item.children, currentId);
+            if (childTitle) return childTitle;
+        }
+    }
+    return null;
+};
+
+// 2. MODIFIED RENDERVIEW - FIXED ACCESS DENIED & MODULE ROUTING
 const renderView = (currentView, glassClass, getCollection, checkPermission, allRoles = []) => {
-    if (typeof checkPermission === 'function' && !checkPermission(currentView, allRoles)) {
+    const collectionName = currentView;
+    
+    // --- FIX: Access Denied Bypass for System Modules ---
+    const isSystemModule = [
+        'ROLE_ASSIGNMENT_VIEW', 
+        'HR_ROLE_ASSIGNMENT_CRUD', 
+        'UI_CUSTOMIZATION', 
+        'STAFF_REGISTER', 
+        'REGISTER'
+    ].includes(currentView);
+
+    // Only run security gate if it's NOT a core system module
+    if (!isSystemModule && !checkPermission(currentView, allRoles)) {
         return <AccessDenied glassClass={glassClass} />;
     }
+
+    const title = findMenuItemTitle(MENU_ITEMS, currentView) || currentView.replace(/_/g, ' ');
+    const thStyle = "p-4 text-xs font-bold text-gray-400 uppercase tracking-wider border-b border-white/10";
+
     switch (currentView) {
         case 'HR_DASHBOARD_VIEW':
-        case 'FIN_DASHBOARD':
             return <HrDashboard glassClass={glassClass} />;
-        case 'UI_CUSTOMIZATION':
-            return <UICustomization glassClass={glassClass} />;
-        case 'HR_ROLE_ASSIGNMENT_CRUD':
-        case 'ROLE_ASSIGNMENT_VIEW':
-            return <RoleAssignmentManager glassClass={glassClass} />;
+            
         case 'ROLE_CRUD':
             return <RoleManagement glassClass={glassClass} />;
-        case 'HR_GENERIC_REPORTS':
-            return <ReportsGenerator glassClass={glassClass} />;
-        case 'STAFF_SIGNUP':
+
+        // --- FIXED: ROLE ASSIGNMENT MODULE ---
+        case 'ROLE_ASSIGNMENT_VIEW':
+        case 'HR_ROLE_ASSIGNMENT_CRUD':
+            return <RoleAssignmentManager glassClass={glassClass} />;
+
+        // --- FIXED: UI CUSTOMIZATION MODULE ---
+        case 'UI_CUSTOMIZATION':
+            return <UICustomization glassClass={glassClass} />;
+
+        // --- FIXED: REGISTER / STAFF SIGNUP MODULE ---
         case 'STAFF_REGISTER':
         case 'REGISTER':
+        case 'STAFF_SIGNUP':
             return <StaffSignup glassClass={glassClass} />;
+
+        case 'STAFF_TRANSFER':
+            const transfers = getCollection('STAFF_TRANSFERS') || [];
+            return (
+                <div className="space-y-6 animate-in fade-in duration-500">
+                    <div className="flex justify-between items-center">
+                        <h2 className="text-xl font-black text-white flex items-center gap-2">
+                            <Icons.MapPin className="text-cyan-500" /> LOCATION TRANSFERS
+                        </h2>
+                    </div>
+                    <div className={`rounded-xl border border-white/10 overflow-hidden ${glassClass}`}>
+                        <div className="uu-table-scroll overflow-x-auto">
+                            <table className="w-full text-left border-collapse table-fixed min-w-[900px]">
+                                <thead>
+                                    <tr className="bg-white/5">
+                                        <th className={`${thStyle} w-[25%]`}>Staff Member</th>
+                                        <th className={`${thStyle} w-[20%]`}>From Place</th>
+                                        <th className={`${thStyle} w-[20%]`}>To Place</th>
+                                        <th className={`${thStyle} w-[20%]`}>Date</th>
+                                        <th className={`${thStyle} w-[15%] text-right`}>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-white/5">
+                                    {transfers.map((item) => (
+                                        <tr key={item.id} className="hover:bg-white/5 transition-colors">
+                                            <td className="p-4 align-middle font-bold text-white text-sm">{item.employeeName}</td>
+                                            <td className="p-4 align-middle text-red-400 text-xs font-bold">{item.fromPlace}</td>
+                                            <td className="p-4 align-middle text-green-400 text-xs font-bold">{item.toPlace}</td>
+                                            <td className="p-4 align-middle text-gray-400 text-xs">{item.transferDate}</td>
+                                            <td className="p-4 text-right align-middle"><Icons.MoreVertical size={16} className="text-gray-500" /></td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            );
+
+        case 'HR_RESIGNATION_CRUD':
+            const resignations = getCollection('HR_RESIGNATION_CRUD') || [];
+            return (
+                <div className="space-y-6 animate-in fade-in duration-500">
+                    <h2 className="text-xl font-black text-white flex items-center gap-2">
+                        <Icons.LogOut className="text-orange-500" /> RESIGNATION RECORDS
+                    </h2>
+                    <div className={`rounded-xl border border-white/10 overflow-hidden ${glassClass}`}>
+                        <div className="uu-table-scroll overflow-x-auto">
+                            <table className="w-full text-left border-collapse table-fixed min-w-[900px]">
+                                <thead>
+                                    <tr className="bg-white/5">
+                                        <th className={`${thStyle} w-[25%]`}>Employee</th>
+                                        <th className={`${thStyle} w-[20%]`}>Notice Date</th>
+                                        <th className={`${thStyle} w-[20%]`}>Last Working Day</th>
+                                        <th className={`${thStyle} w-[20%]`}>Status</th>
+                                        <th className={`${thStyle} w-[15%] text-right`}>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-white/5">
+                                    {resignations.map((res) => (
+                                        <tr key={res.id} className="hover:bg-white/5 transition-colors">
+                                            <td className="p-4 align-middle">
+                                                <div className="font-bold text-white text-sm">{res.employee_name}</div>
+                                                <div className="text-[10px] text-gray-500 uppercase">{res.employee_id}</div>
+                                            </td>
+                                            <td className="p-4 align-middle text-xs text-gray-300">{res.notice_date}</td>
+                                            <td className="p-4 align-middle text-xs text-white font-medium">{res.last_working_day}</td>
+                                            <td className="p-4 align-middle">
+                                                <span className="px-2 py-1 rounded bg-orange-500/10 text-orange-400 text-[10px] font-bold border border-orange-500/20">
+                                                    {res.status || 'Processed'}
+                                                </span>
+                                            </td>
+                                            <td className="p-4 text-right align-middle">
+                                                <button className="p-1.5 hover:bg-white/10 text-gray-400 rounded-lg border border-white/10"><Icons.Eye size={14} /></button>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            );
+
+        case 'HR_DEATH_CRUD':
+            const deathRecords = getCollection('HR_DEATH_CRUD') || [];
+            return (
+                <div className="space-y-6 animate-in fade-in duration-500">
+                    <h2 className="text-xl font-black text-white flex items-center gap-2">
+                        <Icons.HeartOff className="text-red-500" /> DEATH RECORDS
+                    </h2>
+                    <div className={`rounded-xl border border-white/10 overflow-hidden ${glassClass}`}>
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-left border-collapse table-fixed min-w-[900px]">
+                                <thead>
+                                    <tr className="bg-white/5">
+                                        <th className={`${thStyle} w-[25%]`}>Employee</th>
+                                        <th className={`${thStyle} w-[20%]`}>Date of Death</th>
+                                        <th className={`${thStyle} w-[25%]`}>Cause / Notes</th>
+                                        <th className={`${thStyle} w-[15%]`}>Benefits</th>
+                                        <th className={`${thStyle} w-[15%] text-right`}>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-white/5">
+                                    {deathRecords.map((record) => (
+                                        <tr key={record.id} className="hover:bg-white/5 transition-colors">
+                                            <td className="p-4 align-middle">
+                                                <div className="font-bold text-white text-sm">{record.employee_name}</div>
+                                                <div className="text-[10px] text-red-400 font-bold uppercase">{record.employee_id}</div>
+                                            </td>
+                                            <td className="p-4 align-middle text-xs text-gray-300">{record.date_of_death}</td>
+                                            <td className="p-4 align-middle text-xs text-gray-400 truncate max-w-[200px]">{record.reason || record.notes || 'N/A'}</td>
+                                            <td className="p-4 align-middle"><span className="text-[10px] font-bold text-green-400 uppercase">Paid</span></td>
+                                            <td className="p-4 text-right align-middle">
+                                                <button className="p-1.5 hover:bg-white/10 text-gray-400 rounded-lg border border-white/10"><Icons.FileText size={14} /></button>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            );
+
+        case 'HR_GENERIC_REPORTS':
+            return <ReportsGenerator glassClass={glassClass} />;
+
         case 'STAFF_CHANGE_PASSWORD':
             return <StaffChangePassword glassClass={glassClass} />;
+
         case 'STAFF_UPDATE_PROFILE':
             return <StaffUpdateProfile glassClass={glassClass} />;
+
         default:
-            if (typeof COLUMN_CONFIG !== 'undefined' && COLUMN_CONFIG[currentView]) {
+            if (COLUMN_CONFIG && COLUMN_CONFIG[collectionName]) {
                 return (
                     <div className="w-full">
-                        <DataTable
-                            collectionName={currentView}
-                            columns={COLUMN_CONFIG[currentView] || []}
-                            data={typeof getCollection === 'function' ? getCollection(currentView) : []}
-                            glassClass={glassClass}
-                            getCollection={getCollection}
-                        />
+                    <DataTable 
+                        collectionName={collectionName} 
+                        columns={COLUMN_CONFIG[collectionName] || []} 
+                        data={getCollection(collectionName)}
+                        glassClass={glassClass}  
+                        getCollection={getCollection} 
+                        canAdd={checkPermission('CAN_ADD_RECORD', allRoles)}
+                        canEdit={checkPermission('CAN_EDIT_RECORD', allRoles)}
+                        canDelete={checkPermission('CAN_DELETE_RECORD', allRoles)}
+                    />
                     </div>
                 );
             }
@@ -6497,6 +6206,30 @@ const renderView = (currentView, glassClass, getCollection, checkPermission, all
     }
 };
 
+// Navigation Component
+// Navigation Component
+const NavItem = ({ item, currentView, setCurrentView, checkPermission }) => {
+    const IconComponent = getIcon(item.icon);
+    const isSelected = currentView === item.id;
+    const isAuthorized = checkPermission(item.id);
+
+    if (!isAuthorized) return null;
+
+    return (
+        <li className="mb-1">
+            <button
+                onClick={() => setCurrentView(item.id)}
+                className={`flex items-center w-full p-2 rounded-lg transition duration-200 text-sm font-medium ${isSelected
+                    ? 'bg-cyan-600 text-white shadow-lg'
+                    : 'text-gray-300 hover:bg-cyan-900/50'
+                    }`}
+            >
+                <IconComponent className="w-5 h-5 mr-3" />
+                {item.label}
+            </button>
+        </li>
+    );
+};
 
 const Navigation = ({ menuItems, currentView, setCurrentView, expandedFolders, setExpandedFolders, checkPermission, glassClass, logoURL }) => {
     const toggleFolder = (id) => {
@@ -6583,133 +6316,6 @@ const Navigation = ({ menuItems, currentView, setCurrentView, expandedFolders, s
 
  
 
-;
-
-const AuthScreen = ({ glassClass }) => {
-    const { login } = useAuth();
-    const { getCollection } = useData();
-    // ADDED: Get the logo from UI Context
-    const { uiSettings } = useUI(); 
-    
-    const [username, setUsername] = useState('');
-    const [password, setPassword] = useState('');
-    const [error, setError] = useState('');
-    const [isSubmitting, setIsSubmitting] = useState(false);
-
-    const handleSignIn = async (e) => {
-        e.preventDefault();
-        setError('');
-        setIsSubmitting(true);
-        try {
-            const allEmployees = getCollection('HR_EMPLOYEE_CRUD') || [];
-            const result = await login(username, password, allEmployees);
-            if (!result.success) {
-                setError(result.message || 'Invalid username or password.');
-            }
-        } catch (err) {
-            setError('An unexpected error occurred.');
-            console.error("Login Error:", err);
-        } finally {
-            setIsSubmitting(false);
-        }
-    };
-
-    return (
-        <div className="h-full w-full min-h-0 flex items-center justify-center p-4 bg-slate-950 overflow-y-auto">
-            <div className={`max-w-md w-full p-8 rounded-3xl shadow-2xl border border-white/10 ${glassClass} transform transition-all`}>
-                
-                <div className="flex flex-col items-center mb-8">
-                    {/* FIXED: Conditional Logo Logic */}
-                    <div className="mb-4">
-                        {uiSettings?.logoURL ? (
-                            // Show your UPLOADED logo if it exists
-                            <img 
-                                src={uiSettings.logoURL} 
-                                alt="University Logo" 
-                                className="w-20 h-20 object-contain drop-shadow-lg"
-                            />
-                        ) : (
-                            // Fallback to the icon if no logo is set in UICustomization
-                            <div className="p-4 bg-cyan-500/20 rounded-2xl shadow-inner">
-                                <Icons.Monitor className="w-12 h-12 text-cyan-400" />
-                            </div>
-                        )}
-                    </div>
-                    
-                    <h1 className="text-3xl font-black text-white tracking-tighter italic uppercase text-center">
-                        HRM UNITY UNIVERSITY
-                    </h1>
-                    <p className="text-gray-400 mt-2 text-sm font-medium">Human Resources Terminal</p>
-                </div>
-
-                <form onSubmit={handleSignIn} className="space-y-5">
-                    {error && (
-                        <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/50 text-red-400 text-xs flex items-center animate-shake">
-                            <Icons.AlertCircle className="w-4 h-4 mr-2 flex-shrink-0" />
-                            {error}
-                        </div>
-                    )}
-
-                    <div className="space-y-1">
-                        <Input 
-                            label="Username"
-                            value={username}
-                            onChange={(val) => setUsername(val)}
-                            placeholder="Enter your username"
-                            isRequired
-                        />
-                    </div>
-
-                    <div className="space-y-1">
-                        <Input 
-                            label="Password"
-                            type="password"
-                            placeholder="Password"
-                            autoComplete="current-password"
-                            value={password}
-                            onChange={(val) => setPassword(val)}
-                            isRequired
-                        />
-                    </div>
-
-                    <button 
-                        type="submit"
-                        disabled={isSubmitting}
-                        className={`w-full py-4 rounded-2xl font-bold text-white transition-all flex items-center justify-center text-lg
-                            ${isSubmitting 
-                                ? 'bg-gray-700 cursor-not-allowed' 
-                                : 'bg-cyan-600 hover:bg-cyan-500 active:scale-[0.97] shadow-xl shadow-cyan-900/40'
-                            }`}
-                    >
-                        {isSubmitting ? (
-                            <Icons.Loader2 className="w-6 h-6 animate-spin" />
-                        ) : (
-                            <>
-                                <Icons.LogIn className="w-5 h-5 mr-2" />
-                                Sign In
-                            </>
-                        )}
-                    </button>
-                
-                    
-
-                
-                    <LoginModuleSwitcher current="hr" />
-                </form>
-
-                <div className="mt-8 pt-6 border-t border-white/5 text-center">
-                    
-                    
-
-                    <p className="text-[10px] text-gray-500 uppercase tracking-[0.2em] font-bold opacity-60">
-                        Secure Access Terminal
-                    </p>
-                </div>
-            </div>
-        </div>
-    );
-}
-
 const HrmAppContent = () => {
     const { isLoggedIn, currentView, setCurrentView, currentUser, checkPermission, logout } = useAuth();
     const { glassOpacityClass, rootStyle, uiSettings } = useUI();
@@ -6718,7 +6324,6 @@ const HrmAppContent = () => {
     // FETCH LIVE ROLES: This is the heartbeat of the April 21 logic
     const allRoles = getCollection('ROLE_CRUD') || [];
     const [showNotifications, setShowNotifications] = useState(false);
-    const [notifCount, setNotifCount] = useState(0);
     const [mobileNavOpen, setMobileNavOpen] = useState(false);
     const isMobile = useIsMobile(768); 
     const [expandedFolders, setExpandedFolders] = useState(['HR', 'SETTINGS']); 
@@ -6764,7 +6369,6 @@ const HrmAppContent = () => {
 
     return (
         <div className="h-full w-full flex flex-col overflow-hidden relative uu-module-root" style={{ ...(rootStyle || {}), position: "relative", inset: "auto", zIndex: "auto", pointerEvents: "auto" }}>
-            <FieldIntelligenceRuntime />
             <MobileStyles />
             <header className={`uu-app-header h-14 shrink-0 flex items-center justify-between px-3 sm:px-6 border-b border-white/10 z-20 ${glassClass}`}>
                 <div className="flex items-center gap-2 sm:gap-4 min-w-0">
@@ -6780,20 +6384,15 @@ const HrmAppContent = () => {
                         <p className="text-[8px] sm:text-[9px] text-cyan-500 uppercase font-black truncate">{currentUser?.role}</p>
                     </div>
                     <button type="button" onClick={logout} className="p-2 bg-red-500/10 text-red-500 rounded-lg hover:bg-red-500/20 text-[10px] sm:text-xs font-bold transition-all">LOGOUT</button>
-                    <button type="button" onClick={() => setShowNotifications(!showNotifications)} className={`relative p-2 rounded-full transition-all ${showNotifications ? 'bg-cyan-500 text-white' : 'text-gray-400 hover:text-cyan-300'}`} aria-label="Notifications">
+                    <button type="button" onClick={() => setShowNotifications(!showNotifications)} className={`p-2 rounded-full transition-all ${showNotifications ? 'bg-cyan-500 text-white' : 'text-gray-400'}`}>
                         <Icons.Bell className="w-5 h-5" />
-                        {notifCount > 0 && (
-                            <span className="absolute -top-0.5 -right-0.5 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-500 text-white text-[9px] font-black flex items-center justify-center ring-2 ring-slate-950">
-                                {notifCount > 99 ? '99+' : notifCount}
-                            </span>
-                        )}
                     </button>
                 </div>
             </header>
 
             <div className="flex flex-grow overflow-hidden min-h-0 relative">
                 {mobileNavOpen && <div className="uu-sidebar-backdrop md:hidden" onClick={() => setMobileNavOpen(false)} />}
-                <aside className={`uu-sidebar-desktop hidden md:block w-[20%] min-w-[260px] max-w-[280px] border-r border-white/10 ${glassClass}`}>
+                <aside className={`uu-sidebar-desktop hidden md:block w-[20%] min-w-[200px] max-w-[280px] border-r border-white/10 ${glassClass}`}>
                     <Navigation
                         menuItems={MENU_ITEMS}
                         currentView={currentView}
@@ -6838,8 +6437,7 @@ const HrmAppContent = () => {
                     <aside className={`w-[25%] border-l border-white/10 animate-in slide-in-from-right ${glassClass}`}>
                         <NotificationBar 
                             glassClass={glassClass} 
-                            currentUser={currentUser}
-                            onCountChange={setNotifCount} 
+                            currentUser={currentUser} 
                             onClose={() => setShowNotifications(false)} 
                         />
                     </aside>
