@@ -326,7 +326,7 @@ const PERMISSIONS_MAP = {
     'MAT_PURCHASE_LOCAL_CRUD': ['admin', 'procurement_officer'],
     'MAT_PURCHASE_FOREIGN_CRUD': ['admin', 'procurement_officer'],
     'UI_CUSTOMIZATION': ['admin', 'store_manager', 'hr_manager'],
-    'MAT_GENERIC_REPORTS': ['admin', 'store_manager'],
+    'MAT_GENERIC_REPORTS': ['admin', 'store_manager', 'inventory_clerk', 'procurement_officer', 'hr_manager'],
     'ROLE_CRUD': ['admin'],
     'HR_ROLE_ASSIGNMENT_CRUD': ['admin', 'hr_manager'],
     'STAFF_SIGNUP': ['admin', 'hr_manager'],
@@ -2244,49 +2244,75 @@ const Input = ({ label, type, value, onChange, placeholder, isRequired = false, 
 
 
 // Component for Generic Reports (Only available to Admins/Managers/Staff)
+const ContainerCard = ({ children, className = '', title, subtitle, actions }) => (
+    <div className={`rounded-[1.75rem] border border-white/10 bg-black/40 backdrop-blur-md shadow-xl ${className}`}>
+        {(title || actions) && (
+            <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 border-b border-white/10">
+                <div>
+                    {title ? <h3 className="text-sm font-black uppercase tracking-widest text-white">{title}</h3> : null}
+                    {subtitle ? <p className="text-[10px] text-gray-500 mt-0.5">{subtitle}</p> : null}
+                </div>
+                {actions ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : null}
+            </div>
+        )}
+        <div className="p-5">{children}</div>
+    </div>
+);
+
 const ReportsGenerator = ({ glassClass }) => {
-    const { allData, getCollection } = useData(); 
+    const { allData, getCollection } = useData();
     const { currentUser, checkPermission } = useAuth();
 
-    // New constants for Report Type
     const REPORT_TYPES = [
         { label: 'All Time', value: 'all' },
         { label: 'Daily', value: 'daily' },
         { label: 'Weekly', value: 'weekly' },
         { label: 'Monthly', value: 'monthly' },
         { label: 'Quarterly', value: 'quarterly' },
-        { label: 'Annually', value: 'annually' }
+        { label: 'Annually', value: 'annually' },
+    ];
+
+    const REPORT_PRESETS = [
+        { id: '', label: 'Custom selection' },
+        { id: 'MAT_ITEM', label: 'Material · Inventory Master', collection: 'MAT_ITEM_CRUD' },
+        { id: 'MAT_GRV', label: 'Material · GRV', collection: 'MAT_GRV_CRUD' },
+        { id: 'MAT_GIV', label: 'Material · GIV', collection: 'MAT_GIV_CRUD' },
+        { id: 'MAT_ROB', label: 'Material · Robbing', collection: 'MAT_ROBBING_CRUD' },
+        { id: 'MAT_LPO', label: 'Material · Local Purchase', collection: 'MAT_PURCHASE_LOCAL_CRUD' },
+        { id: 'MAT_FPO', label: 'Material · Foreign Purchase', collection: 'MAT_PURCHASE_FOREIGN_CRUD' },
     ];
 
     const getCollectionLabel = useCallback((name) => {
-        if (!name) return '';
-        if (typeof name !== 'string') return ''; 
+        if (!name || typeof name !== 'string') return '';
         return name.replace(/_/g, ' ').replace('CRUD', '(Data)').trim();
     }, []);
 
-    const collectionNames = useMemo(() => Object.keys(allData).sort(), [allData]);
-    const initialSelectedCollectionName = collectionNames.length > 0 ? collectionNames[0] : '';
-    
-    const [selectedCollection, setSelectedCollection] = useState(initialSelectedCollectionName);
+    const collectionNames = useMemo(() => Object.keys(allData || {}).sort(), [allData]);
+    const initialSelected = collectionNames.length > 0 ? collectionNames[0] : '';
+
+    const [selectedCollection, setSelectedCollection] = useState(initialSelected);
+    useEffect(() => {
+        if (!selectedCollection && collectionNames.length) {
+            setSelectedCollection(collectionNames[0]);
+        }
+    }, [collectionNames, selectedCollection]);
     const [sortKey, setSortKey] = useState('');
     const [groupByKey, setGroupByKey] = useState('');
-    const [reportType, setReportType] = useState('all'); // New State for Type
+    const [reportType, setReportType] = useState('all');
+    const [dateFrom, setDateFrom] = useState('');
+    const [dateTo, setDateTo] = useState('');
+    const [preset, setPreset] = useState('');
+    const [statusFilter, setStatusFilter] = useState('All');
+    const [searchTerm, setSearchTerm] = useState('');
 
-    const columns = useMemo(() => COLUMN_CONFIG[selectedCollection] || [], [selectedCollection]);
+    const columns = useMemo(() => (typeof COLUMN_CONFIG !== 'undefined' ? (COLUMN_CONFIG[selectedCollection] || []) : []), [selectedCollection]);
 
-    const filterableColumns = useMemo(() =>
-        columns.filter(col => !col.isHidden && col.type !== 'array'),
+    const filterableColumns = useMemo(
+        () => (columns || []).filter((col) => !col.isHidden && col.type !== 'array'),
         [columns]
     );
 
-    const [columnFilters, setColumnFilters] = useState(() => {
-        return filterableColumns.reduce((acc, col) => {
-            acc[col.key] = '';  
-            return acc;
-        }, {});
-    });
-
-    const currentData = useMemo(() => getCollection(selectedCollection) || [], [getCollection, selectedCollection]);
+    const [columnFilters, setColumnFilters] = useState({});
 
     useEffect(() => {
         if (selectedCollection) {
@@ -2298,24 +2324,24 @@ const ReportsGenerator = ({ glassClass }) => {
             );
             setSortKey('');
             setGroupByKey('');
-            setReportType('all'); // Reset type on collection change
+            setReportType('all');
         }
     }, [selectedCollection, filterableColumns]);
 
+    const currentData = useMemo(() => getCollection(selectedCollection) || [], [getCollection, selectedCollection]);
+
     const getColumnFilterOptions = useCallback((data, columnKey) => {
         const values = new Set(['All']);
-        data.forEach(item => {
+        (data || []).forEach((item) => {
             const value = item[columnKey];
-            if (value !== null && value !== undefined) {
-                values.add(String(value));
-            }
+            if (value !== null && value !== undefined) values.add(String(value));
         });
-        return Array.from(values).map(v => ({ label: v, value: v }));
+        return Array.from(values).map((v) => ({ label: v, value: v }));
     }, []);
 
-    const columnOptions = React.useMemo(() => {
+    const columnOptions = useMemo(() => {
         const options = {};
-        filterableColumns.forEach(col => {
+        filterableColumns.forEach((col) => {
             options[col.key] = getColumnFilterOptions(currentData, col.key);
         });
         return options;
@@ -2324,55 +2350,111 @@ const ReportsGenerator = ({ glassClass }) => {
     const filteredAndSortedData = useMemo(() => {
         let data = [...currentData];
 
-        data = data.filter(item => {
-            return filterableColumns.every(col => {
+        data = data.filter((item) =>
+            (filterableColumns || []).every((col) => {
                 const filterValue = columnFilters[col.key] || '';
-                if (filterValue === 'All' || !filterValue) {
-                    return true;
+                if (filterValue === 'All' || !filterValue) return true;
+                return String(item[col.key] || '').toLowerCase() === filterValue.toLowerCase();
+            })
+        );
+
+        if (statusFilter && statusFilter !== 'All') {
+            const sf = statusFilter.toLowerCase();
+            data = data.filter((item) => String(item.status || item.Status || '').toLowerCase() === sf);
+        }
+
+        const dateKeys = [
+            'date', 'posting_date', 'createdAt', 'created_at', 'payroll_process_date',
+            'process_date', 'leave_start', 'start_date', 'transaction_date', 'grv_date', 'period',
+        ];
+
+        if (dateFrom || dateTo) {
+            const fromTs = dateFrom ? new Date(dateFrom).setHours(0, 0, 0, 0) : null;
+            const toTs = dateTo ? new Date(dateTo).setHours(23, 59, 59, 999) : null;
+            data = data.filter((item) => {
+                let raw = null;
+                for (const k of dateKeys) {
+                    if (item[k] != null && String(item[k]).trim() !== '') {
+                        raw = item[k];
+                        break;
+                    }
                 }
-                const itemValue = String(item[col.key] || '').toLowerCase();
-                const filterValueLower = filterValue.toLowerCase();
-                return itemValue === filterValueLower;
+                if (!raw) return true;
+                const ts = new Date(raw).getTime();
+                if (isNaN(ts)) return true;
+                if (fromTs != null && ts < fromTs) return false;
+                if (toTs != null && ts > toTs) return false;
+                return true;
             });
-        });
+        }
+
+        if (reportType && reportType !== 'all') {
+            const now = new Date();
+            data = data.filter((item) => {
+                let raw = null;
+                for (const k of dateKeys) {
+                    if (item[k] != null && String(item[k]).trim() !== '') {
+                        raw = item[k];
+                        break;
+                    }
+                }
+                if (!raw) return true;
+                const d = new Date(raw);
+                if (isNaN(d.getTime())) return true;
+                if (reportType === 'daily') return d.toDateString() === now.toDateString();
+                if (reportType === 'weekly') {
+                    const weekAgo = new Date(now);
+                    weekAgo.setDate(now.getDate() - 7);
+                    return d >= weekAgo && d <= now;
+                }
+                if (reportType === 'monthly') return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+                if (reportType === 'quarterly') {
+                    const q = Math.floor(now.getMonth() / 3);
+                    return Math.floor(d.getMonth() / 3) === q && d.getFullYear() === now.getFullYear();
+                }
+                if (reportType === 'annually') return d.getFullYear() === now.getFullYear();
+                return true;
+            });
+        }
+
+        if (searchTerm && searchTerm.trim()) {
+            const q = searchTerm.trim().toLowerCase();
+            data = data.filter((item) =>
+                Object.values(item || {}).some((v) => String(v ?? '').toLowerCase().includes(q))
+            );
+        }
 
         if (sortKey) {
             data.sort((a, b) => {
                 const aVal = a[sortKey];
                 const bVal = b[sortKey];
-                if ((typeof aVal === 'number' || (!isNaN(parseFloat(aVal)) && isFinite(aVal))) && (typeof bVal === 'number' || (!isNaN(parseFloat(bVal)) && isFinite(bVal)))) {
-                    return parseFloat(aVal) - parseFloat(bVal);
-                }
-                const stringA = String(aVal || '').toLowerCase();
-                const stringB = String(bVal || '').toLowerCase();
-                if (stringA < stringB) return -1;
-                if (stringA > stringB) return 1;
-                return 0;
+                const na = parseFloat(aVal);
+                const nb = parseFloat(bVal);
+                if (!isNaN(na) && !isNaN(nb) && isFinite(na) && isFinite(nb)) return na - nb;
+                return String(aVal || '').toLowerCase().localeCompare(String(bVal || '').toLowerCase());
             });
         }
 
         return data;
-    }, [currentData, columnFilters, sortKey, filterableColumns]);
+    }, [currentData, columnFilters, sortKey, filterableColumns, searchTerm, dateFrom, dateTo, reportType, statusFilter]);
 
     const groupedData = useMemo(() => {
-        if (!groupByKey) {
-            return { 'All Records': filteredAndSortedData };
-        }
+        if (!groupByKey) return { 'All Records': filteredAndSortedData };
         return filteredAndSortedData.reduce((acc, item) => {
             const key = String(item[groupByKey] || 'N/A');
-            acc[key] = acc[key] || [];
+            if (!acc[key]) acc[key] = [];
             acc[key].push(item);
             return acc;
         }, {});
     }, [filteredAndSortedData, groupByKey]);
 
-    const displayColumns = useMemo(() => columns.filter(col => !col.isHidden && col.type !== 'array').slice(0, 8), [columns]);
+    const displayColumns = useMemo(
+        () => (columns || []).filter((col) => !col.isHidden && col.type !== 'array').slice(0, 8),
+        [columns]
+    );
 
     const handleFilterChange = (columnKey, value) => {
-        setColumnFilters(prevFilters => ({
-            ...prevFilters,
-            [columnKey]: value,
-        }));
+        setColumnFilters((prev) => ({ ...prev, [columnKey]: value }));
     };
 
     useEffect(() => {
@@ -2381,254 +2463,406 @@ const ReportsGenerator = ({ glassClass }) => {
         }
     }, [collectionNames, selectedCollection]);
 
+    const exportCSV = () => {
+        const rows = filteredAndSortedData;
+        if (!rows || !rows.length) return;
+        const cols = displayColumns.length
+            ? displayColumns
+            : Object.keys(rows[0] || {}).map((k) => ({ key: k, label: k }));
+        const headers = cols.map((c) => c.label || c.key);
+        const body = rows.map((r) =>
+            cols
+                .map((c) => {
+                    const v = r[c.key];
+                    const s = v == null ? '' : String(v).replace(/"/g, '""');
+                    return `"${s}"`;
+                })
+                .join(',')
+        );
+        const csv = [headers.join(','), ...body].join('\n');
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${selectedCollection || 'report'}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+    };
+
+    const partners = (typeof getCollection === 'function' ? (getCollection('FIN_PARTNERS_CRUD') || getCollection('HR_PARTNERS_CRUD') || []) : []);
+
     return (
-        <ContainerCard  Icon='FileText' glassClass={glassClass} className="h-full min-h-0 flex flex-col max-w-full min-w-0 overflow-x-hidden overflow-y-auto">
+        <ContainerCard Icon="FileText" glassClass={glassClass} className="h-full max-w-full min-w-0 overflow-x-hidden overflow-y-auto">
             <div className="space-y-3 mb-4 p-3 sm:p-4 border border-white/10 rounded-xl max-w-full min-w-0 overflow-hidden bg-black/20">
                 <h3 className="text-base font-semibold text-cyan-400 flex items-center shrink-0">
-                    <Icons.Building className="w-5 h-5 mr-2 shrink-0" />
-                    Report Configuration
+                    <Icons.FileBarChart className="w-5 h-5 mr-2 shrink-0" />
+                    Institutional Report Studio
                 </h3>
+                <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">
+                    Presets · date range · column filters · group · export
+                </p>
+
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-2">
+                    <div className="rounded-xl border border-cyan-500/20 bg-cyan-950/20 p-3">
+                        <p className="text-[9px] text-cyan-400/80 uppercase font-black">Rows</p>
+                        <p className="text-lg font-black text-white">{filteredAndSortedData.length}</p>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-black/30 p-3">
+                        <p className="text-[9px] text-gray-500 uppercase font-black">Source</p>
+                        <p className="text-xs font-bold text-white truncate">{getCollectionLabel(selectedCollection) || '—'}</p>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-black/30 p-3">
+                        <p className="text-[9px] text-gray-500 uppercase font-black">Period</p>
+                        <p className="text-xs font-bold text-white">{reportType}</p>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-black/30 p-3">
+                        <p className="text-[9px] text-gray-500 uppercase font-black">Groups</p>
+                        <p className="text-lg font-black text-white">{Object.keys(groupedData || {}).length}</p>
+                    </div>
+                </div>
 
                 <div className="w-full max-w-full min-w-0 overflow-x-auto overflow-y-visible">
-                    {/* Field selects stay inside frame; grid never spills past card */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 items-end min-w-0 w-full">
-                            {/* Data Collection Select */}
-                            <div className="min-w-0 max-w-full w-full overflow-hidden">
+                        <div className="min-w-0 max-w-full w-full overflow-hidden">
+                            <Input
+                                label="Report preset"
+                                type="select"
+                                options={REPORT_PRESETS.map((p) => ({ label: p.label, value: p.id }))}
+                                value={preset}
+                                onChange={(val) => {
+                                    setPreset(val);
+                                    const hit = REPORT_PRESETS.find((p) => p.id === val);
+                                    if (hit && hit.collection && collectionNames.includes(hit.collection)) {
+                                        setSelectedCollection(hit.collection);
+                                    }
+                                }}
+                            />
+                        </div>
+
+                        <div className="min-w-0 max-w-full w-full overflow-hidden">
+                            <Input
+                                label="Data Collection"
+                                type="select"
+                                options={collectionNames.map((name) => ({ label: getCollectionLabel(name), value: name }))}
+                                value={selectedCollection}
+                                onChange={(val) => setSelectedCollection(val)}
+                                isRequired
+                            />
+                        </div>
+
+                        <div className="min-w-0 max-w-full w-full overflow-hidden">
+                            <label className="text-[10px] font-black uppercase text-gray-500 tracking-widest">Date from</label>
+                            <input
+                                type="date"
+                                value={dateFrom}
+                                onChange={(e) => setDateFrom(e.target.value)}
+                                className="w-full mt-1 bg-black/50 border border-white/15 rounded-xl px-3 py-2.5 text-white text-sm outline-none focus:ring-1 focus:ring-cyan-500/40"
+                            />
+                        </div>
+
+                        <div className="min-w-0 max-w-full w-full overflow-hidden">
+                            <label className="text-[10px] font-black uppercase text-gray-500 tracking-widest">Date to</label>
+                            <input
+                                type="date"
+                                value={dateTo}
+                                onChange={(e) => setDateTo(e.target.value)}
+                                className="w-full mt-1 bg-black/50 border border-white/15 rounded-xl px-3 py-2.5 text-white text-sm outline-none focus:ring-1 focus:ring-cyan-500/40"
+                            />
+                        </div>
+
+                        <div className="min-w-0 max-w-full w-full overflow-hidden">
+                            <Input
+                                label="Status"
+                                type="select"
+                                options={[
+                                    { label: 'All', value: 'All' },
+                                    { label: 'Draft', value: 'Draft' },
+                                    { label: 'Posted', value: 'Posted' },
+                                    { label: 'Approved', value: 'Approved' },
+                                    { label: 'Pending', value: 'Pending' },
+                                    { label: 'Active', value: 'Active' },
+                                ]}
+                                value={statusFilter}
+                                onChange={(val) => setStatusFilter(val)}
+                            />
+                        </div>
+
+                        <div className="min-w-0 max-w-full w-full overflow-hidden">
+                            <Input
+                                label="Filter by Partner/Entity"
+                                type="select"
+                                options={[
+                                    { label: 'All Entities', value: 'All' },
+                                    ...partners.map((p) => ({
+                                        label: p.partner_name || p.name || p.id,
+                                        value: p.partner_name || p.name || p.id,
+                                    })),
+                                ]}
+                                value={columnFilters.partner_name || ''}
+                                onChange={(val) => handleFilterChange('partner_name', val)}
+                            />
+                        </div>
+
+                        {(filterableColumns || []).map((col) => (
+                            <div key={col.key} className="min-w-0 max-w-full w-full overflow-hidden">
                                 <Input
-                                    label="Data Collection"
+                                    label={`Filter: ${col.label}`}
                                     type="select"
-                                    options={collectionNames.map(name => ({ label: getCollectionLabel(name), value: name }))}
-                                    value={selectedCollection}
-                                    onChange={(val) => setSelectedCollection(val)}
-                                    isRequired
+                                    options={columnOptions[col.key] || [{ label: 'All', value: 'All' }]}
+                                    value={columnFilters[col.key] || ''}
+                                    onChange={(val) => handleFilterChange(col.key, val)}
                                 />
                             </div>
+                        ))}
 
-                            {/* Dynamic Filter Selects */}
-                            {selectedCollection && filterableColumns.map(col => (
-                                <div key={col.key} className="min-w-0 max-w-full w-full overflow-hidden">
-                                    <Input
-                                        label={`Filter: ${col.label}`}
-                                        type="select"
-                                        options={columnOptions[col.key] || [{ label: 'All', value: 'All' }]}
-                                        value={columnFilters[col.key] || ''}
-                                        onChange={(val) => handleFilterChange(col.key, val)}
-                                    />
-                                </div>
-                            ))}
+                        <div className="min-w-0 max-w-full w-full overflow-hidden">
+                            <Input
+                                label="Report Type"
+                                type="select"
+                                options={REPORT_TYPES}
+                                value={reportType}
+                                onChange={(val) => setReportType(val)}
+                            />
+                        </div>
 
-                            {/* Report Type Select (DAILY, WEEKLY, etc) */}
-                            <div className="min-w-0 max-w-full w-full overflow-hidden">
-                                <Input
-                                    label="Report Type"
-                                    type="select"
-                                    options={REPORT_TYPES}
-                                    value={reportType}
-                                    onChange={(val) => setReportType(val)}
-                                />
-                            </div>
+                        <div className="min-w-0 max-w-full w-full overflow-hidden">
+                            <Input
+                                label="Sort By"
+                                type="select"
+                                options={[
+                                    { label: 'None', value: '' },
+                                    ...(filterableColumns || []).map((c) => ({ label: c.label, value: c.key })),
+                                ]}
+                                value={sortKey}
+                                onChange={(val) => setSortKey(val)}
+                            />
+                        </div>
 
-                            {/* Sort By Select */}
-                            <div className="min-w-0 max-w-full w-full overflow-hidden">
-                                <Input
-                                    label="Sort By"
-                                    type="select"
-                                    options={[{ label: 'None', value: '' }, ...filterableColumns.map(c => ({ label: c.label, value: c.key }))]}
-                                    value={sortKey}
-                                    onChange={(val) => setSortKey(val)}
-                                />
-                            </div>
-
-                            {/* Group By Select */}
-                            <div className="min-w-0 max-w-full w-full overflow-hidden">
-                                <Input
-                                    label="Group By"
-                                    type="select"
-                                    options={[{ label: 'None', value: '' }, ...filterableColumns.map(c => ({ label: c.label, value: c.key }))]}
-                                    value={groupByKey}
-                                    onChange={(val) => setGroupByKey(val)}
-                                />
-                            </div>
+                        <div className="min-w-0 max-w-full w-full overflow-hidden">
+                            <Input
+                                label="Group By"
+                                type="select"
+                                options={[
+                                    { label: 'None', value: '' },
+                                    ...(filterableColumns || []).map((c) => ({ label: c.label, value: c.key })),
+                                ]}
+                                value={groupByKey}
+                                onChange={(val) => setGroupByKey(val)}
+                            />
+                        </div>
                     </div>
+                </div>
 
-                    {/* Export Button Integration */}
-                    <div className="w-full pt-2 flex flex-wrap justify-end gap-2">
+                <div className="w-full pt-2 flex flex-wrap justify-end gap-2">
+                    {typeof ExportButton === 'function' ? (
                         <ExportButton
                             data={filteredAndSortedData}
                             columns={columns}
-                            filename={`${getCollectionLabel(selectedCollection)}-${reportType}-Report`}
+                            filename={selectedCollection || 'report'}
+                            isFinancial
                         />
-                    </div>
+                    ) : (
+                        <button
+                            type="button"
+                            onClick={exportCSV}
+                            className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700 transition font-semibold"
+                        >
+                            Export CSV
+                        </button>
+                    )}
                 </div>
             </div>
 
-            {/* Results Table — single scrollport so header + rows stay aligned */}
-            {selectedCollection && (
-                <div className="mt-4 flex flex-col min-h-0 flex-1 border border-white/10 rounded-xl overflow-hidden bg-black/30">
-                    <div className="shrink-0 px-4 py-3 border-b border-white/10 bg-slate-950/90">
-                        <h3 className="text-lg sm:text-xl font-bold text-white">
-                            Report Results: {getCollectionLabel(selectedCollection)}{' '}
-                            <span className="text-cyan-400">({filteredAndSortedData.length} Records)</span>
-                        </h3>
-                    </div>
+            <div className="mb-4 flex flex-wrap gap-2 items-center">
+                <input
+                    type="text"
+                    placeholder="Search records..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="border border-cyan-500/30 bg-black/50 text-white placeholder:text-gray-500 p-2 rounded-lg text-sm w-full md:w-64 outline-none focus:ring-2 focus:ring-cyan-500/40"
+                />
+                <button
+                    type="button"
+                    onClick={exportCSV}
+                    className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700 transition font-semibold"
+                >
+                    Export to CSV
+                </button>
+            </div>
 
-                    {filteredAndSortedData.length === 0 ? (
-                        <p className="text-center py-12 text-gray-500 text-sm">No records match the current criteria.</p>
-                    ) : (
-                        <div className="flex-1 min-h-[280px] max-h-[min(70vh,720px)] w-full overflow-auto custom-scrollbar">
-                            {Object.entries(groupedData).map(([groupKey, data]) => (
-                                <div key={groupKey} className="min-w-0">
-                                    <div className="sticky top-0 z-20 px-4 py-2 text-[11px] font-black uppercase tracking-widest text-cyan-300 bg-slate-900 border-b border-cyan-500/20">
-                                        {groupByKey
-                                            ? `${filterableColumns.find(col => col.key === groupByKey)?.label || groupByKey}: ${groupKey} (${data.length})`
-                                            : `All Records (${data.length})`}
-                                    </div>
-                                    <table className="w-max min-w-full border-collapse text-left border border-white/15">
-                                        <thead className="sticky top-9 z-10">
-                                            <tr className="bg-slate-900/95">
-                                                {displayColumns.map((col, i) => (
-                                                    <th
-                                                        key={col.key || i}
-                                                        className="px-3 py-2.5 text-[9px] font-black uppercase tracking-widest text-cyan-300/90 border-b border-white/10 border-r border-white/5 whitespace-nowrap bg-slate-900/95"
-                                                        style={{ width: 'auto', minWidth: col.type === 'number' ? 100 : 130, maxWidth: 260 }}
+            {Object.entries(groupedData).map(([groupName, rows]) => (
+                <div key={groupName} className="mb-6">
+                    {groupByKey ? (
+                        <h4 className="text-sm font-black text-cyan-400 uppercase tracking-widest mb-2 px-1">
+                            {groupName} · {rows.length}
+                        </h4>
+                    ) : null}
+                    <div className="uu-table-scroll w-full max-w-full min-w-0 overflow-x-auto overflow-y-auto max-h-[min(55vh,520px)] rounded-xl border border-white/10 bg-black/40">
+                        <table className="w-max min-w-full border-collapse table-auto">
+                            <thead className="bg-slate-950/95 sticky top-0 z-10">
+                                <tr className="border-b border-white/10">
+                                    {(displayColumns || []).map((col, i) => (
+                                        <th
+                                            key={i}
+                                            className="px-3 py-2.5 text-left text-[10px] font-black uppercase tracking-wider text-cyan-300/90 whitespace-nowrap border-r border-white/5 last:border-r-0"
+                                        >
+                                            {col.label}
+                                        </th>
+                                    ))}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {(rows || []).map((row, ri) => (
+                                    <tr key={row.id || ri} className="border-b border-white/5 hover:bg-white/5">
+                                        {(displayColumns || []).map((col, j) => {
+                                            const raw = row[col.key];
+                                            let cell;
+                                            if (Array.isArray(raw)) {
+                                                cell = (raw || []).slice(0, 2).map((entry, idx) => (
+                                                    <span
+                                                        key={idx}
+                                                        className="bg-gray-700 text-gray-200 rounded-full px-2 py-1 text-xs mr-1 inline-block"
                                                     >
-                                                        <span className="inline-flex items-center gap-1">
-                                                          {col.label}
-                                                          <IntelTip label={col.label} fieldKey={col.key || col.label} collection={typeof collectionName !== 'undefined' ? collectionName : undefined} />
-                                                        </span>
-                                                    </th>
-                                                ))}
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {data.map((record) => (
-                                                <tr key={record.id} className="border-b border-white/5 hover:bg-cyan-500/10 transition-colors">
-                                                    {displayColumns.map((col, j) => (
-                                                        <td
-                                                            key={col.key || j}
-                                                            className="px-3 py-2.5 text-[11px] text-gray-200 border-r border-white/5"
-                                                            style={{ minWidth: col.type === 'number' ? 100 : 130, maxWidth: 260 }}
-                                                        >
-                                                            <div className="truncate" title={String(record[col.key] ?? '')}>
-                                                                {Array.isArray(record[col.key])
-                                                                    ? record[col.key].slice(0, 2).map((entry, idx) => (
-                                                                        <span key={idx} className="bg-gray-700/50 text-gray-300 rounded-full px-2 py-0.5 text-[10px] mr-1 inline-block">
-                                                                            {typeof entry === 'object' ? Object.values(entry).join(' / ') : String(entry)}
-                                                                        </span>
-                                                                    ))
-                                                                    : (record[col.key] !== undefined && record[col.key] !== null && record[col.key] !== ''
-                                                                        ? String(record[col.key])
-                                                                        : <span className="text-white/20 italic">—</span>)}
-                                                            </div>
-                                                        </td>
-                                                    ))}
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            ))}
-                        </div>
-                    )}
+                                                        {typeof entry === 'object' ? Object.values(entry).join(' / ') : String(entry)}
+                                                    </span>
+                                                ));
+                                            } else if (raw === null || raw === undefined || raw === '') {
+                                                cell = <span className="text-gray-500">—</span>;
+                                            } else if (
+                                                col.type === 'number' ||
+                                                typeof raw === 'number' ||
+                                                (typeof raw === 'string' &&
+                                                    raw !== '' &&
+                                                    !isNaN(Number(raw)) &&
+                                                    /salary|pay|gross|net|amount|tax|pension|basic|ot|allowance/i.test(col.key || ''))
+                                            ) {
+                                                const n = Number(raw);
+                                                cell = Number.isFinite(n)
+                                                    ? n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                                                    : String(raw);
+                                            } else {
+                                                cell = String(raw);
+                                            }
+                                            return (
+                                                <td key={j} className="px-4 py-3.5 whitespace-nowrap text-sm text-white font-medium">
+                                                    {cell}
+                                                </td>
+                                            );
+                                        })}
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
-            )}
+            ))}
+
+            {filteredAndSortedData.length === 0 ? (
+                <p className="text-center py-8 text-gray-500">No records match the current criteria.</p>
+            ) : null}
         </ContainerCard>
     );
 };
 
 
-/* --- FULLY MODIFIED MULTIENTRYFIELD COMPONENT --- */
+/* --- HARDENED MULTIENTRYFIELD (add-modal sub-forms) --- */
 const MultiEntryField = ({ label, entries, fieldConfig, onChange, glassClass }) => {
+    const safeConfig = Array.isArray(fieldConfig) ? fieldConfig.filter(Boolean) : [];
     const safeEntries = Array.isArray(entries) ? entries : [];
-    const [newEntry, setNewEntry] = React.useState(
-        fieldConfig?.reduce((acc, field) => ({ ...acc, [field.key]: '' }), {}) || {}
-    );
+    const emptyRow = () => safeConfig.reduce((acc, f) => {
+        if (f && f.key) acc[f.key] = '';
+        return acc;
+    }, {});
+
+    const [newEntry, setNewEntry] = React.useState(() => emptyRow());
+
+    React.useEffect(() => {
+        setNewEntry(emptyRow());
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [label]);
 
     const handleAdd = () => {
-        // Validation: ensures all fields except readOnly ones are filled
-        const isComplete = fieldConfig.every(field => field.isReadOnly || newEntry[field.key]?.toString().trim());
-        
+        if (!safeConfig.length) {
+            alert('No fields configured for this sub-form.');
+            return;
+        }
+        const isComplete = safeConfig.every((f) => f.isReadOnly || String(newEntry[f.key] ?? '').trim());
         if (isComplete) {
-            onChange([...safeEntries, newEntry]);
-            setNewEntry(fieldConfig.reduce((acc, field) => ({ ...acc, [field.key]: '' }), {})); 
+            onChange([...(safeEntries || []), { ...newEntry }]);
+            setNewEntry(emptyRow());
         } else {
-            alert(`Please complete the entry form below.`);
+            alert('Please complete the entry form below.');
         }
     };
 
     return (
-        <div className={`p-8 rounded-[2rem] space-y-6 border border-white/10 ${glassClass} mb-8 bg-black/40 shadow-2xl scroll-mt-20`}>
+        <div className={`p-6 sm:p-8 rounded-[2rem] space-y-6 border border-white/10 ${glassClass || ''} mb-8 bg-black/40 shadow-2xl scroll-mt-20`}>
             <label className="block text-[14px] font-black text-cyan-400 border-b border-cyan-500/30 pb-4 uppercase italic tracking-widest">
-                {label}
+                {label || 'Entries'}
             </label>
-
-            {/* List Table */}
             <div className="space-y-3 max-h-80 overflow-y-auto pr-2 custom-scrollbar">
                 {safeEntries.length > 0 ? (
                     safeEntries.map((entry, index) => (
                         <div key={index} className="flex justify-between items-start p-5 rounded-2xl bg-white/5 border border-white/10 hover:bg-cyan-900/20 transition-all">
                             <div className="grid grid-cols-2 lg:grid-cols-4 gap-6 w-full text-[11px]">
-                                {fieldConfig.map(f => (
+                                {safeConfig.map((f) => (
                                     <div key={f.key} className="flex flex-col">
                                         <span className="text-cyan-500 font-black uppercase text-[9px] mb-1">{f.label}:</span>
                                         <span className="text-white font-medium break-words">
-                                            {f.key === 'digital_stamp' ? (
-                                                <code className="bg-cyan-500/10 px-1 rounded text-[8px] tracking-tighter">{entry[f.key]}</code>
-                                            ) : entry[f.key]}
+                                            {entry?.[f.key] ?? '—'}
                                         </span>
                                     </div>
                                 ))}
                             </div>
-                            <button type="button" onClick={() => onChange(safeEntries.filter((_, i) => i !== index))} className="ml-4 text-red-500 hover:text-red-400 p-2 transition-transform active:scale-90">
+                            <button
+                                type="button"
+                                onClick={() => onChange(safeEntries.filter((_, i) => i !== index))}
+                                className="ml-4 text-red-500 hover:text-red-400 p-2"
+                            >
                                 <Icons.Trash2 size={20} />
                             </button>
                         </div>
                     ))
                 ) : (
-                    <p className="text-[10px] text-white/20 italic p-6 text-center border-2 border-dashed border-white/5 rounded-2xl uppercase tracking-widest font-black">Awaiting entry input...</p>
+                    <p className="text-[10px] text-white/20 italic p-6 text-center border-2 border-dashed border-white/5 rounded-2xl uppercase tracking-widest font-black">
+                        Awaiting entry input...
+                    </p>
                 )}
             </div>
-
-            {/* SPACIOUS Input Form */}
-            <div className="pt-10 border-t border-white/10 space-y-8">
+            <div className="pt-8 border-t border-white/10 space-y-6">
                 <p className="text-[10px] font-black text-cyan-400/50 uppercase tracking-[0.3em]">Data Entry Interface:</p>
-                <div className="grid grid-cols-1 gap-y-8 bg-black/60 p-8 rounded-[2rem] border border-white/5 shadow-inner shadow-black">
-                    {fieldConfig.map(field => {
-                        const isSelect = field.type === 'select' || (field.options && field.options.length > 0);
-                        
+                <div className="grid grid-cols-1 gap-y-6 bg-black/60 p-6 sm:p-8 rounded-[2rem] border border-white/5">
+                    {safeConfig.map((f) => {
+                        if (!f || !f.key) return null;
+                        const opts = Array.isArray(f.options) ? f.options : [];
+                        const isSelect = f.type === 'select' || opts.length > 0;
                         return (
-                            <div key={field.key} className="flex flex-col space-y-3">
-                                <label className="text-[11px] font-black text-gray-400 uppercase ml-2 tracking-widest">
-                                    {field.label}
+                            <div key={f.key} className="flex flex-col space-y-2">
+                                <label className="text-[11px] font-black text-gray-400 uppercase ml-1 tracking-widest">
+                                    {f.label || f.key}
                                 </label>
                                 {isSelect ? (
                                     <select
-                                        value={newEntry[field.key] || ''}
-                                        onChange={(e) => setNewEntry(prev => ({ ...prev, [field.key]: e.target.value }))}
-                                        className="w-full p-5 rounded-2xl bg-black border border-white/10 text-white text-sm focus:border-cyan-500 outline-none appearance-none"
+                                        value={newEntry[f.key] || ''}
+                                        onChange={(e) => setNewEntry((prev) => ({ ...prev, [f.key]: e.target.value }))}
+                                        className="w-full p-4 rounded-2xl bg-black border border-white/10 text-white text-sm focus:border-cyan-500 outline-none"
                                     >
-                                        <option value="">Select {field.label}...</option>
-                                        {field.options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                                        <option value="">Select {f.label || f.key}...</option>
+                                        {opts.map((opt) => {
+                                            const val = typeof opt === 'object' ? (opt.value ?? opt.label ?? '') : opt;
+                                            const lab = typeof opt === 'object' ? (opt.label ?? opt.value ?? '') : opt;
+                                            return <option key={String(val)} value={String(val)}>{String(lab)}</option>;
+                                        })}
                                     </select>
                                 ) : (
                                     <input
-                                        type={field.type || 'text'}
-                                        autoComplete="off" 
-                                        readOnly={field.isReadOnly}
-                                        value={newEntry[field.key] || ''}
-                                        onChange={(e) => {
-                                            const val = e.target.value;
-                                            setNewEntry(prev => {
-                                                const updated = { ...prev, [field.key]: val };
-                                                // AUTO-STAMP Generation Logic
-                                                if (field.key === 'member_name' && val.length > 1) {
-                                                    updated.digital_stamp = `AUTH-${val.toUpperCase().substring(0,3)}-${Date.now().toString().slice(-4)}`;
-                                                }
-                                                return updated;
-                                            });
-                                        }}
-                                        className={`w-full p-5 rounded-2xl bg-black border border-white/10 text-white text-sm focus:border-cyan-500 transition-all ${field.isReadOnly ? 'opacity-40 cursor-not-allowed border-dashed' : ''}`}
-                                        placeholder={field.isReadOnly ? 'Securely generated' : `Provide ${field.label}...`}
+                                        type={f.type || 'text'}
+                                        autoComplete="off"
+                                        readOnly={!!f.isReadOnly}
+                                        value={newEntry[f.key] || ''}
+                                        onChange={(e) => setNewEntry((prev) => ({ ...prev, [f.key]: e.target.value }))}
+                                        className={`w-full p-4 rounded-2xl bg-black border border-white/10 text-white text-sm focus:border-cyan-500 ${f.isReadOnly ? 'opacity-40 cursor-not-allowed' : ''}`}
+                                        placeholder={f.isReadOnly ? 'Generated' : `Provide ${f.label || f.key}...`}
                                     />
                                 )}
                             </div>
@@ -2638,30 +2872,15 @@ const MultiEntryField = ({ label, entries, fieldConfig, onChange, glassClass }) 
                 <button
                     type="button"
                     onClick={handleAdd}
-                    className="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-black py-6 rounded-3xl text-[12px] uppercase tracking-widest transition-all shadow-2xl shadow-cyan-900/60 active:scale-95"
+                    className="w-full py-4 rounded-2xl bg-cyan-600/90 hover:bg-cyan-500 text-white text-xs font-black uppercase tracking-widest"
                 >
-                    + Append New Record To List
+                    + Add Entry
                 </button>
             </div>
         </div>
     );
 };
 
-// New Component: ContainerCard
-const ContainerCard = ({ title, Icon, children, glassClass, className = '' }) => {
-    const CardIcon = Icon ? getIcon(Icon) : Icons.File;
-    return (
-        <div className={`p-5 rounded-xl ${glassClass} shadow-xl backdrop-blur-sm ${className}`}>
-            <h2 className="flex items-center text-xl font-bold text-cyan-400 mb-4 border-b border-cyan-400/50 pb-2">
-                <CardIcon className="w-6 h-6 mr-2" />
-                {title}
-            </h2>
-            <div className="text-white">
-                {children}
-            </div>
-        </div>
-    );
-};
 /** Viewport-fixed glass modal — always centered on screen, not next to table rows */
 /** Viewport-fixed glass modal — portaled to document.body so it is never stuck mid-table */
 /** Content-sized glass modal — page stays visible behind; does not stretch full viewport */
@@ -3588,9 +3807,27 @@ const COLUMN_CONFIG = {
    8. NOTIFICATION & UTILITY BAR (Standard)
    ---------------------------------------------------------------------- */
 
-const NotificationBar = ({ glassClass, currentUser, onClose }) => {
-    const { getCollection, notificationTrigger } = useData();
-    const [activeTab, setActiveTab] = useState('notifications');
+/** Relative time for notification rows (e.g. "1 min ago"). */
+const formatRelativeTime = (isoOrDate) => {
+    if (!isoOrDate) return '';
+    const then = new Date(isoOrDate);
+    if (isNaN(then.getTime())) return String(isoOrDate).slice(0, 16);
+    const sec = Math.round((Date.now() - then.getTime()) / 1000);
+    if (sec < 10) return 'just now';
+    if (sec < 60) return sec + ' sec ago';
+    const min = Math.floor(sec / 60);
+    if (min < 60) return min + (min === 1 ? ' min ago' : ' mins ago');
+    const hr = Math.floor(min / 60);
+    if (hr < 24) return hr + (hr === 1 ? ' hour ago' : ' hours ago');
+    const day = Math.floor(hr / 24);
+    if (day < 30) return day + (day === 1 ? ' day ago' : ' days ago');
+    return then.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+};
+
+const NotificationBar = ({ glassClass, currentUser, onClose, onCountChange }) => {
+    const { getCollection, notificationTrigger, leaveUpdateTrigger, roleUpdateTrigger, allData } = useData();
+    const [activeTab, setActiveTab] = useState('all');
+    const [filter, setFilter] = useState('all'); // all | alert | warning | info
 
     const today = useMemo(() => {
         const d = new Date();
@@ -3598,996 +3835,330 @@ const NotificationBar = ({ glassClass, currentUser, onClose }) => {
         return d;
     }, []);
 
-    /** Next 3 holidays from today, only within the current calendar year */
-    const upcomingHolidays = useMemo(() => {
-        const year = today.getFullYear();
-        const yearEnd = new Date(year, 11, 31);
-        yearEnd.setHours(0, 0, 0, 0);
-
-        // Fixed + major Ethiopian / public holidays (month is 0-based in Date)
-        const catalog = [
-            { name: 'Ethiopian Christmas (Genna)', m: 1, d: 7 },
-            { name: 'Timkat (Epiphany)', m: 1, d: 19 },
-            { name: 'Adwa Victory Day', m: 3, d: 2 },
-            { name: 'International Labour Day', m: 5, d: 1 },
-            { name: 'Patriots Victory Day', m: 5, d: 5 },
-            { name: 'Downfall of Derg', m: 5, d: 28 },
-            { name: 'Ethiopian New Year (Enkutatash)', m: 9, d: 11 },
-            { name: 'Meskel (Finding of the True Cross)', m: 9, d: 27 },
-            { name: 'Christmas (Gregorian)', m: 12, d: 25 },
-        ];
-
-        const list = catalog
-            .map(h => {
-                const date = new Date(year, h.m - 1, h.d);
-                date.setHours(0, 0, 0, 0);
-                return { name: h.name, date, iso: date.toISOString().slice(0, 10) };
-            })
-            .filter(h => h.date >= today && h.date <= yearEnd)
-            .sort((a, b) => a.date - b.date)
-            .slice(0, 3);
-
-        return list;
-    }, [today]);
-
-    const items = getCollection('MAT_ITEM_CRUD') || [];
-    const grv = getCollection('MAT_GRV_CRUD') || [];
-    const giv = getCollection('MAT_GIV_CRUD') || [];
-    const robbing = getCollection('MAT_ROBBING_CRUD') || [];
-    const localPO = getCollection('MAT_PURCHASE_LOCAL_CRUD') || [];
-    const foreignPO = getCollection('MAT_PURCHASE_FOREIGN_CRUD') || [];
-
-    const n = (v) => Number(v) || 0;
-    const withinDays = (dateStr, days) => {
-        if (!dateStr) return false;
-        const d = new Date(dateStr);
-        if (isNaN(d.getTime())) return false;
-        d.setHours(0, 0, 0, 0);
-        const diff = (d.getTime() - today.getTime()) / (1000 * 60 * 60 * 24);
-        return diff >= 0 && diff <= days;
-    };
-    const isPast = (dateStr) => {
-        if (!dateStr) return false;
-        const d = new Date(dateStr);
-        if (isNaN(d.getTime())) return false;
-        d.setHours(0, 0, 0, 0);
-        return d.getTime() < today.getTime();
+    const daysUntil = (dateStr) => {
+        if (!dateStr) return null;
+        const t = new Date(String(dateStr).slice(0, 10));
+        if (isNaN(t.getTime())) return null;
+        t.setHours(0, 0, 0, 0);
+        return Math.round((t - today) / 86400000);
     };
 
     const notifications = useMemo(() => {
         const list = [];
-
-        // —— UPCOMING HOLIDAYS (next 3 in current year only) ——
-        list.push({ type: 'Title', message: `UPCOMING HOLIDAYS · ${today.getFullYear()}` });
-        if (upcomingHolidays.length === 0) {
+        const push = (sev, cat, message, meta = {}) => {
             list.push({
-                type: 'Info',
-                message: `No remaining holidays in ${today.getFullYear()} after today.`,
-                color: 'bg-gray-800/30',
+                id: `${cat}-${list.length}-${String(message).slice(0, 24)}`,
+                severity: sev, // alert | warning | info | success
+                category: cat,
+                message,
+                time: meta.time || new Date().toISOString(),
+                ...meta
             });
-        } else {
-            upcomingHolidays.forEach(h => {
-                const label = h.date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
-                const days = Math.round((h.date.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-                list.push({
-                    type: 'Info',
-                    message: `📅 ${h.name} — ${label}${days === 0 ? ' · Today' : days === 1 ? ' · Tomorrow' : ` · in ${days} days`}`,
-                    color: 'bg-emerald-900/30',
-                });
-            });
-        }
+        };
 
-        // —— STOCK ALERTS ——
-        list.push({ type: 'Title', message: 'STOCK ALERTS' });
-        const oos = items.filter(i => n(i.quantity) <= 0);
-        const low = items.filter(i => {
-            const q = n(i.quantity);
-            const rl = n(i.reorder_level) || 15;
-            return q > 0 && q <= rl;
-        });
-        const reserved = items.filter(i => /reserved|robbing/i.test(String(i.status || '')));
-        const obsolete = items.filter(i => /obsolete|quarantine/i.test(String(i.status || '')));
+        // ——— Collections ———
+        const txs = getCollection('transactions') || [];
+        const journals = getCollection('dayJournals') || [];
+        const coa = getCollection('chartsOfAccounts') || getCollection('FIN_COA_CRUD') || [];
+        const partners = getCollection('FIN_PARTNERS_CRUD') || [];
+        const process = getCollection('PAY_PROCESS_CRUD') || [];
+        const master = getCollection('PAY_MASTER_CRUD') || [];
+        const ot = getCollection('PAY_OVERTIME_CRUD') || [];
+        const ad = getCollection('PAY_AD_CRUD') || [];
+        const recon = getCollection('PAY_RECON_CRUD') || [];
+        const employees = getCollection('HR_EMPLOYEE_CRUD') || [];
+        const leave = getCollection('HR_LEAVE_CRUD') || [];
+        const vacancies = getCollection('HR_VACANCY_CRUD') || [];
+        const recruitment = getCollection('HR_RECRUITMENT_CRUD') || [];
+        const attrition = getCollection('HR_STAFF_ATTRITION_CRUD') || [];
+        const retirement = getCollection('RETIREMENT_CRUD') || [];
+        const resignation = getCollection('RESIGNATION_CRUD') || [];
+        const training = getCollection('HR_TRAINING_CRUD') || [];
+        const appraisal = getCollection('HR_APPRAISAL_CRUD') || [];
+        const insurance = getCollection('HR_INSURANCE_CRUD') || [];
+        const penalties = getCollection('HR_PENALTY_CRUD') || [];
+        const awards = getCollection('HR_AWARD_CRUD') || getCollection('HR_AWARD_CRUD_HR') || [];
+        const depts = getCollection('DEPARTMENTS_CRUD') || [];
+        const hiring = getCollection('DEPARTMENTS_HIRING_REQUESTS_CRUD') || [];
+        const roles = getCollection('ROLE_CRUD') || [];
 
-        if (oos.length) {
-            oos.slice(0, 8).forEach(i => {
-                list.push({
-                    type: 'Warning',
-                    message: `Out of stock: ${i.sku || i.name || 'Item'} · ${i.location || '—'}`,
-                    color: 'bg-rose-900/40',
-                });
-            });
-            if (oos.length > 8) list.push({ type: 'Info', message: `+${oos.length - 8} more out-of-stock SKUs`, color: 'bg-rose-900/20' });
-        } else {
-            list.push({ type: 'Info', message: 'No out-of-stock items.', color: 'bg-gray-800/30' });
-        }
-        if (low.length) {
-            low.slice(0, 6).forEach(i => {
-                list.push({
-                    type: 'Warning',
-                    message: `Low stock (≤ reorder): ${i.name || i.sku} · qty ${n(i.quantity)} · ${i.location || ''}`,
-                    color: 'bg-amber-900/40',
-                });
-            });
-        }
-        if (reserved.length) {
-            list.push({
-                type: 'Info',
-                message: `${reserved.length} item(s) reserved / held for robbing`,
-                color: 'bg-orange-900/30',
-            });
-        }
-        if (obsolete.length) {
-            list.push({
-                type: 'Info',
-                message: `${obsolete.length} item(s) marked obsolete or quarantine`,
-                color: 'bg-slate-800/40',
-            });
-        }
-
-        // —— GOODS RECEIVING ——
-        list.push({ type: 'Title', message: 'GOODS RECEIVING (GRV)' });
-        const grvPending = grv.filter(g => /pending|partial|inspect/i.test(String(g.status || '')));
-        const grvRejected = grv.filter(g => /reject|return/i.test(String(g.status || '')));
-        if (grvPending.length) {
-            grvPending.slice(0, 6).forEach(g => {
-                list.push({
-                    type: 'Warning',
-                    message: `GRV ${g.grv_no || g.id}: ${g.item_name || 'item'} · ${g.status} · ${g.supplier || ''}`,
-                    color: 'bg-violet-900/35',
-                });
-            });
-        } else {
-            list.push({ type: 'Info', message: 'No GRVs pending inspection.', color: 'bg-gray-800/30' });
-        }
-        if (grvRejected.length) {
-            list.push({
-                type: 'Warning',
-                message: `${grvRejected.length} GRV line(s) rejected / returned to vendor`,
-                color: 'bg-rose-900/30',
-            });
-        }
-
-        // —— GOODS ISSUING ——
-        list.push({ type: 'Title', message: 'GOODS ISSUING (GIV)' });
-        const givPending = giv.filter(g => /pending|partial/i.test(String(g.status || '')));
-        if (givPending.length) {
-            givPending.slice(0, 6).forEach(g => {
-                list.push({
-                    type: 'Warning',
-                    message: `GIV ${g.giv_no || g.id}: ${g.item_name || 'item'} → ${g.department || 'dept'} · ${g.status}`,
-                    color: 'bg-sky-900/35',
-                });
-            });
-        } else {
-            list.push({ type: 'Info', message: 'No GIVs awaiting approval.', color: 'bg-gray-800/30' });
-        }
-
-        // —— PROCUREMENT ——
-        list.push({ type: 'Title', message: 'PROCUREMENT' });
-        const openLocal = localPO.filter(p => /order|transit|pending|partial|draft/i.test(String(p.status || '')));
-        const openForeign = foreignPO.filter(p => /order|transit|pending|partial|draft/i.test(String(p.status || '')));
-        const overdueLocal = localPO.filter(p => p.expected_date && isPast(p.expected_date) && !/received|closed|cancel/i.test(String(p.status || '')));
-        const arrivingSoon = foreignPO.filter(p => withinDays(p.arrival_date, 14) && !/received|closed|cancel/i.test(String(p.status || '')));
-
-        openLocal.slice(0, 5).forEach(p => {
-            list.push({
-                type: 'Info',
-                message: `LPO ${p.lpo_no || p.id}: ${p.item_name || ''} · ${p.status} · ETB ${n(p.total_value).toLocaleString()}`,
-                color: 'bg-emerald-900/30',
-            });
-        });
-        if (!openLocal.length) list.push({ type: 'Info', message: 'No open local POs.', color: 'bg-gray-800/30' });
-        if (overdueLocal.length) {
-            list.push({
-                type: 'Warning',
-                message: `${overdueLocal.length} local PO(s) past expected delivery`,
-                color: 'bg-rose-900/35',
-            });
-        }
-        openForeign.slice(0, 5).forEach(p => {
-            list.push({
-                type: 'Info',
-                message: `Import ${p.import_ref || p.id}: ${p.item_name || ''} · ${p.status} · ${p.country || ''}`,
-                color: 'bg-indigo-900/30',
-            });
-        });
-        arrivingSoon.forEach(p => {
-            list.push({
-                type: 'Warning',
-                message: `Arrival due: ${p.import_ref || p.item_name} on ${p.arrival_date}`,
-                color: 'bg-cyan-900/35',
-            });
-        });
-
-        // —— PARTS ROBBING ——
-        list.push({ type: 'Title', message: 'PARTS ROBBING (CANNIBALIZATION)' });
-        const robOpen = robbing.filter(r => /plan|progress|fitted|awaiting/i.test(String(r.status || r.recipient_status_after || '')));
-        const robDone = robbing.filter(r => /restored|decommission|scrap/i.test(String(r.status || '')));
-        if (robOpen.length) {
-            robOpen.slice(0, 6).forEach(r => {
-                list.push({
-                    type: 'Warning',
-                    message: `Robbing ${r.robbing_no || r.id}: ${r.part_taken || 'part'} · ${r.donor_item || '?'} → ${r.recipient_item || '?'} · ${r.status || ''}`,
-                    color: 'bg-amber-900/35',
-                });
-            });
-        } else {
-            list.push({ type: 'Info', message: 'No open robbing vouchers.', color: 'bg-gray-800/30' });
-        }
-        if (robDone.length) {
-            list.push({
-                type: 'Info',
-                message: `${robDone.length} completed / closed robbing voucher(s) on file`,
-                color: 'bg-gray-800/30',
-            });
-        }
-
-        // —— FINANCE POSTING ——
-        list.push({ type: 'Title', message: 'FINANCE POSTING' });
-        const unposted = [
-            ...grv.filter(r => !r.posted_to_finance),
-            ...giv.filter(r => !r.posted_to_finance),
-            ...localPO.filter(r => !r.posted_to_finance),
-            ...foreignPO.filter(r => !r.posted_to_finance),
-            ...robbing.filter(r => !r.posted_to_finance),
-        ];
-        if (unposted.length) {
-            list.push({
-                type: 'Warning',
-                message: `${unposted.length} document(s) not yet posted to Finance (GRV/GIV/PO/Robbing)`,
-                color: 'bg-emerald-900/40',
-            });
-        } else {
-            list.push({ type: 'Info', message: 'All material docs flagged posted (or empty).', color: 'bg-gray-800/30' });
-        }
-
-        // —— VALUE SNAPSHOT ——
-        list.push({ type: 'Title', message: 'INVENTORY SNAPSHOT' });
-        const totalVal = items.reduce((s, i) => s + (n(i.total_value) || n(i.quantity) * n(i.unit_cost)), 0);
-        list.push({
-            type: 'Info',
-            message: `SKUs ${items.length} · Stock value ~ ETB ${totalVal.toLocaleString(undefined, { maximumFractionDigits: 0 })}`,
-            color: 'bg-cyan-900/25',
-        });
-        list.push({
-            type: 'Info',
-            message: `GRV ${grv.length} · GIV ${giv.length} · LPO ${localPO.length} · Import ${foreignPO.length} · Robbing ${robbing.length}`,
-            color: 'bg-cyan-900/20',
-        });
-
-        return list;
-    }, [items, grv, giv, robbing, localPO, foreignPO, today, upcomingHolidays, notificationTrigger]);
-
-    const activityLog = useMemo(() => {
-        const stamp = (r, label) => ({
-            id: r.id,
-            label,
-            title: r.grv_no || r.giv_no || r.lpo_no || r.import_ref || r.robbing_no || r.sku || r.name || r.id,
-            sub: r.item_name || r.part_taken || r.supplier || r.department || r.status || '',
-            date: r.date || r.last_updated || r.arrival_date || r.expected_date || '',
-            posted: !!r.posted_to_finance,
-        });
-        const pool = [
-            ...grv.map(r => stamp(r, 'GRV')),
-            ...giv.map(r => stamp(r, 'GIV')),
-            ...localPO.map(r => stamp(r, 'LPO')),
-            ...foreignPO.map(r => stamp(r, 'IMP')),
-            ...robbing.map(r => stamp(r, 'ROB')),
-            ...items.slice(0, 10).map(r => stamp(r, 'SKU')),
-        ];
-        return pool
-            .sort((a, b) => String(b.date).localeCompare(String(a.date)))
-            .slice(0, 20);
-    }, [grv, giv, localPO, foreignPO, robbing, items]);
-
-    const badgeCount = useMemo(() => {
-        return notifications.filter(x => x.type === 'Warning').length;
-    }, [notifications]);
-
-    return (
-        <div className={`w-full max-w-md ${glassClass} border border-white/10 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]`}>
-            <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 bg-slate-950/80">
-                <div>
-                    <h3 className="text-sm font-black uppercase tracking-widest text-white">Material Alerts</h3>
-                    <p className="text-[10px] text-cyan-400/80 font-bold uppercase tracking-wider mt-0.5">
-                        {badgeCount} attention · Unity Stores
-                    </p>
-                </div>
-                <button type="button" onClick={onClose} className="text-gray-400 hover:text-white p-1">
-                    <Icons.X className="w-5 h-5" />
-                </button>
-            </div>
-
-            <div className="flex border-b border-white/10">
-                <button
-                    type="button"
-                    onClick={() => setActiveTab('notifications')}
-                    className={`flex-1 p-2.5 text-[10px] font-black uppercase tracking-widest transition-all ${
-                        activeTab === 'notifications' ? 'bg-cyan-600 text-white border-b-2 border-white' : 'bg-gray-800/40 text-gray-400'
-                    }`}
-                >
-                    Notifications {badgeCount > 0 && <span className="ml-1 text-amber-300">({badgeCount})</span>}
-                </button>
-                <button
-                    type="button"
-                    onClick={() => setActiveTab('activity')}
-                    className={`flex-1 p-2.5 text-[10px] font-black uppercase tracking-widest transition-all ${
-                        activeTab === 'activity' ? 'bg-cyan-600 text-white border-b-2 border-white' : 'bg-gray-800/40 text-gray-400'
-                    }`}
-                >
-                    Activity
-                </button>
-            </div>
-
-            <div className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-2 min-h-0">
-                {activeTab === 'notifications' ? (
-                    notifications.map((item, index) => (
-                        item.type === 'Title' ? (
-                            <div key={index} className="pt-2 pb-1 text-[10px] font-black uppercase tracking-[0.2em] text-cyan-400/90 border-b border-white/5">
-                                {item.message}
-                            </div>
-                        ) : (
-                            <div key={index} className={`rounded-xl px-3 py-2 text-[11px] text-gray-200 border border-white/5 ${item.color || 'bg-black/30'}`}>
-                                {item.message}
-                            </div>
-                        )
-                    ))
-                ) : (
-                    activityLog.length ? activityLog.map((row, i) => (
-                        <div key={row.id || i} className="rounded-xl px-3 py-2 border border-white/5 bg-black/30 flex gap-2 items-start">
-                            <span className="text-[9px] font-black uppercase text-cyan-400 shrink-0 w-8 pt-0.5">{row.label}</span>
-                            <div className="min-w-0 flex-1">
-                                <p className="text-[11px] font-semibold text-white truncate">{row.title}</p>
-                                <p className="text-[10px] text-gray-500 truncate">{row.sub}</p>
-                                <p className="text-[9px] text-gray-600 mt-0.5">{row.date || '—'}{row.posted ? ' · Posted to Finance' : ''}</p>
-                            </div>
-                        </div>
-                    )) : (
-                        <p className="text-center text-gray-500 text-xs py-8">No recent material activity.</p>
-                    )
-                )}
-            </div>
-        </div>
-    );
-};
-
-/* ----------------------------------------------------------------------
-   9. VIEW COMPONENTS (Standard)
-   ---------------------------------------------------------------------- */
-
-
-const AuthScreen = ({ glassClass }) => {
-    const { login } = useAuth();
-    const { getCollection } = useData();
-    // ADDED: Get the logo from UI Context
-    const { uiSettings } = useUI(); 
-    
-    const [username, setUsername] = useState('');
-    const [password, setPassword] = useState('');
-    const [error, setError] = useState('');
-    const [isSubmitting, setIsSubmitting] = useState(false);
-
-    const handleSignIn = async (e) => {
-        e.preventDefault();
-        setError('');
-        setIsSubmitting(true);
+        // ——— FINANCE / BOOKS ———
+        let tb = [];
         try {
-            const allEmployees = getCollection('HR_EMPLOYEE_CRUD') || [];
-            const result = await login(username, password, allEmployees);
-            if (!result.success) {
-                setError(result.message || 'Invalid username or password.');
+            if (typeof calculateTrialBalance === 'function') {
+                tb = calculateTrialBalance(txs, coa) || [];
             }
-        } catch (err) {
-            setError('An unexpected error occurred.');
-            console.error("Login Error:", err);
-        } finally {
-            setIsSubmitting(false);
+        } catch (e) { /* ignore */ }
+        const totalD = tb.reduce((s, r) => s + Number(r.debit || 0), 0);
+        const totalC = tb.reduce((s, r) => s + Number(r.credit || 0), 0);
+        const gap = Math.abs(totalD - totalC);
+        if (gap > 0.05) {
+            push('alert', 'Finance', `Trial Balance unbalanced by ${gap.toLocaleString(undefined, { minimumFractionDigits: 2 })} ETB. Review journals and single transactions.`);
+        } else if (totalD > 0) {
+            push('success', 'Finance', `Books balanced · Σ Dr/Cr ${totalD.toLocaleString(undefined, { minimumFractionDigits: 2 })} ETB.`);
+        } else {
+            push('info', 'Finance', 'No posted ledger activity yet. Record single transactions or journals.');
         }
-    };
 
-    return (
-        <div className="h-full w-full min-h-0 flex items-center justify-center p-4 bg-slate-950 overflow-y-auto">
-            <div className={`max-w-md w-full p-8 rounded-3xl shadow-2xl border border-white/10 ${glassClass} transform transition-all`}>
-                
-                <div className="flex flex-col items-center mb-8">
-                    {/* FIXED: Conditional Logo Logic */}
-                    <div className="mb-4">
-                        {uiSettings?.logoURL ? (
-                            // Show your UPLOADED logo if it exists
-                            <img 
-                                src={uiSettings.logoURL} 
-                                alt="University Logo" 
-                                className="w-20 h-20 object-contain drop-shadow-lg"
-                            />
-                        ) : (
-                            // Fallback to the icon if no logo is set in UICustomization
-                            <div className="p-4 bg-cyan-500/20 rounded-2xl shadow-inner">
-                                <Icons.Monitor className="w-12 h-12 text-cyan-400" />
-                            </div>
-                        )}
-                    </div>
-                    
-                    <h1 className="text-3xl font-black text-white tracking-tighter italic uppercase text-center">
-                        Material Management - Unity University
-                    </h1>
-                    <p className="text-gray-400 mt-2 text-sm font-medium">Material Management Terminal</p>
-                </div>
-
-                <form onSubmit={handleSignIn} className="space-y-5">
-                    {error && (
-                        <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/50 text-red-400 text-xs flex items-center animate-shake">
-                            <Icons.AlertCircle className="w-4 h-4 mr-2 flex-shrink-0" />
-                            {error}
-                        </div>
-                    )}
-
-                    <div className="space-y-1">
-                        <Input 
-                            label="Username"
-                            value={username}
-                            onChange={(val) => setUsername(val)}
-                            placeholder="Enter your username"
-                            isRequired
-                        />
-                    </div>
-
-                    <div className="space-y-1">
-                        <Input 
-                            label="Password"
-                            type="password"
-                            placeholder="Password"
-                            autoComplete="current-password"
-                            value={password}
-                            onChange={(val) => setPassword(val)}
-                            isRequired
-                        />
-                    </div>
-
-                    <button 
-                        type="submit"
-                        disabled={isSubmitting}
-                        className={`w-full py-4 rounded-2xl font-bold text-white transition-all flex items-center justify-center text-lg
-                            ${isSubmitting 
-                                ? 'bg-gray-700 cursor-not-allowed' 
-                                : 'bg-cyan-600 hover:bg-cyan-500 active:scale-[0.97] shadow-xl shadow-cyan-900/40'
-                            }`}
-                    >
-                        {isSubmitting ? (
-                            <Icons.Loader2 className="w-6 h-6 animate-spin" />
-                        ) : (
-                            <>
-                                <Icons.LogIn className="w-5 h-5 mr-2" />
-                                Sign In
-                            </>
-                        )}
-                    </button>
-                
-                    
-
-                
-                    <LoginModuleSwitcher current="material" />
-                </form>
-
-                <div className="mt-8 pt-6 border-t border-white/5 text-center">
-                    
-                    
-
-                    <p className="text-[10px] text-gray-500 uppercase tracking-[0.2em] font-bold opacity-60">
-                        Secure Access Terminal
-                    </p>
-                </div>
-            </div>
-        </div>
-    );
-};
-
-
-/* ----------------------------------------------------------------------
-   MODIFIED HR DASHBOARD COMPONENT (With Custom Analytics & PNG Export)
-   ---------------------------------------------------------------------- */
-/* ----------------------------------------------------------------------
-   MODIFIED HR DASHBOARD COMPONENT (With Explaining Text)
-   ---------------------------------------------------------------------- */
-/* ----------------------------------------------------------------------
-   MODIFIED HR DASHBOARD COMPONENT (With Explaining Text)
-   ---------------------------------------------------------------------- */
-
-
-const HrDashboard = ({ glassClass }) => {
-    const { getCollection } = useData();
-    const employees = getCollection('HR_EMPLOYEE_CRUD') || [];
-    const appraisals = getCollection('HR_APPRAISAL_CRUD') || [];
-    const leaves = getCollection('HR_LEAVE_CRUD') || [];
-    const [dataSource, setDataSource] = useState('Insurance');
-    const [chartType, setChartType] = useState('bar');
-    const chartRef = useRef(null);
-
-    const COLORS = ['#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
-    const DEPARTMENTS = ['Finance', 'Engineering', 'HR', 'Marketing', 'Operations'];
-
-    const deptAnalytics = DEPARTMENTS.map(dept => {
-        const deptEmps = employees.filter(e => e.department === dept);
-        return {
-            name: dept,
-            insUnivShare: deptEmps.length * 1200,
-            appQuality: (Math.random() * 5).toFixed(2),
-            recVolume: Math.floor(Math.random() * 15),
-            lveDays: deptEmps.reduce((a, e) => a + (leaves.filter(l => l.employee_name === e.name && l.status === 'Approved').length * 3), 0)
-        };
-    });
-
-    const chartExplanations = {
-        'Insurance': 'Institution-funded insurance contributions aggregated by department showing the total financial commitment.',
-        'Recruitment': 'Number of successful hires and completed recruitment requests per department for workforce planning.',
-        'Appraisal': 'Average performance scores based on competency assessments and appraisal ratings across departments.',
-        'Leave': 'Total workdays consumed by approved leave requests (annual, sick, emergency) per department.'
-    };
-
-    const activeData = dataSource === 'Insurance' ? deptAnalytics.map(d => ({ name: d.name, value: d.insUnivShare })) :
-                       dataSource === 'Recruitment' ? deptAnalytics.map(d => ({ name: d.name, value: d.recVolume })) :
-                       dataSource === 'Appraisal' ? deptAnalytics.map(d => ({ name: d.name, value: parseFloat(d.appQuality) })) :
-                       deptAnalytics.map(d => ({ name: d.name, value: d.lveDays }));
-
-    return (
-        <div className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                <KPI  
-                    title="University Pay"
-                    value={`${deptAnalytics.reduce((a, b) => a + b.insUnivShare, 0).toLocaleString()} Br`} 
-                    iconName="ShieldCheck" 
-                    colorClass="text-cyan-400" 
-                    trend="Univ. Pay" 
-                    glassClass={glassClass} 
-                    explanation="Total institution-funded insurance contribution for the current staff roster."
-                />
-                <KPI  
-                    title="Avg Appraisal"
-                    value={(deptAnalytics.reduce((a, b) => a + b.appQuality, 0) / DEPARTMENTS.length).toFixed(2)} 
-                    iconName="Star" 
-                    colorClass="text-yellow-400" 
-                    trend="Appraisal" 
-                    glassClass={glassClass} 
-                    explanation="Performance index across departments based on average staff competency scores."
-                />
-                <KPI  
-                    title="Recruitment"
-                    value={deptAnalytics.reduce((a, b) => a + b.recVolume, 0)} 
-                    iconName="UserPlus" 
-                    colorClass="text-green-400" 
-                    trend="Success Rate" 
-                    glassClass={glassClass} 
-                    explanation="Count of successful candidate placements and hiring request completions."
-                />
-                <KPI  
-                    title="Leaves Taken"
-                    value={`${deptAnalytics.reduce((a, b) => a + b.lveDays, 0)} Days`} 
-                    iconName="Clock" 
-                    colorClass="text-purple-400" 
-                    trend="Total Volume" 
-                    glassClass={glassClass} 
-                    explanation="Aggregation of total workdays lost to annual, sick, and emergency leave."
-                />
-            </div>
-
-            {/* CHART CONTROL SECTION WITH EXPLAINING TEXT */}
-            <ContainerCard Icon={Icons.Activity} glassClass={glassClass} title={`${dataSource} Trend Analysis`}>
-                <div className="mb-6 p-4 rounded-xl bg-cyan-500/5 border border-cyan-500/20">
-                    <p className="text-xs text-cyan-100 italic leading-relaxed">
-                        <Icons.Info className="inline w-3 h-3 mr-2 mb-0.5" />
-                        {chartExplanations[dataSource]}
-                    </p>
-                </div>
-
-                <div className="flex flex-wrap items-end justify-between gap-4 mb-8">
-                    <div className="flex gap-4 items-end">
-                        <div className="flex flex-col">
-                            <label className="text-[10px] text-gray-400 mb-1 font-bold uppercase">Metric Analytics</label>
-                            <select 
-                                className="bg-black/40 border border-white/10 text-white text-xs rounded p-2 outline-none focus:border-cyan-500"
-                                value={dataSource} 
-                                onChange={(e) => setDataSource(e.target.value)}
-                            >
-                                <option value="Insurance">Insurance (Quantity/Money)</option>
-                                <option value="Recruitment">Recruitment (Volume/Success)</option>
-                                <option value="Appraisal">Performance (Quality Score)</option>
-                                <option value="Leave">Leave Taken (Average Days)</option>
-                            </select>
-                        </div>
-                        <div className="flex flex-col">
-                            <label className="text-[10px] text-gray-400 mb-1 font-bold uppercase">Visual Method</label>
-                            <select 
-                                className="bg-black/40 border border-white/10 text-white text-xs rounded p-2 outline-none focus:border-cyan-500"
-                                value={chartType} 
-                                onChange={(e) => setChartType(e.target.value)}
-                            >
-                                <option value="bar">Bar Analysis</option>
-                                <option value="line">Trend Analysis</option>
-                                <option value="pie">Proportional Analysis</option>
-                            </select>
-                        </div>
-
-                        <div className="pb-[1px]">
-                            <ExportButton 
-                                data={activeData} 
-                                columns={[{ label: 'Department', key: 'name' }, { label: 'Value', key: 'value' }]} 
-                                filename={`HR_LIVE_${dataSource}`}
-                                chartRef={chartRef} 
-                            />
-                        </div>
-                    </div>
-                </div>
-
-                {/* DYNAMIC REAL-TIME CHART */}
-                <div ref={chartRef} className="h-80 w-full bg-black/20 rounded-2xl p-4 border border-white/5">
-                    <ResponsiveContainer width="100%" height="100%">
-                        {chartType === 'pie' ? (
-                            <PieChart>
-                                <Pie data={activeData} cx="50%" cy="50%" innerRadius={60} outerRadius={100} paddingAngle={5} dataKey="value">
-                                    {activeData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                                </Pie>
-                                <Legend />
-                                <Tooltip contentStyle={{backgroundColor: '#000', border: '1px solid #333'}} />
-                            </PieChart>
-                        ) : chartType === 'line' ? (
-                            <LineChart data={activeData}>
-                                <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
-                                <XAxis dataKey="name" stroke="#6b7280" fontSize={10} />
-                                <YAxis stroke="#6b7280" fontSize={10} />
-                                <Tooltip contentStyle={{backgroundColor: '#000', border: '1px solid #333'}} />
-                                <Line type="monotone" dataKey="value" stroke="#06b6d4" strokeWidth={4} dot={{ r: 6, fill: '#06b6d4' }} animationDuration={300} />
-                            </LineChart>
-                        ) : (
-                            <BarChart data={activeData}>
-                                <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
-                                <XAxis dataKey="name" stroke="#6b7280" fontSize={10} />
-                                <YAxis stroke="#6b7280" fontSize={10} />
-                                <Tooltip contentStyle={{backgroundColor: '#000', border: '1px solid #333'}} />
-                                <Bar dataKey="value" fill="#06b6d4" radius={[6, 6, 0, 0]} barSize={40} animationDuration={300} />
-                            </BarChart>
-                        )}
-                    </ResponsiveContainer>
-                </div>
-            </ContainerCard>
-        </div>
-    );
-};
-// Internal KPI Component Updated to show Explanations
-const KPI = ({ title, value, iconName, glassClass, colorClass, explanation }) => {
-    const IconComponent = Icons[iconName] || Icons.Activity;
-
-    return (
-        <div className={`p-4 rounded-2xl flex flex-col justify-between ${glassClass} border border-white/5 shadow-xl h-28 hover:border-cyan-500/50 transition-all`}>
-            <div className="flex items-center justify-between w-full">
-                <div className="flex-1">
-                    <p className="text-[9px] font-black text-gray-400 uppercase tracking-[0.2em]">{title}</p>
-                    <p className="text-sm font-black text-white mt-1 tabular-nums tracking-tighter uppercase">
-                        {value}
-                    </p>
-                </div>
-                <div className={`p-2 rounded-xl bg-white/5 ${colorClass}`}>
-                    <IconComponent className="w-5 h-5" />
-                </div>
-            </div>
-            {/* Added Explaining Text here */}
-            <div className="mt-2 pt-2 border-t border-white/10">
-                <p className="text-[8px] leading-tight text-gray-500 italic">
-                    {explanation}
-                </p>
-            </div>
-        </div>
-    );
-};
-// // Internal KPI Component with text-sm
-// const KPI = ({ title, value, iconName, glassClass, colorClass, trend }) => {
-//     const IconComponent = Icons[iconName] || Icons.Activity;
-//     const TrendIcon = trend === 'up' ? Icons.ArrowUp : trend === 'down' ? Icons.ArrowDown : Icons.Minus;
-//     const trendColor = trend === 'up' ? 'text-green-500' : trend === 'down' ? 'text-red-500' : 'text-gray-400';
-
-//     return (
-//         <div className={`p-4 rounded-2xl flex items-center justify-between ${glassClass} border border-white/5 shadow-xl h-24`}>
-//             <div className="flex-1">
-//                 <p className="text-[9px] font-bold text-gray-500 uppercase tracking-widest">{title}</p>
-//                 <p className="text-sm font-black text-white mt-1 tabular-nums tracking-tighter uppercase">
-//                     {value}
-//                 </p>
-//                 {/* {trend !== 'none' && (
-//                     <div className={`flex items-center text-[8px] font-black mt-1 ${trendColor} uppercase`}>
-//                         <TrendIcon className="w-2.5 h-2.5 mr-1" />
-//                         Live
-//                     </div>
-//                 )} */}
-//             </div>
-//             <div className={`p-2 rounded-xl bg-white/5 ${colorClass}`}>
-//                 <IconComponent className="w-5 h-5" />
-//             </div>
-//         </div>
-//     );
-// };
-/* ----------------------------------------------------------------------
-   FIXED STAT CARD COMPONENT
-   ---------------------------------------------------------------------- */
-const StatCard = ({ label, value, Icon, color, glassClass }) => {
-    // If Icon is passed as a component from the Icons object (e.g. Icons.Clock)
-    // We must ensure it is rendered as a JSX tag <Icon />
-    return (
-        <div className={`p-4 rounded-xl ${glassClass} border border-white/10 flex items-center space-x-4`}>
-            <div className={`p-3 rounded-lg bg-gray-800/50 ${color}`}>
-                {/* This is where the error happens if Icon is undefined */}
-                {Icon && <Icon className="w-6 h-6" />}
-            </div>
-            <div>
-                <p className="text-xs text-gray-400 font-medium uppercase tracking-wider">{label}</p>
-                <p className="text-xl font-bold text-white">{value}</p>
-            </div>
-        </div>
-    );
-};
-// This component uses the existing XLSX, jsPDF, and docx libraries from your file [cite: 380, 381]
-const ChartExportButton = ({ data, chartTitle, glassClass }) => {
-    
-    // Handler for XLSX (Excel) [cite: 380]
-    const handleExcelExport = () => {
-        const worksheet = XLSX.utils.json_to_sheet(data);
-        const workbook = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(workbook, worksheet, "Chart Data");
-        XLSX.writeFile(workbook, `${chartTitle}_Data.xlsx`);
-    };
-
-    // Handler for PDF using jsPDF [cite: 381]
-    const handlePDFExport = () => {
-        const doc = new jsPDF();
-        doc.text(chartTitle, 14, 15);
-        // Extracts keys for headers and values for rows [cite: 403-405]
-        const headers = [Object.keys(data[0])];
-        const rows = data.map(item => Object.values(item));
-        
-        doc.autoTable({
-            head: headers,
-            body: rows,
-            startY: 20,
+        const draftJournals = journals.filter(j => !['posted', 'verified'].includes(String(j.status || '').toLowerCase()));
+        if (draftJournals.length) {
+            push('warning', 'Finance', `${draftJournals.length} day journal(s) not Posted/Verified.`);
+        }
+        const unbalancedTxn = txs.filter(t => {
+            const d = Number(t.debit || 0), c = Number(t.credit || 0);
+            const a = Number(t.amount || 0);
+            if (String(t.is_balanced || '').toLowerCase() === 'no') return true;
+            return false;
         });
-        doc.save(`${chartTitle}.pdf`);
-    };
+        if (unbalancedTxn.length) {
+            push('alert', 'Finance', `${unbalancedTxn.length} transaction leg(s) marked not balanced.`);
+        }
+        const matLegs = txs.filter(t => String(t.module || '').toUpperCase() === 'MATERIAL' || String(t.source || '').startsWith('MAT_'));
+        if (matLegs.length) {
+            push('info', 'Finance', `${matLegs.length} material-linked ledger leg(s) in books (GRV/GIV/PO).`);
+        }
 
-    return (
-        <div className="flex space-x-2 mb-4">
-            {/* CSV Export using existing react-csv link [cite: 380] */}
-            <CSVLink 
-                data={data} 
-                filename={`${chartTitle}.csv`}
-                className={`flex items-center px-3 py-1 rounded-md bg-cyan-600 text-white text-xs font-bold hover:bg-cyan-500 transition`}
-            >
-                <Icons.Download className="w-4 h-4 mr-1" /> Export CSV
-            </CSVLink>
+        // Partners
+        const inactiveP = partners.filter(p => String(p.status || '').toLowerCase() === 'inactive');
+        const highAR = partners.filter(p => Number(p.outstanding_balance || 0) > 100000 && String(p.partner_type || '').toLowerCase().includes('customer'));
+        const highAP = partners.filter(p => Number(p.outstanding_balance || 0) > 50000 && String(p.partner_type || '').toLowerCase().includes('supplier'));
+        if (highAR.length) push('warning', 'Partners', `${highAR.length} customer(s) with AR outstanding over 100,000 ETB.`);
+        if (highAP.length) push('warning', 'Partners', `${highAP.length} supplier(s) with AP outstanding over 50,000 ETB.`);
+        if (inactiveP.length) push('info', 'Partners', `${inactiveP.length} inactive partner record(s).`);
+        if (!partners.length) push('warning', 'Partners', 'Partner master is empty — single transactions cannot autofill entities.');
 
-            <button onClick={handleExcelExport} className="flex items-center px-3 py-1 rounded-md bg-green-600 text-white text-xs font-bold hover:bg-green-500">
-                <Icons.FileSpreadsheet className="w-4 h-4 mr-1" /> Excel
-            </button>
-
-            <button onClick={handlePDFExport} className="flex items-center px-3 py-1 rounded-md bg-red-600 text-white text-xs font-bold hover:bg-red-500">
-                <Icons.FileText className="w-4 h-4 mr-1" /> PDF
-            </button>
-        </div>
-    );
-};
-const RoleManagement = ({ glassClass }) => {
-    const { getCollection, addRecord, updateRecord, deleteRecord } = useData();
-    const [roleName, setRoleName] = useState(''); // This state holds the display name
-    const [permissions, setPermissions] = useState({});
-    const [editingId, setEditingId] = useState(null);
-
-    // Get all available permissions from MENU_ITEMS
-    const allAvailablePermissions = useMemo(() => {
-        const ids = [];
-        const extract = (items) => {
-            items.forEach(item => {
-                // Filter out navigation items that are not meant to be permissions (e.g., 'AUTH')
-                if (item.id && item.id !== 'AUTH' && !item.children) { // Ensure it's a leaf node that represents a permission
-                    ids.push({ id: item.id, label: item.label });
-                }
-                if (item.children) {
-                    extract(item.children);
-                }
-            });
-        };
-        extract(MENU_ITEMS);
-        return ids;
-    }, []);
-
-    // FIX: Ensure all menu items have valid IDs before mapping
-    const uniquePermissions = useMemo(() => {
-        const unique = {};
-        allAvailablePermissions.forEach(p => {
-            if (p.id) unique[p.id] = p;
+        // ——— PAYROLL ———
+        const draftPay = process.filter(r => ['draft', 'pending'].includes(String(r.status || '').toLowerCase()));
+        const committedPay = process.filter(r => String(r.status || '').toLowerCase() === 'committed');
+        const postedPay = process.filter(r => String(r.status || '').toLowerCase().includes('post'));
+        if (draftPay.length) push('warning', 'Payroll', `${draftPay.length} payroll process row(s) still Draft/Pending — commit to post to finance.`);
+        if (committedPay.length && !postedPay.length) {
+            push('info', 'Payroll', `${committedPay.length} committed process row(s). Confirm ledger legs on Trial Balance.`);
+        }
+        const missingMaster = process.filter(r => {
+            const name = r.employee_name;
+            return name && !(master || []).some(m => m.employee_name === name);
         });
-        return Object.values(unique).sort((a, b) => a.label.localeCompare(b.label));
-    }, [allAvailablePermissions]);
+        if (missingMaster.length) push('alert', 'Payroll', `${missingMaster.length} process row(s) without salary master match.`);
+        if (ot.length) {
+            const openOt = ot.filter(r => !['approved', 'posted', 'closed'].includes(String(r.status || '').toLowerCase()));
+            if (openOt.length) push('info', 'Payroll', `${openOt.length} overtime record(s) awaiting approval/close.`);
+        }
+        if (ad.length) push('info', 'Payroll', `${ad.length} allowance/deduction master line(s) on file.`);
+        const openRecon = recon.filter(r => String(r.status || '').toLowerCase() !== 'closed' && Math.abs(Number(r.net_balance || 0)) > 0.05);
+        if (openRecon.length) push('warning', 'Payroll', `${openRecon.length} payroll reconciliation(s) with non-zero net balance.`);
+        if (!process.length) push('info', 'Payroll', 'No payroll process rows this period.');
 
-    // FIX: Define the required CRUD Action IDs used by DataTable
-    const crudActions = [
-        { id: 'CAN_ADD_RECORD', label: 'Allow Creating Records', color: 'text-green-400' },
-        { id: 'CAN_EDIT_RECORD', label: 'Allow Editing Records', color: 'text-yellow-400' },
-        { id: 'CAN_DELETE_RECORD', label: 'Allow Deleting Records', color: 'text-red-400' }
+        // ——— HR: Leave ———
+        const pendingLeave = leave.filter(r => ['pending', 'submitted', 'requested'].includes(String(r.status || '').toLowerCase()));
+        if (pendingLeave.length) push('warning', 'HR Leave', `${pendingLeave.length} leave request(s) pending approval.`);
+        const onLeaveNow = leave.filter(r => {
+            const st = String(r.status || '').toLowerCase();
+            if (!(st.includes('approv') || st === 'active' || st === 'ongoing')) return false;
+            const a = daysUntil(r.start_date || r.from_date);
+            const b = daysUntil(r.end_date || r.to_date);
+            if (a == null || b == null) return false;
+            return a <= 0 && b >= 0;
+        });
+        if (onLeaveNow.length) push('info', 'HR Leave', `${onLeaveNow.length} staff currently on approved leave.`);
+        const leaveSoon = leave.filter(r => {
+            const d = daysUntil(r.start_date || r.from_date);
+            return d != null && d > 0 && d <= 7 && String(r.status || '').toLowerCase().includes('approv');
+        });
+        if (leaveSoon.length) push('info', 'HR Leave', `${leaveSoon.length} approved leave starting within 7 days.`);
+
+        // ——— HR: Headcount / masters ———
+        if (!employees.length) push('alert', 'HR', 'Employee master is empty.');
+        else push('success', 'HR', `${employees.length} employee record(s) · ${depts.length} department(s).`);
+        const noDept = employees.filter(e => !e.department && !e.dept);
+        if (noDept.length) push('warning', 'HR', `${noDept.length} employee(s) missing department.`);
+        const inactiveEmp = employees.filter(e => ['inactive', 'terminated', 'resigned'].includes(String(e.status || '').toLowerCase()));
+        if (inactiveEmp.length) push('info', 'HR', `${inactiveEmp.length} inactive/terminated employee flag(s).`);
+
+        // Vacancies / recruitment / hiring
+        const openVac = vacancies.filter(v => ['open', 'published', 'active'].includes(String(v.status || '').toLowerCase()));
+        if (openVac.length) push('info', 'Recruitment', `${openVac.length} open vacancy(ies).`);
+        const pendingRec = recruitment.filter(r => !['hired', 'rejected', 'closed'].includes(String(r.status || '').toLowerCase()));
+        if (pendingRec.length) push('warning', 'Recruitment', `${pendingRec.length} recruitment case(s) in progress.`);
+        const openHiring = hiring.filter(h => ['pending', 'submitted', 'open'].includes(String(h.status || '').toLowerCase()));
+        if (openHiring.length) push('warning', 'Recruitment', `${openHiring.length} department hiring request(s) pending.`);
+
+        // Attrition / retirement / resignation
+        if (attrition.length) push('info', 'HR Exit', `${attrition.length} attrition record(s) on file.`);
+        const retireSoon = (retirement.length ? retirement : employees).filter(r => {
+            const d = daysUntil(r.retirement_date || r.expected_date);
+            return d != null && d >= 0 && d <= 90;
+        });
+        if (retireSoon.length) push('warning', 'HR Exit', `${retireSoon.length} retirement(s) within 90 days.`);
+        const openRes = resignation.filter(r => !['processed', 'completed', 'closed'].includes(String(r.status || '').toLowerCase()));
+        if (openRes.length) push('warning', 'HR Exit', `${openRes.length} resignation(s) not fully processed.`);
+
+        // Training / appraisal / insurance / discipline / awards
+        const openTrain = training.filter(t => !['completed', 'cancelled'].includes(String(t.status || '').toLowerCase()));
+        if (openTrain.length) push('info', 'HR Dev', `${openTrain.length} training item(s) open.`);
+        const dueAppraisal = appraisal.filter(a => {
+            const d = daysUntil(a.due_date || a.appraisal_date);
+            return d != null && d <= 14;
+        });
+        if (dueAppraisal.length) push('warning', 'HR Dev', `${dueAppraisal.length} appraisal(s) due within 14 days.`);
+        const insExpire = insurance.filter(i => {
+            const d = daysUntil(i.expiry_date || i.end_date);
+            return d != null && d >= 0 && d <= 30;
+        });
+        if (insExpire.length) push('alert', 'HR', `${insExpire.length} insurance policy(ies) expiring within 30 days.`);
+        const openPen = penalties.filter(p => !['closed', 'resolved'].includes(String(p.status || '').toLowerCase()));
+        if (openPen.length) push('warning', 'HR', `${openPen.length} open disciplinary case(s).`);
+        if (awards.length) push('success', 'HR', `${awards.length} award record(s) registered.`);
+
+        // Roles
+        if (!roles.length) push('warning', 'Security', 'ROLE_CRUD empty — relying on default permission map.');
+        else push('info', 'Security', `${roles.length} role definition(s) loaded.`);
+
+        // Holidays
+        const holidays = [
+            { name: 'Genna (Ethiopian Christmas)', date: '2026-01-07' },
+            { name: 'Timkat (Epiphany)', date: '2026-01-19' },
+            { name: 'Adwa Victory Day', date: '2026-03-02' },
+            { name: 'Siklet (Good Friday)', date: '2026-04-10' },
+            { name: 'Fasika (Easter)', date: '2026-04-12' },
+            { name: 'Labour Day', date: '2026-05-01' },
+            { name: 'Ethiopian New Year', date: '2026-09-11' },
+            { name: 'Meskel', date: '2026-09-27' },
+        ];
+        holidays.forEach(h => {
+            const d = daysUntil(h.date);
+            if (d != null && d >= 0 && d <= 45) {
+                push(d <= 7 ? 'warning' : 'info', 'Calendar', `${h.name} in ${d} day(s) (${h.date}).`);
+            }
+        });
+
+        // Compliance reminders
+        push('info', 'Compliance', 'VAT / withholding calendar: confirm monthly filing with Finance (Ato Eyob).');
+        push('info', 'Compliance', 'Payroll statutory (tax & pension) must match process totals before bank advice.');
+
+        // Sort: alerts first
+        const order = { alert: 0, warning: 1, info: 2, success: 3 };
+        list.sort((a, b) => (order[a.severity] ?? 9) - (order[b.severity] ?? 9));
+        return list;
+    }, [getCollection, notificationTrigger, leaveUpdateTrigger, roleUpdateTrigger, today]);
+
+    const filtered = useMemo(() => {
+        let rows = notifications;
+        if (filter !== 'all') rows = rows.filter(n => n.severity === filter);
+        if (activeTab !== 'all') rows = rows.filter(n => String(n.category || '').toLowerCase().includes(activeTab.toLowerCase()));
+        return rows;
+    }, [notifications, filter, activeTab]);
+
+    const counts = useMemo(() => ({
+        all: notifications.length,
+        alert: notifications.filter(n => n.severity === 'alert').length,
+        warning: notifications.filter(n => n.severity === 'warning').length,
+        info: notifications.filter(n => n.severity === 'info').length,
+        success: notifications.filter(n => n.severity === 'success').length,
+    }), [notifications]);
+
+    useEffect(() => {
+        if (typeof onCountChange === 'function') {
+            const badge = (counts.alert || 0) + (counts.warning || 0) || counts.all || 0;
+            onCountChange(badge, counts);
+        }
+    }, [counts, onCountChange]);
+
+    const sevStyle = {
+        alert: 'border-rose-500/40 bg-rose-950/40 text-rose-100',
+        warning: 'border-amber-500/40 bg-amber-950/30 text-amber-100',
+        info: 'border-cyan-500/30 bg-cyan-950/30 text-cyan-100',
+        success: 'border-emerald-500/30 bg-emerald-950/30 text-emerald-100',
+    };
+    const sevIcon = { alert: 'AlertTriangle', warning: 'AlertCircle', info: 'Info', success: 'CheckCircle2' };
+
+    const tabs = [
+        { id: 'all', label: 'All' },
+        { id: 'Finance', label: 'Finance' },
+        { id: 'Payroll', label: 'Payroll' },
+        { id: 'HR', label: 'HR' },
+        { id: 'Partners', label: 'Partners' },
+        { id: 'Security', label: 'Security' },
+        { id: 'Calendar', label: 'Calendar' },
     ];
 
-    const currentRoles = getCollection('ROLE_CRUD') || []; // Get current roles for checks
-
-    const handleSave = async () => {
-        const trimmedRoleName = roleName.trim();
-        if (!trimmedRoleName) return alert("Enter role name");
-
-        // Combine selected page IDs AND selected action IDs
-        const activePermissions = Object.keys(permissions).filter(k => permissions[k] === true);
-
-        if (activePermissions.length === 0) {
-            return alert("Please select at least one permission or action.");
-        }
-
-        // FIX: Prepare roleData to include the 'name' field as expected by COLUMN_CONFIG
-        const roleData = {
-            name: trimmedRoleName, // Use 'name' field for the role's display name
-            roleName: trimmedRoleName, // Also keep roleName for potential backward compatibility or other uses if any.
-                                      // However, 'name' is the primary key expected by DataTable.
-            permissions: activePermissions,
-            updatedAt: new Date().toISOString()
-        };
-        
-        try {
-            // ADDED: Check for duplicate role names (using 'name' which is now canonical)
-            if (!editingId && currentRoles.some(role => role.name?.toLowerCase() === trimmedRoleName.toLowerCase())) {
-                return alert(`Role "${trimmedRoleName}" already exists.`);
-            }
-
-            if (editingId) {
-                await updateRecord('ROLE_CRUD', editingId, roleData);
-                alert("Role Updated Successfully!");
-            } else {
-                // For add, ensure 'id' is unique. 'name' can be used as ID if it's guaranteed unique.
-                // We'll keep 'id' generation for safety, but can optimize if 'name' is always intended as unique ID.
-                const newId = `role_${Date.now()}_${trimmedRoleName.toLowerCase().replace(/\s+/g, '-')}`;
-                await addRecord('ROLE_CRUD', { ...roleData, id: newId });
-                alert("New Role Created!");
-            }
-            // Clear state after save
-            setRoleName('');
-            setPermissions({});
-            setEditingId(null);
-        } catch (error) {
-            console.error("Save error:", error);
-            alert(`Failed to save role: ${error.message}`);
-        }
-    };
-
-    const handleEdit = (role) => {
-        // Ensure we are using role.name for consistency, as COLUMN_CONFIG expects 'name'
-        setEditingId(role.id); // Keep the ID for update operation
-        setRoleName(role.name || role.roleName || ''); // Use role.name, fallback to roleName
-        const prefs = {};
-        role.permissions?.forEach(p => prefs[p] = true);
-        setPermissions(prefs);
-    };
-
     return (
-        <div className="space-y-6">
-            <ContainerCard  glassClass={glassClass}>
-                <div className="p-6 space-y-6">
-                    {/* Input for Role Name, bound to roleName state */}
-                    <Input 
-                        label="Role Name" 
-                        value={roleName} 
-                        onChange={setRoleName} 
-                        placeholder="e.g. HR Staff" 
-                        isRequired
-                    />
-                    
-                    {/* NEW SECTION: ACTION BUTTON PERMISSIONS */}
-                    <div>
-                        <h3 className="text-white font-bold mb-3 text-sm flex items-center">
-                            <Icons.ShieldCheck className="w-4 h-4 mr-2 text-cyan-400" />
-                            Global Action Permissions
-                        </h3>
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                            {crudActions.map(action => (
-                                <button 
-                                    key={action.id}
-                                    onClick={() => setPermissions(prev => ({...prev, [action.id]: !prev[action.id]}))}
-                                    className={`p-3 rounded-xl border text-left transition-all ${
-                                        permissions[action.id] ? 'bg-cyan-500/10 border-cyan-500 shadow-lg shadow-cyan-500/10' : 'bg-white/5 border-white/10'
-                                    }`}
-                                >
-                                    <span className={`text-xs font-bold ${action.color}`}>{action.label}</span>
-                                    <div className="text-[10px] text-gray-500 mt-1">ID: {action.id}</div>
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-
-                    {/* PAGE ACCESS SECTION */}
-                    <div>
-                        <h3 className="text-white font-bold mb-3 text-sm flex items-center">
-                            <Icons.Layout className="w-4 h-4 mr-2 text-cyan-400" />
-                            Page Access
-                        </h3>
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                            {uniquePermissions.map(p => (
-                                <button 
-                                    key={p.id}
-                                    onClick={() => setPermissions(prev => ({...prev, [p.id]: !prev[p.id]}))}
-                                    className={`p-2 text-[10px] rounded-lg border text-left truncate transition-all ${
-                                        permissions[p.id] ? 'bg-cyan-500/20 border-cyan-500 text-white' : 'bg-white/5 border-white/10 text-gray-400'
-                                    }`}
-                                >
-                                    {p.label}
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-
-                    <button onClick={handleSave} className="w-full bg-cyan-600 hover:bg-cyan-500 p-4 rounded-xl font-bold text-white shadow-xl transition-all">
-                        {editingId ? "Update Configuration" : "Save New Role"}
-                    </button>
+        <div className={`h-full flex flex-col ${glassClass} border-l border-white/10`}>
+            <div className="p-4 border-b border-white/10 flex items-center justify-between gap-2">
+                <div>
+                    <h3 className="text-sm font-black text-white uppercase tracking-widest flex items-center gap-2">
+                        <Icons.Bell className="w-4 h-4 text-cyan-400" /> Notifications
+                    </h3>
+                    <p className="text-[9px] text-gray-500 mt-0.5">
+                        {counts.alert} alert · {counts.warning} warning · {counts.info} info · signed in as {currentUser?.username || 'user'}
+                    </p>
                 </div>
-            </ContainerCard>
+                <button type="button" onClick={onClose} className="p-2 rounded-lg hover:bg-white/10 text-gray-400">
+                    <Icons.X className="w-4 h-4" />
+                </button>
+            </div>
 
-            <ContainerCard  glassClass={glassClass}>
-                <div className="p-4 space-y-3">
-                    {(currentRoles).map(role => ( // Use currentRoles variable
-                        <div key={role.id} className="flex items-center justify-between p-4 border border-white/10 bg-white/5 rounded-xl">
-                            {/* FIX: Display role.name as it's the canonical name now */}
-                            <div className="font-bold text-white">{role.name}</div> 
-                            <div className="flex gap-2">
-                                <button onClick={() => handleEdit(role)} className="bg-cyan-500/10 px-3 py-1 rounded text-cyan-400 text-xs">Edit</button>
-                                {/* Added confirmation dialog for delete */}
-                                <button onClick={() => {
-                                    if (window.confirm(`Are you sure you want to delete role "${role.name}"? This action cannot be undone.`)) {
-                                        deleteRecord('ROLE_CRUD', role.id);
-                                    }
-                                }} className="bg-red-500/10 px-3 py-1 rounded text-red-400 text-xs">Delete</button>
+            <div className="px-3 py-2 flex flex-wrap gap-1.5 border-b border-white/5">
+                {['all', 'alert', 'warning', 'info', 'success'].map(f => (
+                    <button
+                        key={f}
+                        type="button"
+                        onClick={() => setFilter(f)}
+                        className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase ${
+                            filter === f ? 'bg-cyan-600 text-white' : 'bg-white/5 text-gray-400 hover:bg-white/10'
+                        }`}
+                    >
+                        {f}{f !== 'all' ? ` (${counts[f] || 0})` : ` (${counts.all})`}
+                    </button>
+                ))}
+            </div>
+
+            <div className="px-3 py-2 flex flex-wrap gap-1 border-b border-white/5">
+                {tabs.map(t => (
+                    <button
+                        key={t.id}
+                        type="button"
+                        onClick={() => setActiveTab(t.id)}
+                        className={`px-2 py-1 rounded-md text-[9px] font-bold uppercase ${
+                            activeTab === t.id ? 'bg-white/15 text-cyan-300' : 'text-gray-500 hover:text-gray-300'
+                        }`}
+                    >
+                        {t.label}
+                    </button>
+                ))}
+            </div>
+
+            <div className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-2">
+                {!filtered.length ? (
+                    <p className="text-center text-gray-500 text-xs py-10">No notifications for this filter.</p>
+                ) : filtered.map(n => {
+                    const Icon = Icons[sevIcon[n.severity]] || Icons.Bell;
+                    return (
+                        <div key={n.id} className={`rounded-xl border p-3 ${sevStyle[n.severity] || sevStyle.info}`}>
+                            <div className="flex items-start gap-2">
+                                <Icon className="w-4 h-4 shrink-0 mt-0.5 opacity-90" />
+                                <div className="min-w-0 flex-1">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                        <span className="text-[9px] font-black uppercase tracking-wider opacity-80">{n.category}</span>
+                                        <span className="text-[8px] uppercase opacity-50">{n.severity}</span>
+                                        <span className="text-[9px] text-white/50 ml-auto font-mono tabular-nums" title={n.time ? new Date(n.time).toLocaleString() : ''}>
+                                            {formatRelativeTime(n.time)}
+                                        </span>
+                                    </div>
+                                    <p className="text-[11px] font-medium mt-0.5 leading-snug">{n.message}</p>
+                                </div>
                             </div>
                         </div>
-                    ))}
-                </div>
-            </ContainerCard>
+                    );
+                })}
+            </div>
+
+            <div className="p-3 border-t border-white/10 text-[9px] text-gray-500 text-center">
+                Live from HR · Finance · Payroll masters · refresh on data change
+            </div>
         </div>
     );
 };
-
-
-    const convertGCToEC = (gcDateString) => {
-        const date = new Date(gcDateString);
-        if (isNaN(date.getTime())) return '';
-        
-        const year = date.getFullYear();
-        const month = date.getMonth() + 1;
-        const day = date.getDate();
-
-        // Approximate Ethiopia Calendar logic:
-        // New Year (Meskerem 1) is Sept 11 (or Sept 12 in leap years)
-        let etYear = year - 8;
-        if (month > 9 || (month === 9 && day >= 11)) {
-            etYear = year - 7;
-        }
-
-        // Ethiopian months are 30 days each. 
-        // We calculate the day of the year to find the exact month/day
-        const start = new Date(year, 0, 0);
-        const diff = (date - start) + ((start.getTimezoneOffset() - date.getTimezoneOffset()) * 60 * 1000);
-        const dayOfYear = Math.floor(diff / (1000 * 60 * 60 * 24));
-        
-        // Meskerem 1 is Gregorian Day 254 (non-leap) or 255 (leap)
-        const isLeap = (year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0));
-        const newYearDay = isLeap ? 255 : 254;
-        
-        let ethDayOfYear = dayOfYear - newYearDay + 1;
-        if (ethDayOfYear <= 0) {
-            ethDayOfYear += isLeap ? 366 : 365;
-        }
-
-        const etMonth = Math.ceil(ethDayOfYear / 30);
-        const etDay = ethDayOfYear % 30 || 30;
-
-        return `${etYear}-${String(etMonth).padStart(2, '0')}-${String(etDay).padStart(2, '0')}`;
-    };
 
 const FormModal = ({ collectionName, initialData, onSave, onCancel, glassClass }) => {
     const { addRecord, updateRecord, getCollection, allData } = useData();
@@ -4693,7 +4264,7 @@ const FormModal = ({ collectionName, initialData, onSave, onCancel, glassClass }
                     <MultiEntryField
                         label={field.label}
                         entries={formData[field.key] || []}
-                        fieldConfig={field.arrayConfig}
+                        fieldConfig={Array.isArray(field.arrayConfig) ? field.arrayConfig : []}
                         glassClass={glassClass}
                         onChange={(entries) => {
                             let updates = { [field.key]: entries };
@@ -4855,6 +4426,180 @@ const Sidebar = ({ currentView, setCurrentView, glassClass }) => {
 
     // ... rest of Sidebar JSX
 };
+/* —— Ethiopian (Geez) ↔ Gregorian calendar —— */
+const ethiopianMonthNames = [
+    'Meskerem', 'Tikimt', 'Hidar', 'Tahsas', 'Tir', 'Yekatit',
+    'Megabit', 'Miazia', 'Genbot', 'Sene', 'Hamle', 'Nehase', 'Pagumen'
+];
+
+const isGregorianLeap = (y) => (y % 4 === 0 && y % 100 !== 0) || (y % 400 === 0);
+const isEthiopianLeap = (y) => (y % 4) === 3;
+
+const gregorianToJDN = (year, month, day) => {
+    const a = Math.floor((14 - month) / 12);
+    const y = year + 4800 - a;
+    const m = month + 12 * a - 3;
+    return day + Math.floor((153 * m + 2) / 5) + 365 * y + Math.floor(y / 4) - Math.floor(y / 100) + Math.floor(y / 400) - 32045;
+};
+
+const jdnToGregorian = (jdn) => {
+    const a = jdn + 32044;
+    const b = Math.floor((4 * a + 3) / 146097);
+    const c = a - Math.floor((146097 * b) / 4);
+    const d = Math.floor((4 * c + 3) / 1461);
+    const e = c - Math.floor((1461 * d) / 4);
+    const m = Math.floor((5 * e + 2) / 153);
+    const day = e - Math.floor((153 * m + 2) / 5) + 1;
+    const month = m + 3 - 12 * Math.floor(m / 10);
+    const year = 100 * b + d - 4800 + Math.floor(m / 10);
+    return { year, month, day };
+};
+
+const ethiopianToJDNCore = (year, month, day) => {
+    // Standard: JDN = 1723856 + 365*(y-1) + floor(y/4) + 30*(m-1) + d
+    return 1723856 + 365 * (year - 1) + Math.floor(year / 4) + 30 * (month - 1) + day;
+};
+
+const jdnToEthiopian = (jdn) => {
+    const r = jdn - 1723855;
+    const year = Math.floor((4 * r - 1) / 1461);
+    const t = Math.floor((4 * r - 1) % 1461);
+    const n = Math.floor(t / 4);
+    const month = Math.floor(n / 30) + 1;
+    const day = (n % 30) + 1;
+    return { year, month, day };
+};
+
+const gregorianToEthiopian = (y, m, d) => jdnToEthiopian(gregorianToJDN(y, m, d));
+const ethiopianToGregorian = (y, m, d) => jdnToGregorian(ethiopianToJDNCore(y, m, d));
+
+const EthiopianCalendarPanel = ({ glassClass }) => {
+    const now = new Date();
+    const [gY, setGY] = React.useState(now.getFullYear());
+    const [gM, setGM] = React.useState(now.getMonth() + 1);
+    const [gD, setGD] = React.useState(now.getDate());
+    const ethToday = gregorianToEthiopian(now.getFullYear(), now.getMonth() + 1, now.getDate());
+    const [eY, setEY] = React.useState(ethToday.year);
+    const [eM, setEM] = React.useState(ethToday.month);
+    const [eD, setED] = React.useState(ethToday.day);
+    const [mode, setMode] = React.useState('g2e'); // g2e | e2g
+    const [calMonth, setCalMonth] = React.useState(now.getMonth() + 1);
+    const [calYear, setCalYear] = React.useState(now.getFullYear());
+
+    const g2e = gregorianToEthiopian(gY, gM, gD);
+    const e2g = ethiopianToGregorian(eY, eM, eD);
+
+    const daysInGregorianMonth = (y, m) => new Date(y, m, 0).getDate();
+    const firstWeekday = (y, m) => new Date(y, m - 1, 1).getDay();
+    const dim = daysInGregorianMonth(calYear, calMonth);
+    const start = firstWeekday(calYear, calMonth);
+    const cells = [];
+    for (let i = 0; i < start; i++) cells.push(null);
+    for (let d = 1; d <= dim; d++) cells.push(d);
+
+    return (
+        <div className={`p-6 rounded-[2.5rem] border border-amber-500/20 ${glassClass} shadow-2xl`}>
+            <div className="flex items-center gap-4 mb-6">
+                <div className="p-3 bg-amber-500/20 rounded-2xl">
+                    <Icons.Calendar className="w-6 h-6 text-amber-400" />
+                </div>
+                <div>
+                    <h2 className="text-xl font-black uppercase italic tracking-tighter text-white">Geez ↔ Gregorian</h2>
+                    <p className="text-[10px] text-amber-400/80 font-black uppercase tracking-[0.25em]">Ethiopian calendar converter</p>
+                </div>
+            </div>
+
+            <div className="flex gap-2 mb-4">
+                <button type="button" onClick={() => setMode('g2e')}
+                    className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase ${mode === 'g2e' ? 'bg-amber-500 text-black' : 'bg-white/10 text-gray-300'}`}>
+                    Gregorian → Geez
+                </button>
+                <button type="button" onClick={() => setMode('e2g')}
+                    className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase ${mode === 'e2g' ? 'bg-amber-500 text-black' : 'bg-white/10 text-gray-300'}`}>
+                    Geez → Gregorian
+                </button>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="space-y-3 p-4 rounded-2xl bg-black/30 border border-white/10">
+                    {mode === 'g2e' ? (
+                        <>
+                            <p className="text-[10px] font-black text-cyan-400 uppercase tracking-widest">Gregorian input</p>
+                            <div className="grid grid-cols-3 gap-2">
+                                <label className="text-[9px] text-gray-400 uppercase">Year<input type="number" value={gY} onChange={e => setGY(+e.target.value)} className="w-full mt-1 bg-black/50 border border-white/15 rounded-lg px-2 py-2 text-white text-sm" /></label>
+                                <label className="text-[9px] text-gray-400 uppercase">Month<input type="number" min={1} max={12} value={gM} onChange={e => setGM(+e.target.value)} className="w-full mt-1 bg-black/50 border border-white/15 rounded-lg px-2 py-2 text-white text-sm" /></label>
+                                <label className="text-[9px] text-gray-400 uppercase">Day<input type="number" min={1} max={31} value={gD} onChange={e => setGD(+e.target.value)} className="w-full mt-1 bg-black/50 border border-white/15 rounded-lg px-2 py-2 text-white text-sm" /></label>
+                            </div>
+                            <div className="mt-3 p-3 rounded-xl bg-amber-500/10 border border-amber-500/30">
+                                <p className="text-[9px] text-amber-400/80 uppercase font-black">Ethiopian (Geez)</p>
+                                <p className="text-lg font-black text-white mt-1">
+                                    {g2e.day} {ethiopianMonthNames[Math.max(0, Math.min(12, g2e.month - 1))] || g2e.month} {g2e.year}
+                                </p>
+                                <p className="text-[10px] text-gray-400 font-mono mt-1">{g2e.year}-{String(g2e.month).padStart(2,'0')}-{String(g2e.day).padStart(2,'0')}</p>
+                            </div>
+                        </>
+                    ) : (
+                        <>
+                            <p className="text-[10px] font-black text-amber-400 uppercase tracking-widest">Ethiopian input</p>
+                            <div className="grid grid-cols-3 gap-2">
+                                <label className="text-[9px] text-gray-400 uppercase">Year<input type="number" value={eY} onChange={e => setEY(+e.target.value)} className="w-full mt-1 bg-black/50 border border-white/15 rounded-lg px-2 py-2 text-white text-sm" /></label>
+                                <label className="text-[9px] text-gray-400 uppercase">Month (1–13)<input type="number" min={1} max={13} value={eM} onChange={e => setEM(+e.target.value)} className="w-full mt-1 bg-black/50 border border-white/15 rounded-lg px-2 py-2 text-white text-sm" /></label>
+                                <label className="text-[9px] text-gray-400 uppercase">Day<input type="number" min={1} max={30} value={eD} onChange={e => setED(+e.target.value)} className="w-full mt-1 bg-black/50 border border-white/15 rounded-lg px-2 py-2 text-white text-sm" /></label>
+                            </div>
+                            <div className="mt-3 p-3 rounded-xl bg-cyan-500/10 border border-cyan-500/30">
+                                <p className="text-[9px] text-cyan-400/80 uppercase font-black">Gregorian</p>
+                                <p className="text-lg font-black text-white mt-1">
+                                    {e2g.day}/{e2g.month}/{e2g.year}
+                                </p>
+                                <p className="text-[10px] text-gray-400 font-mono mt-1">{e2g.year}-{String(e2g.month).padStart(2,'0')}-{String(e2g.day).padStart(2,'0')}</p>
+                            </div>
+                        </>
+                    )}
+                </div>
+
+                <div className="p-4 rounded-2xl bg-black/30 border border-white/10">
+                    <div className="flex items-center justify-between mb-3">
+                        <p className="text-[10px] font-black text-white uppercase tracking-widest">Gregorian month</p>
+                        <div className="flex gap-1">
+                            <button type="button" className="px-2 py-1 rounded bg-white/10 text-xs text-white" onClick={() => {
+                                if (calMonth === 1) { setCalMonth(12); setCalYear(y => y - 1); }
+                                else setCalMonth(m => m - 1);
+                            }}>‹</button>
+                            <span className="text-xs text-cyan-300 font-bold px-2">{calMonth}/{calYear}</span>
+                            <button type="button" className="px-2 py-1 rounded bg-white/10 text-xs text-white" onClick={() => {
+                                if (calMonth === 12) { setCalMonth(1); setCalYear(y => y + 1); }
+                                else setCalMonth(m => m + 1);
+                            }}>›</button>
+                        </div>
+                    </div>
+                    <div className="grid grid-cols-7 gap-1 text-center text-[9px] text-gray-500 mb-1">
+                        {['Su','Mo','Tu','We','Th','Fr','Sa'].map(d => <div key={d}>{d}</div>)}
+                    </div>
+                    <div className="grid grid-cols-7 gap-1">
+                        {cells.map((d, i) => {
+                            if (!d) return <div key={'e'+i} />;
+                            const eth = gregorianToEthiopian(calYear, calMonth, d);
+                            const isToday = d === now.getDate() && calMonth === now.getMonth()+1 && calYear === now.getFullYear();
+                            return (
+                                <button
+                                    key={d}
+                                    type="button"
+                                    onClick={() => { setGY(calYear); setGM(calMonth); setGD(d); setMode('g2e'); }}
+                                    className={`rounded-lg p-1 border text-left min-h-[42px] ${isToday ? 'border-cyan-400 bg-cyan-500/20' : 'border-white/10 bg-white/5 hover:bg-white/10'}`}
+                                >
+                                    <div className="text-[11px] font-bold text-white">{d}</div>
+                                    <div className="text-[8px] text-amber-400/90 truncate">{eth.day} {ethiopianMonthNames[eth.month-1]?.slice(0,3)}</div>
+                                </button>
+                            );
+                        })}
+                    </div>
+                    <p className="text-[9px] text-gray-500 mt-3">Click a day to convert · Ethiopian month names shown under each Gregorian date.</p>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 const UICustomization = ({ glassClass }) => {
     const { uiSettings, updateUISettings, resetToDefault } = useContext(UIContext);
     const [qrText, setQrText] = useState('');
@@ -4880,9 +4625,19 @@ const UICustomization = ({ glassClass }) => {
         reader.readAsDataURL(file);
     };
 
+    const exportCSV = (slug) => {
+        const data = allData[slug] || [];
+        if (!data.length) return;
+        const csv = [Object.keys(data[0]).join(','), ...data.map(r => Object.values(r).join(','))].join('\n');
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a'); a.href = url; a.download = `${slug}.csv`; a.click();
+    };
+
     return (
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700">
             <FieldIntelligenceSettings glassClass={glassClass} />
+            <EthiopianCalendarPanel glassClass={glassClass} />
             {/* 1. THE ATMOSPHERIC ENGINE (Scale & Transparency Fixes) */}
             <div className={`p-6 rounded-[2.5rem] border border-white/10 ${glassClass} shadow-2xl`}>
                 <div className="flex items-center gap-4 mb-8">
@@ -5027,234 +4782,383 @@ const UICustomization = ({ glassClass }) => {
     );
 };
 
-const StaffChangePassword = ({ glassClass }) => {
-    const { changePassword, logout } = useAuth();
-    const { getCollection, updateRecord } = useData(); // <--- Get the missing functions here
-    
-    const [isSubmitting, setIsSubmitting] = useState(false);
-    const [status, setStatus] = useState({ type: '', msg: '' });
+const HrDashboard = ({ glassClass }) => {
+    const { getCollection, allData } = useData();
+    const chartRef = useRef(null);
+    const [metric, setMetric] = useState('headcount');
+    const [chartType, setChartType] = useState('bar');
+    const [search, setSearch] = useState('');
+    const [deptFilter, setDeptFilter] = useState('ALL');
+    const [statusFilter, setStatusFilter] = useState('ALL');
+    const [exportOpen, setExportOpen] = useState(false);
 
-    const [formData, setFormData] = useState({
-        oldPassword: '',
-        newPassword: '',
-        confirmNewPassword: ''
-    });
+    const employees = useMemo(() => {
+        const raw = (typeof getCollection === 'function' ? getCollection('HR_EMPLOYEE_CRUD') : null)
+            || allData?.HR_EMPLOYEE_CRUD
+            || [];
+        try {
+            if (typeof uuMergeHrEmployees === 'function') return uuMergeHrEmployees(raw);
+        } catch (e) {}
+        return Array.isArray(raw) ? raw : [];
+    }, [getCollection, allData]);
 
-    const handleChange = (field, value) => {
-        setFormData(prev => ({ ...prev, [field]: value }));
-    };
+    const statusOptions = useMemo(() => {
+        const s = new Set(['ALL']);
+        (employees || []).forEach((e) => {
+            const v = e.employment_type || e.status || e.auth_status;
+            if (v) s.add(String(v));
+        });
+        return Array.from(s);
+    }, [employees]);
 
-    const handleSubmit = async (e) => {
-        e.preventDefault();
-        setStatus({ type: '', msg: '' });
+    const deptOptions = useMemo(() => {
+        const s = new Set(['ALL']);
+        (employees || []).forEach((e) => {
+            if (e.department) s.add(String(e.department));
+        });
+        (typeof getCollection === 'function' ? getCollection('DEPARTMENTS_CRUD') : null)?.forEach?.((d) => {
+            if (d?.name) s.add(String(d.name));
+        });
+        return Array.from(s);
+    }, [employees, getCollection]);
 
-        if (formData.newPassword !== formData.confirmNewPassword) {
-            setStatus({ type: 'error', msg: "New password confirmation does not match." });
+    const leave = useMemo(() => getCollection?.('HR_LEAVE_CRUD') || allData?.HR_LEAVE_CRUD || [], [getCollection, allData]);
+    const recruitment = useMemo(() => getCollection?.('HR_RECRUITMENT_CRUD') || allData?.HR_RECRUITMENT_CRUD || [], [getCollection, allData]);
+    const vacancies = useMemo(() => getCollection?.('HR_VACANCY_CRUD') || allData?.HR_VACANCY_CRUD || [], [getCollection, allData]);
+    const training = useMemo(() => getCollection?.('HR_TRAINING_CRUD') || allData?.HR_TRAINING_CRUD || [], [getCollection, allData]);
+    const appraisal = useMemo(() => getCollection?.('HR_APPRAISAL_CRUD') || allData?.HR_APPRAISAL_CRUD || [], [getCollection, allData]);
+    const insurance = useMemo(() => getCollection?.('HR_INSURANCE_CRUD') || allData?.HR_INSURANCE_CRUD || [], [getCollection, allData]);
+    const attrition = useMemo(() => getCollection?.('HR_STAFF_ATTRITION_CRUD') || allData?.HR_STAFF_ATTRITION_CRUD || [], [getCollection, allData]);
+    const awards = useMemo(() => getCollection?.('HR_AWARD_CRUD') || allData?.HR_AWARD_CRUD || [], [getCollection, allData]);
+    const penalties = useMemo(() => getCollection?.('HR_PENALTY_CRUD') || allData?.HR_PENALTY_CRUD || [], [getCollection, allData]);
+    const depts = useMemo(() => getCollection?.('DEPARTMENTS_CRUD') || allData?.DEPARTMENTS_CRUD || [], [getCollection, allData]);
+
+    const deptNames = useMemo(() => {
+        const fromEmp = employees.map((e) => e.department || e.dept).filter(Boolean);
+        const fromMaster = depts.map((d) => d.name || d.department || d.title).filter(Boolean);
+        return ['ALL', ...new Set([...fromMaster, ...fromEmp])].sort();
+    }, [employees, depts]);
+
+    const filteredEmployees = useMemo(() => {
+        const q = search.trim().toLowerCase();
+        return employees.filter((e) => {
+            const name = String(e.name || e.employee_name || '');
+            const idn = String(e.id_number || '');
+            const dep = String(e.department || e.dept || '');
+            const pos = String(e.job_title || e.position || '');
+            const st = String(e.status || 'Active');
+            if (deptFilter !== 'ALL' && dep !== deptFilter) return false;
+            if (statusFilter !== 'ALL' && st.toLowerCase() !== statusFilter.toLowerCase()) return false;
+            if (!q) return true;
+            return [name, idn, dep, pos, e.tin_no, e.pension_id, e.work_location].join(' ').toLowerCase().includes(q);
+        });
+    }, [employees, search, deptFilter, statusFilter]);
+
+    const stats = useMemo(() => {
+        const active = employees.filter((e) => !/inactive|terminated|resigned/i.test(String(e.status || 'Active'))).length;
+        const academic = employees.filter((e) => /academic/i.test(String(e.employment_category || ''))).length;
+        const nonAc = employees.length - academic;
+        const pendingLeave = leave.filter((r) => /pending|submitted|requested/i.test(String(r.status || ''))).length;
+        const openVac = vacancies.filter((v) => /open|published|active/i.test(String(v.status || ''))).length;
+        const openRec = recruitment.filter((r) => !/hired|rejected|closed/i.test(String(r.status || ''))).length;
+        const openTrain = training.filter((t) => !/completed|cancelled/i.test(String(t.status || ''))).length;
+        const payrollBase = employees.reduce((s, e) => s + (parseFloat(e.gross_salary || e.basic_salary || 0) || 0), 0);
+        return {
+            headcount: employees.length,
+            active,
+            academic,
+            nonAc,
+            pendingLeave,
+            openVac,
+            openRec,
+            openTrain,
+            attrition: attrition.length,
+            awards: awards.length,
+            penalties: penalties.length,
+            insurance: insurance.length,
+            payrollBase,
+            depts: deptNames.length - 1,
+        };
+    }, [employees, leave, vacancies, recruitment, training, attrition, awards, penalties, insurance, deptNames]);
+
+    const chartData = useMemo(() => {
+        const map = {};
+        employees.forEach((e) => {
+            const d = e.department || e.dept || 'Unassigned';
+            if (!map[d]) map[d] = { name: d, headcount: 0, salary: 0, academic: 0 };
+            map[d].headcount += 1;
+            map[d].salary += parseFloat(e.gross_salary || e.basic_salary || 0) || 0;
+            if (/academic/i.test(String(e.employment_category || ''))) map[d].academic += 1;
+        });
+        leave.forEach((r) => {
+            const d = r.department || 'Unassigned';
+            if (!map[d]) map[d] = { name: d, headcount: 0, salary: 0, academic: 0, leave: 0 };
+            map[d].leave = (map[d].leave || 0) + 1;
+        });
+        return Object.values(map).map((row) => ({
+            ...row,
+            value: metric === 'salary' ? row.salary : metric === 'leave' ? (row.leave || 0) : metric === 'academic' ? row.academic : row.headcount,
+        }));
+    }, [employees, leave, metric]);
+
+    const metricCards = [
+        { id: 'headcount', title: 'HEADCOUNT', value: stats.headcount, sub: `${stats.active} active · ${stats.depts} depts`, color: 'text-cyan-400' },
+        { id: 'salary', title: 'SALARY MASS (ETB)', value: stats.payrollBase.toLocaleString(undefined, { maximumFractionDigits: 0 }), sub: 'Sum of current salary (HR master)', color: 'text-emerald-400' },
+        { id: 'leave', title: 'LEAVE PIPELINE', value: stats.pendingLeave, sub: `${leave.length} leave records total`, color: 'text-amber-400' },
+        { id: 'recruit', title: 'RECRUITMENT', value: stats.openRec, sub: `${stats.openVac} open vacancies`, color: 'text-violet-400' },
+        { id: 'academic', title: 'ACADEMIC / NON-AC', value: `${stats.academic} / ${stats.nonAc}`, sub: 'Employment category split', color: 'text-sky-400' },
+        { id: 'dev', title: 'TRAINING OPEN', value: stats.openTrain, sub: `${stats.awards} awards · ${stats.penalties} cases`, color: 'text-rose-400' },
+    ];
+
+    const exportWorkbook = async (format) => {
+        const rows = filteredEmployees.map((e) => ({
+            'ID NO': e.id_number || '',
+            'Full Name': e.name || e.employee_name || '',
+            Gender: e.gender || '',
+            Department: e.department || e.dept || '',
+            'Position / Rank': e.job_title || e.position || '',
+            'Work Location': e.work_location || '',
+            Category: e.employment_category || '',
+            Type: e.employment_type || '',
+            'Current Salary': e.gross_salary || e.basic_salary || '',
+            'Pension ID': e.pension_id || '',
+            'TIN NO': e.tin_no || '',
+            Mobile: e.telephone_number || '',
+            Status: e.status || 'Active',
+            Role: e.system_role || e.role || '',
+        }));
+        const stamp = new Date().toISOString().slice(0, 10);
+        if (format === 'CSV') {
+            if (!rows.length) return;
+            const keys = Object.keys(rows[0]);
+            const csv = [keys.join(','), ...rows.map((r) => keys.map((k) => `"${String(r[k] ?? '').replace(/"/g, '""')}"`).join(','))].join('\n');
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+            saveAs(blob, `HR_Employees_${stamp}.csv`);
             return;
         }
-
-        setIsSubmitting(true);
-        
-        // PASS THE FUNCTIONS HERE:
-        const result = await changePassword(
-            formData.oldPassword, 
-            formData.newPassword, 
-            getCollection, 
-            updateRecord
-        );
-        
-        setIsSubmitting(false);
-
-        if (result.success) {
-            setStatus({ type: 'success', msg: result.message });
-            setFormData({ oldPassword: '', newPassword: '', confirmNewPassword: '' });
-            
-            // Re-login requirement: Logout after 2 seconds
-            setTimeout(() => {
-                logout();
-            }, 2000);
-        } else {
-            setStatus({ type: 'error', msg: result.message });
+        if (format === 'XLSX' || format === 'EXCEL') {
+            const wb = new ExcelJS.Workbook();
+            const ws = wb.addWorksheet('HR Employees');
+            ws.mergeCells('A1:N1');
+            ws.getCell('A1').value = 'UNITY UNIVERSITY — HR EMPLOYEE MASTER';
+            ws.getCell('A1').font = { bold: true, size: 14, color: { argb: 'FF0E7490' } };
+            ws.mergeCells('A2:N2');
+            ws.getCell('A2').value = `Export ${stamp} · ${rows.length} record(s) · filter: ${deptFilter}/${statusFilter} · search: ${search || '—'}`;
+            if (rows.length) {
+                const keys = Object.keys(rows[0]);
+                ws.addRow([]);
+                const header = ws.addRow(keys);
+                header.eachCell((c) => {
+                    c.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+                    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF155E75' } };
+                });
+                rows.forEach((r) => ws.addRow(keys.map((k) => r[k])));
+                keys.forEach((_, idx) => { ws.getColumn(idx + 1).width = 16; });
+            }
+            const buf = await wb.xlsx.writeBuffer();
+            saveAs(new Blob([buf]), `HR_Employees_${stamp}.xlsx`);
+            return;
         }
-    };
-
-    // ... (rest of your return JSX remains exactly the same)
-    return (
-        <ContainerCard Icon="Lock" glassClass={glassClass}>
-            <form onSubmit={handleSubmit} className="space-y-5 max-w-md mx-auto p-6">
-                {/* ... existing status and input fields ... */}
-                {status.msg && (
-                    <div className={`p-4 rounded-xl flex items-center text-sm ${
-                        status.type === 'success' ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'
-                    }`}>
-                        {status.msg}
-                    </div>
-                )}
-                
-                <Input label="Current Password" type="password" placeholder="Enter password" value={formData.oldPassword} onChange={(v)=>handleChange('oldPassword',v)} isRequired />
-                <Input label="New Password" type="password" placeholder="Enter password" value={formData.newPassword} onChange={(v)=>handleChange('newPassword',v)} isRequired />
-                <Input label="Confirm New Password" type="password" placeholder="Enter password" value={formData.confirmNewPassword} onChange={(v)=>handleChange('confirmNewPassword',v)} isRequired />
-
-                <button type="submit" disabled={isSubmitting} className="w-full bg-cyan-600 p-4 rounded-xl font-bold text-white">
-                    {isSubmitting ? "Processing..." : "Confirm Password Change"}
-                </button>
-            </form>
-        </ContainerCard>
-    );
-};
-const StaffUpdateProfile = ({ glassClass }) => {
-    const { currentUser } = useAuth();
-    const { getCollection, updateRecord, addRecord } = useData();
-    const [loading, setLoading] = useState(false);
-    const [message, setMessage] = useState({ text: '', type: '' });
-    const [formData, setFormData] = useState({ id: '', name: '', email: '', telephone_number: '' });
-
-    // Try to find the user record in the database
-    const loadUser = useCallback(() => {
-        const allEmployees = getCollection('HR_EMPLOYEE_CRUD') || [];
-        const myRecord = allEmployees.find(emp => 
-            emp.username === currentUser.username || emp.id === currentUser.id
-        );
-
-        if (myRecord) {
-            setFormData({
-                id: myRecord.id,
-                name: myRecord.name || '',
-                email: myRecord.email || '',
-                telephone_number: myRecord.telephone_number || ''
+        if (format === 'PDF') {
+            const doc = new jsPDF({ orientation: 'landscape' });
+            doc.setFontSize(14);
+            doc.text('Unity University — HR Employee Master', 14, 16);
+            doc.setFontSize(9);
+            doc.text(`Exported ${stamp} · ${rows.length} rows`, 14, 22);
+            const body = rows.map((r) => [r['ID NO'], r['Full Name'], r.Department, r['Position / Rank'], r['Current Salary'], r.Status]);
+            doc.autoTable({
+                startY: 26,
+                head: [['ID', 'Name', 'Department', 'Position', 'Salary', 'Status']],
+                body,
+                styles: { fontSize: 7 },
+                headStyles: { fillColor: [21, 94, 117] },
             });
-            return true;
+            doc.save(`HR_Employees_${stamp}.pdf`);
         }
-        return false;
-    }, [currentUser, getCollection]);
-
-    useEffect(() => { loadUser(); }, [loadUser]);
-
-    // FALLBACK: Create a record if one doesn't exist
-    const handleInitializeRecord = async () => {
-        setLoading(true);
-        const success = await addRecord('HR_EMPLOYEE_CRUD', {
-            username: currentUser.username,
-            name: currentUser.username,
-            role: currentUser.role,
-            status: 'active'
-        });
-        if (success) {
-            loadUser();
-            setMessage({ text: 'Database record initialized!', type: 'success' });
-        }
-        setLoading(false);
     };
 
-    const handleSubmit = async (e) => {
-        e.preventDefault();
-        setLoading(true);
-        const success = await updateRecord('HR_EMPLOYEE_CRUD', formData.id, formData);
-        setLoading(false);
-        setMessage(success ? { text: 'Profile saved!', type: 'success' } : { text: 'Save failed.', type: 'error' });
-    };
-
-    if (!formData.id) {
+    const ChartBody = () => {
+        if (!chartData.length) return <p className="text-center text-gray-500 text-sm py-16">No departmental data yet.</p>;
+        const common = { data: chartData, margin: { top: 8, right: 12, left: 0, bottom: 0 } };
+        if (chartType === 'pie') {
+            return (
+                <ResponsiveContainer width="100%" height={280}>
+                    <PieChart>
+                        <Pie data={chartData} dataKey="value" nameKey="name" outerRadius={100} label>
+                            {chartData.map((_, i) => (
+                                <Cell key={i} fill={['#06b6d4', '#10b981', '#f59e0b', '#8b5cf6', '#ef4444', '#6366f1', '#ec4899'][i % 7]} />
+                            ))}
+                        </Pie>
+                        <Tooltip />
+                        <Legend />
+                    </PieChart>
+                </ResponsiveContainer>
+            );
+        }
+        const Comp = chartType === 'line' ? LineChart : chartType === 'area' ? AreaChart : BarChart;
         return (
-            <div className="p-10 text-center space-y-4">
-                <Icons.Database size={48} className="mx-auto text-yellow-500 opacity-50" />
-                <h2 className="text-xl font-bold text-white">No Database Link Found</h2>
-                <p className="text-gray-400">Your current account ({currentUser.username}) is not yet linked to an employee record.</p>
-                <button onClick={handleInitializeRecord} className="bg-cyan-600 px-6 py-3 rounded-xl font-bold text-white hover:bg-cyan-500">
-                    Initialize Database Record
-                </button>
-            </div>
+            <ResponsiveContainer width="100%" height={280}>
+                <Comp {...common}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                    <XAxis dataKey="name" tick={{ fill: '#94a3b8', fontSize: 10 }} />
+                    <YAxis tick={{ fill: '#94a3b8', fontSize: 10 }} />
+                    <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid #334155' }} />
+                    <Legend />
+                    {chartType === 'line' ? (
+                        <Line type="monotone" dataKey="value" stroke="#06b6d4" strokeWidth={2} name={metric} />
+                    ) : chartType === 'area' ? (
+                        <Area type="monotone" dataKey="value" fill="#06b6d4" stroke="#22d3ee" name={metric} />
+                    ) : (
+                        <Bar dataKey="value" fill="#06b6d4" name={metric} radius={[6, 6, 0, 0]} />
+                    )}
+                </Comp>
+            </ResponsiveContainer>
         );
-    }
-
-    return (
-        <ContainerCard Icon='Edit' glassClass={glassClass}>
-            <form onSubmit={handleSubmit} className="p-6 space-y-4 max-w-xl mx-auto">
-                {message.text && <div className={`p-3 rounded text-sm ${message.type === 'success' ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>{message.text}</div>}
-                <Input label="Full Name" value={formData.name} onChange={(v) => setFormData({...formData, name: v})} />
-                <Input label="Email" value={formData.email} onChange={(v) => setFormData({...formData, email: v})} />
-                <Input label="Phone" value={formData.telephone_number} onChange={(v) => setFormData({...formData, telephone_number: v})} />
-                <button type="submit" className="w-full bg-cyan-600 p-3 rounded font-bold text-white uppercase tracking-widest">{loading ? 'Saving...' : 'Save Profile'}</button>
-            </form>
-        </ContainerCard>
-    );
-};
-
-const StaffSignup = ({ glassClass }) => {
-    const { getCollection, addRecord } = useData();
-    const [formData, setFormData] = useState({
-        username: '',
-        fullName: '',
-        password: '',
-        role: '' // Stores the ID from ROLE_CRUD
-    });
-
-    // Populate dropdown with Dynamic Roles from ROLE_CRUD
-    const dynamicRoleOptions = useMemo(() => {
-        const savedRoles = getCollection('ROLE_CRUD') || [];
-        const base = [
-            { label: 'Admin (System)', value: 'admin' },
-            { label: 'Standard Employee', value: 'employee' }
-        ];
-        
-        const custom = savedRoles.map(role => ({
-            label: role.name || role.roleName,
-            value: role.id 
-        }));
-
-        return [...base, ...custom];
-    }, [getCollection]);
-
-    const handleSubmit = async (e) => {
-        e.preventDefault();
-        try {
-            // Find display name for system_role
-            const roleObj = dynamicRoleOptions.find(o => o.value === formData.role);
-            
-            await addRecord('HR_EMPLOYEE_CRUD', {
-                ...formData,
-                name: formData.fullName,
-                status: 'active',
-                system_role: roleObj?.label || 'Employee',
-                createdAt: new Date().toISOString()
-            });
-            
-            alert(`Staff Registered Successfully: ${formData.username}`);
-            setFormData({ username: '', fullName: '', password: '', role: '' });
-        } catch (error) {
-            alert("Signup failed.");
-        }
     };
 
     return (
-        <ContainerCard Icon="UserPlus" glassClass={glassClass}>
-            <form onSubmit={handleSubmit} className="p-6 space-y-4 max-w-2xl mx-auto">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <Input label="Full Name" value={formData.fullName} onChange={(v) => setFormData({...formData, fullName: v})} isRequired />
-                    <Input label="Username" value={formData.username} onChange={(v) => setFormData({...formData, username: v})} isRequired />
+        <div className="space-y-5 animate-in fade-in duration-500 pb-8">
+            {/* Header */}
+            <div className={`${glassClass} rounded-2xl border border-white/10 p-5 flex flex-col lg:flex-row lg:items-center gap-4 justify-between`}>
+                <div>
+                    <h2 className="text-xl font-black text-white tracking-tight flex items-center gap-2">
+                        <span className="text-cyan-400">◆</span> HR COMMAND CENTER
+                    </h2>
+                    <p className="text-[10px] text-gray-400 mt-1 uppercase tracking-widest">
+                        Unity University · Live employee master · leave · recruitment · development
+                    </p>
                 </div>
-                <Input label="Initial Password" type="password" placeholder="Enter password" value={formData.password} onChange={(v) => setFormData({...formData, password: v})} isRequired />
-                
-                <div className="flex flex-col space-y-2">
-                    <label className="text-[10px] font-black text-cyan-400 uppercase tracking-widest">Assign Permission Role</label>
-                    <select 
-                        value={formData.role} 
-                        onChange={(e) => setFormData({...formData, role: e.target.value})} 
-                        className="w-full bg-black/60 border border-white/20 p-4 rounded-xl text-white outline-none focus:border-cyan-500 transition-all font-bold"
-                    >
-                        <option value="">-- Choose Access Level --</option>
-                        {dynamicRoleOptions.map(opt => <option key={opt.value} value={opt.value} className="bg-slate-900">{opt.label}</option>)}
-                    </select>
+                <div className="flex flex-wrap gap-2 items-center">
+                    <div className="relative">
+                        <input
+                            type="search"
+                            value={search}
+                            onChange={(e) => setSearch(e.target.value)}
+                            placeholder="Search ID, name, dept, TIN, pension…"
+                            className="bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs text-white w-56 focus:outline-none focus:border-cyan-500"
+                        />
+                    </div>
+                    <UUSelect
+                                value={deptFilter}
+                                onChange={setDeptFilter}
+                                options={deptOptions && deptOptions.length ? deptOptions : ['ALL']}
+                                allLabel="All departments"
+                                compact
+                            />
+                    <UUSelect
+                                value={statusFilter}
+                                onChange={setStatusFilter}
+                                options={statusOptions.length ? statusOptions : ['ALL']}
+                                allLabel="All statuses"
+                                compact
+                            />
+                    <div className="relative">
+                        <button type="button" onClick={() => setExportOpen((v) => !v)} className="px-3 py-2 rounded-xl text-[10px] font-black uppercase bg-cyan-600 hover:bg-cyan-500 text-white">
+                            Export ▾
+                        </button>
+                        {exportOpen && (
+                            <div className="absolute right-0 mt-1 z-50 w-44 rounded-xl border border-white/10 bg-slate-900 shadow-xl overflow-hidden">
+                                {['XLSX', 'CSV', 'PDF'].map((f) => (
+                                    <button key={f} type="button" onClick={() => { exportWorkbook(f); setExportOpen(false); }} className="w-full text-left px-3 py-2 text-[11px] text-gray-200 hover:bg-white/10">
+                                        {f === 'XLSX' ? 'Excel workbook' : f}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                    </div>
                 </div>
+            </div>
 
-                <button type="submit" className="w-full bg-cyan-600 hover:bg-cyan-500 p-4 rounded-xl font-black text-white shadow-lg mt-6 uppercase tracking-tighter transition-transform active:scale-95">
-                    Generate Staff Account
-                </button>
-            </form>
-        </ContainerCard>
+            {/* KPI cards */}
+            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+                {metricCards.map((c) => (
+                    <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => setMetric(c.id === 'recruit' || c.id === 'dev' ? 'headcount' : c.id === 'salary' ? 'salary' : c.id === 'leave' ? 'leave' : c.id === 'academic' ? 'academic' : 'headcount')}
+                        className={`${glassClass} rounded-2xl border border-white/10 p-4 text-left hover:border-cyan-500/40 transition ${metric === c.id ? 'ring-1 ring-cyan-500/50' : ''}`}
+                    >
+                        <p className="text-[9px] font-black uppercase tracking-widest text-gray-500">{c.title}</p>
+                        <p className={`text-xl font-black mt-1 ${c.color}`}>{c.value}</p>
+                        <p className="text-[10px] text-gray-500 mt-1 leading-snug">{c.sub}</p>
+                    </button>
+                ))}
+            </div>
+
+            {/* Chart + summary */}
+            <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+                <div className={`${glassClass} rounded-2xl border border-white/10 p-4 xl:col-span-2`} ref={chartRef}>
+                    <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                        <p className="text-xs font-black uppercase tracking-widest text-white">Department profile · {metric}</p>
+                        <div className="flex gap-1">
+                            {['bar', 'line', 'area', 'pie'].map((t) => (
+                                <button key={t} type="button" onClick={() => setChartType(t)} className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase ${chartType === t ? 'bg-cyan-600 text-white' : 'bg-white/5 text-gray-400'}`}>{t}</button>
+                            ))}
+                        </div>
+                    </div>
+                    <ChartBody />
+                </div>
+                <div className={`${glassClass} rounded-2xl border border-white/10 p-4 space-y-3`}>
+                    <p className="text-xs font-black uppercase tracking-widest text-white">Snapshot</p>
+                    {[
+                        ['Employees (filtered)', filteredEmployees.length],
+                        ['Academic staff', stats.academic],
+                        ['Non-academic', stats.nonAc],
+                        ['Open vacancies', stats.openVac],
+                        ['Recruitment in progress', stats.openRec],
+                        ['Pending leave', stats.pendingLeave],
+                        ['Attrition records', stats.attrition],
+                        ['Insurance policies', stats.insurance],
+                    ].map(([k, v]) => (
+                        <div key={k} className="flex justify-between text-[11px] border-b border-white/5 pb-1.5">
+                            <span className="text-gray-400">{k}</span>
+                            <span className="font-bold text-cyan-300">{v}</span>
+                        </div>
+                    ))}
+                </div>
+            </div>
+
+            {/* Employee table */}
+            <div className={`${glassClass} rounded-2xl border border-white/10 overflow-hidden`}>
+                <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between">
+                    <p className="text-xs font-black uppercase tracking-widest text-white">Employee master · full information</p>
+                    <p className="text-[10px] text-gray-500">{filteredEmployees.length} / {employees.length} shown</p>
+                </div>
+                <div className="overflow-auto max-h-[420px] custom-scrollbar">
+                    <table className="min-w-full text-left text-[11px]">
+                        <thead className="sticky top-0 bg-slate-900/95 z-10">
+                            <tr className="text-[9px] uppercase tracking-wider text-gray-400">
+                                {['ID', 'Full name', 'Dept', 'Position', 'Location', 'Category', 'Salary', 'Pension', 'TIN', 'Mobile', 'Status'].map((h) => (
+                                    <th key={h} className="px-3 py-2 font-black whitespace-nowrap">{h}</th>
+                                ))}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {!filteredEmployees.length ? (
+                                <tr><td colSpan={11} className="px-3 py-10 text-center text-gray-500">No employees match search / filters. Open HR Employee master or clear filters.</td></tr>
+                            ) : filteredEmployees.map((e) => (
+                                <tr key={e.id || e.id_number || e.name} className="border-t border-white/5 hover:bg-white/5">
+                                    <td className="px-3 py-2 font-mono text-cyan-300 whitespace-nowrap">{e.id_number || '—'}</td>
+                                    <td className="px-3 py-2 font-semibold text-white whitespace-nowrap">{e.name || e.employee_name || '—'}</td>
+                                    <td className="px-3 py-2 text-gray-300">{e.department || e.dept || '—'}</td>
+                                    <td className="px-3 py-2 text-gray-300">{e.job_title || e.position || '—'}</td>
+                                    <td className="px-3 py-2 text-gray-400">{e.work_location || '—'}</td>
+                                    <td className="px-3 py-2 text-gray-400">{e.employment_category || '—'}</td>
+                                    <td className="px-3 py-2 text-emerald-300 font-bold">{Number(e.gross_salary || e.basic_salary || 0).toLocaleString()}</td>
+                                    <td className="px-3 py-2 text-gray-400">{e.pension_id || '—'}</td>
+                                    <td className="px-3 py-2 text-gray-400">{e.tin_no || '—'}</td>
+                                    <td className="px-3 py-2 text-gray-400 whitespace-nowrap">{e.telephone_number || '—'}</td>
+                                    <td className="px-3 py-2"><span className="px-2 py-0.5 rounded-full bg-white/5 text-[9px] font-bold uppercase">{e.status || 'Active'}</span></td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
     );
 };
-// Access Denied Fallback
+
 const AccessDenied = ({ glassClass }) => (
     <ContainerCard  Icon='Lock' glassClass={glassClass} className="h-full flex items-center justify-center">
         <div className="text-center text-red-400 p-8">
@@ -5680,6 +5584,131 @@ const Navigation = ({ menuItems, currentView, setCurrentView, expandedFolders, s
 
  
 
+const AuthScreen = ({ glassClass }) => {
+    const { login } = useAuth();
+    const { getCollection } = useData();
+    // ADDED: Get the logo from UI Context
+    const { uiSettings } = useUI(); 
+    
+    const [username, setUsername] = useState('');
+    const [password, setPassword] = useState('');
+    const [error, setError] = useState('');
+    const [isSubmitting, setIsSubmitting] = useState(false);
+
+    const handleSignIn = async (e) => {
+        e.preventDefault();
+        setError('');
+        setIsSubmitting(true);
+        try {
+            const allEmployees = getCollection('HR_EMPLOYEE_CRUD') || [];
+            const result = await login(username, password, allEmployees);
+            if (!result.success) {
+                setError(result.message || 'Invalid username or password.');
+            }
+        } catch (err) {
+            setError('An unexpected error occurred.');
+            console.error("Login Error:", err);
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    return (
+        <div className="h-full w-full min-h-0 flex items-center justify-center p-4 bg-slate-950 overflow-y-auto">
+            <div className={`max-w-md w-full p-8 rounded-3xl shadow-2xl border border-white/10 ${glassClass} transform transition-all`}>
+                
+                <div className="flex flex-col items-center mb-8">
+                    {/* FIXED: Conditional Logo Logic */}
+                    <div className="mb-4">
+                        {uiSettings?.logoURL ? (
+                            // Show your UPLOADED logo if it exists
+                            <img 
+                                src={uiSettings.logoURL} 
+                                alt="University Logo" 
+                                className="w-20 h-20 object-contain drop-shadow-lg"
+                            />
+                        ) : (
+                            // Fallback to the icon if no logo is set in UICustomization
+                            <div className="p-4 bg-cyan-500/20 rounded-2xl shadow-inner">
+                                <Icons.Monitor className="w-12 h-12 text-cyan-400" />
+                            </div>
+                        )}
+                    </div>
+                    
+                    <h1 className="text-3xl font-black text-white tracking-tighter italic uppercase text-center">
+                        Material Management - Unity University
+                    </h1>
+                    <p className="text-gray-400 mt-2 text-sm font-medium">Material Management Terminal</p>
+                </div>
+
+                <form onSubmit={handleSignIn} className="space-y-5">
+                    {error && (
+                        <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/50 text-red-400 text-xs flex items-center animate-shake">
+                            <Icons.AlertCircle className="w-4 h-4 mr-2 flex-shrink-0" />
+                            {error}
+                        </div>
+                    )}
+
+                    <div className="space-y-1">
+                        <Input 
+                            label="Username"
+                            value={username}
+                            onChange={(val) => setUsername(val)}
+                            placeholder="Enter your username"
+                            isRequired
+                        />
+                    </div>
+
+                    <div className="space-y-1">
+                        <Input 
+                            label="Password"
+                            type="password"
+                            placeholder="Password"
+                            autoComplete="current-password"
+                            value={password}
+                            onChange={(val) => setPassword(val)}
+                            isRequired
+                        />
+                    </div>
+
+                    <button 
+                        type="submit"
+                        disabled={isSubmitting}
+                        className={`w-full py-4 rounded-2xl font-bold text-white transition-all flex items-center justify-center text-lg
+                            ${isSubmitting 
+                                ? 'bg-gray-700 cursor-not-allowed' 
+                                : 'bg-cyan-600 hover:bg-cyan-500 active:scale-[0.97] shadow-xl shadow-cyan-900/40'
+                            }`}
+                    >
+                        {isSubmitting ? (
+                            <Icons.Loader2 className="w-6 h-6 animate-spin" />
+                        ) : (
+                            <>
+                                <Icons.LogIn className="w-5 h-5 mr-2" />
+                                Sign In
+                            </>
+                        )}
+                    </button>
+                
+                    
+
+                
+                    <LoginModuleSwitcher current="material" />
+                </form>
+
+                <div className="mt-8 pt-6 border-t border-white/5 text-center">
+                    
+                    
+
+                    <p className="text-[10px] text-gray-500 uppercase tracking-[0.2em] font-bold opacity-60">
+                        Secure Access Terminal
+                    </p>
+                </div>
+            </div>
+        </div>
+    );
+}
+
 const HrmAppContent = () => {
     const { isLoggedIn, currentView, setCurrentView, currentUser, checkPermission, logout } = useAuth();
     const { glassOpacityClass, rootStyle, uiSettings } = useUI();
@@ -5688,6 +5717,7 @@ const HrmAppContent = () => {
     // FETCH LIVE ROLES: This is the heartbeat of the April 21 logic
     const allRoles = getCollection('ROLE_CRUD') || [];
     const [showNotifications, setShowNotifications] = useState(false);
+    const [notifCount, setNotifCount] = useState(0);
     const [mobileNavOpen, setMobileNavOpen] = useState(false);
     const isMobile = useIsMobile(768); 
     const [expandedFolders, setExpandedFolders] = useState(['HR', 'SETTINGS']); 
@@ -5749,8 +5779,13 @@ const HrmAppContent = () => {
                         <p className="text-[8px] sm:text-[9px] text-cyan-500 uppercase font-black truncate">{currentUser?.role}</p>
                     </div>
                     <button type="button" onClick={logout} className="p-2 bg-red-500/10 text-red-500 rounded-lg hover:bg-red-500/20 text-[10px] sm:text-xs font-bold transition-all">LOGOUT</button>
-                    <button type="button" onClick={() => setShowNotifications(!showNotifications)} className={`p-2 rounded-full transition-all ${showNotifications ? 'bg-cyan-500 text-white' : 'text-gray-400'}`}>
+                    <button type="button" onClick={() => setShowNotifications(!showNotifications)} className={`relative p-2 rounded-full transition-all ${showNotifications ? 'bg-cyan-500 text-white' : 'text-gray-400 hover:text-cyan-300'}`} aria-label="Notifications">
                         <Icons.Bell className="w-5 h-5" />
+                        {notifCount > 0 && (
+                            <span className="absolute -top-0.5 -right-0.5 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-500 text-white text-[9px] font-black flex items-center justify-center ring-2 ring-slate-950">
+                                {notifCount > 99 ? '99+' : notifCount}
+                            </span>
+                        )}
                     </button>
                 </div>
             </header>
@@ -5802,7 +5837,8 @@ const HrmAppContent = () => {
                     <aside className={`w-[25%] border-l border-white/10 animate-in slide-in-from-right ${glassClass}`}>
                         <NotificationBar 
                             glassClass={glassClass} 
-                            currentUser={currentUser} 
+                            currentUser={currentUser}
+                            onCountChange={setNotifCount} 
                             onClose={() => setShowNotifications(false)} 
                         />
                     </aside>
@@ -5827,6 +5863,49 @@ const App = () => {
 
 // Main entry point is the App component
 
+
+const KPI = ({ title, value, iconName, glassClass, colorClass, explanation }) => {
+    const IconComponent = Icons[iconName] || Icons.Activity;
+
+    return (
+        <div className={`p-4 rounded-2xl flex flex-col justify-between ${glassClass} border border-white/5 shadow-xl h-28 hover:border-cyan-500/50 transition-all`}>
+            <div className="flex items-center justify-between w-full">
+                <div className="flex-1">
+                    <p className="text-[9px] font-black text-gray-400 uppercase tracking-[0.2em]">{title}</p>
+                    <p className="text-sm font-black text-white mt-1 tabular-nums tracking-tighter uppercase">
+                        {value}
+                    </p>
+                </div>
+                <div className={`p-2 rounded-xl bg-white/5 ${colorClass}`}>
+                    <IconComponent className="w-5 h-5" />
+                </div>
+            </div>
+            {/* Added Explaining Text here */}
+            <div className="mt-2 pt-2 border-t border-white/10">
+                <p className="text-[8px] leading-tight text-gray-500 italic">
+                    {explanation}
+                </p>
+            </div>
+        </div>
+    );
+}
+
+const StatCard = ({ label, value, Icon, color, glassClass }) => {
+    // If Icon is passed as a component from the Icons object (e.g. Icons.Clock)
+    // We must ensure it is rendered as a JSX tag <Icon />
+    return (
+        <div className={`p-4 rounded-xl ${glassClass} border border-white/10 flex items-center space-x-4`}>
+            <div className={`p-3 rounded-lg bg-gray-800/50 ${color}`}>
+                {/* This is where the error happens if Icon is undefined */}
+                {Icon && <Icon className="w-6 h-6" />}
+            </div>
+            <div>
+                <p className="text-xs text-gray-400 font-medium uppercase tracking-wider">{label}</p>
+                <p className="text-xl font-bold text-white">{value}</p>
+            </div>
+        </div>
+    );
+}
 
 const MatDashboard = ({ glassClass }) => {
     const { getCollection } = useData();
