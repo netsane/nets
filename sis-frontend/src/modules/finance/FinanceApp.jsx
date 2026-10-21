@@ -1,10 +1,34 @@
 import ModuleAccessGate from '../../unity/ModuleAccessGate.jsx';
-import { attemptSharedLogin, upsertSharedUsers, getSharedUsers, resolveAssignedRole, changeSharedPassword, upsertSharedUser, saveSharedRoles, saveSharedSession, loadSharedSession, clearSharedSession, canAccessModule, getSharedRoles, mergeSharedRolesInto } from '../../unity/SharedCredentials.js';
+import { attemptSharedLogin, upsertSharedUsers, upsertSharedUser, saveSharedRoles, saveSharedSession, loadSharedSession, clearSharedSession, canAccessModule, getSharedRoles, mergeSharedRolesInto } from '../../unity/SharedCredentials.js';
 import { mergeFinanceIntegrations, publishFinanceCoa, consumePendingMaterialJournals, buildPayMasterFromHr, loadHrEmployees, postPayrollBatchToFinance } from '../../unity/UnityModuleBridge.js';
 import LoginModuleSwitcher from '../../unity/LoginModuleSwitcher.jsx';
 import { MobileStyles, useIsMobile } from '../../unity/mobileCompat.js';
-import { IntelTip, IntelLabel, FieldIntelligenceSettings, FieldIntelligenceRuntime } from '../../unity/FieldIntelligence.jsx';
 
+/* Gender helpers (early — used by mock generators and AI) */
+const UU_FEMALE_FIRST_EARLY = new Set(['lomi','saba','tigist','eleni','hanna','aster','netsanet','sara','sarah','bethlehem','mahlet','selam','rahel','helen','meseret','hiwot','kidist','marta','martha','yeshi','almaz','tsion','beten','sosina','liya','ruth','meron','eden','abeba','tsehay','worknesh','senait','bezawit','hawi','meaza','frehiwot','genet','ayelech','mekdes','selamawit','tsehaynesh','bethel','hirut','firehiwot','yelena']);
+const UU_MALE_FIRST_EARLY = new Set(['abebe','kebede','chala','jemal','fasil','bereket','yonas','henok','kalab','tadesse','dawit','lemma','daniel','samuel','solomon','yared','mulugeta','getachew','tesfaye','hailu','mekonnen','assefa','girma','wolde','negash','bekele','yonatan','nahom','abel','kaleb','biruk','natnael','robelt','kirubel','ammanuel','amanuel','eyob','yohannes','melaku','sisay','asfaw','desta','haile','tewodros','mengistu','berhanu','gashaw','tamiru','fikadu','teklu','damte']);
+function uuGuessGenderFromName(fullName) {
+    const first = String(fullName || '').trim().split(/\s+/)[0].toLowerCase();
+    if (!first) return '';
+    if (UU_FEMALE_FIRST_EARLY.has(first)) return 'Female';
+    if (UU_MALE_FIRST_EARLY.has(first)) return 'Male';
+    return '';
+}
+function uuCorrectEmployeeGender(e) {
+    if (!e || typeof e !== 'object') return e;
+    const name = e.full_name || e.employee_name || e.name || e.Name || '';
+    const guessed = uuGuessGenderFromName(name);
+    if (!guessed) return e;
+    return Object.assign({}, e, { gender: guessed, Gender: guessed });
+}
+function uuCorrectEmployeeList(list) {
+    return Array.isArray(list) ? list.map(uuCorrectEmployeeGender) : [];
+}
+
+
+
+
+/* Gender helpers (hoisted early — used by mock generators and unityUniversity AI) */
 
 // Polyfill for hashCode
 if (!String.prototype.hashCode) {
@@ -210,52 +234,47 @@ const UnityMasterFinanceRegistry = ({ glassClass }) => {
           />
         </div>
 
-        <div className="flex flex-col min-w-[220px]">
+        <div className="flex flex-col min-w-[160px]">
           <label className="text-[10px] font-black uppercase tracking-widest mb-1 text-cyan-400">Filter by Campus</label>
-          <UUSelect
+          <select 
             value={selectedCampus}
-            onChange={setSelectedCampus}
-            options={campuses}
-            allLabel="ALL"
-          />
+            onChange={(e) => setSelectedCampus(e.target.value)}
+            className="px-4 py-3 rounded-xl border border-white/10 text-sm bg-slate-900 text-white focus:outline-none focus:border-cyan-500"
+          >
+            {campuses.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
         </div>
 
-        <div className="flex flex-col min-w-[220px]">
+        <div className="flex flex-col min-w-[160px]">
           <label className="text-[10px] font-black uppercase tracking-widest mb-1 text-cyan-400">Filter by Type</label>
-          <UUSelect
+          <select 
             value={selectedType}
-            onChange={setSelectedType}
-            options={types}
-            allLabel="ALL"
-          />
+            onChange={(e) => setSelectedType(e.target.value)}
+            className="px-4 py-3 rounded-xl border border-white/10 text-sm bg-slate-900 text-white focus:outline-none focus:border-cyan-500"
+          >
+            {types.map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
         </div>
 
-        <div className="flex flex-col min-w-[220px]">
+        <div className="flex flex-col min-w-[160px]">
           <label className="text-[10px] font-black uppercase tracking-widest mb-1 text-cyan-400">Group By</label>
-          <UUSelect
+          <select 
             value={groupBy}
-            onChange={setGroupBy}
-            options={[
-              { value: 'NONE', label: 'No Grouping' },
-              { value: 'campus', label: 'Campus' },
-              { value: 'type', label: 'Type' },
-              { value: 'unit', label: 'Unit' },
-            ]}
-          />
+            onChange={(e) => setGroupBy(e.target.value)}
+            className="px-4 py-3 rounded-xl border border-white/10 text-sm bg-slate-900 text-white focus:outline-none focus:border-cyan-500"
+          >
+            <option value="NONE">No Grouping</option>
+            <option value="campus">Campus</option>
+            <option value="type">Type</option>
+            <option value="unit">Unit</option>
+          </select>
         </div>
       </div>
 
       {/* ADD RECORD MODAL */}
       {isAddModalOpen && (
-        <div
-          className="fixed inset-0 flex items-start justify-center bg-slate-950/35 backdrop-blur-[2px] p-4 pt-20 sm:pt-24 overflow-y-auto"
-          style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 2147483000 }}
-        >
-          <div
-            className="bg-slate-900 border-2 border-cyan-400 rounded-3xl shadow-[0_20px_50px_rgba(0,0,0,0.5)] w-full max-w-2xl relative"
-            onClick={(e) => e.stopPropagation()}
-            onMouseDown={(e) => e.stopPropagation()}
-          >
+        <div className="h-full w-full min-h-0 flex items-center justify-center bg-slate-950 p-4 overflow-y-auto">
+          <div className="bg-slate-900 border-2 border-cyan-400 rounded-3xl shadow-[0_20px_50px_rgba(0,0,0,0.5)] w-full max-w-2xl relative shadow-2xl">
             <div className="flex justify-between items-center mb-6 pb-4 border-b border-white/10">
               <h3 className="text-xl font-black text-white italic tracking-tighter uppercase">Add New Chart of Account Record</h3>
               <button 
@@ -288,29 +307,43 @@ const UnityMasterFinanceRegistry = ({ glassClass }) => {
 
                 <div>
                   <label className="block text-xs font-semibold text-gray-300 mb-1">Account Type</label>
-                  <UUSelect
-                    value={newAcc.type}
-                    onChange={(v) => setNewAcc({ ...newAcc, type: v })}
-                    options={['Asset', 'Liability', 'Equity', 'Revenue', 'Expense']}
-                  />
+                  <select 
+                    value={newAcc.type} 
+                    onChange={e => setNewAcc({ ...newAcc, type: e.target.value })}
+                    className="w-full px-4 py-3 rounded-xl border border-white/10 text-sm bg-slate-800 text-white focus:border-cyan-500 outline-none"
+                  >
+                    <option value="Asset">Asset</option>
+                    <option value="Liability">Liability</option>
+                    <option value="Equity">Equity</option>
+                    <option value="Revenue">Revenue</option>
+                    <option value="Expense">Expense</option>
+                  </select>
                 </div>
 
                 <div>
                   <label className="block text-xs font-semibold text-gray-300 mb-1">Cost Center (CC)</label>
-                  <UUSelect
-                    value={newAcc.cc}
-                    onChange={(v) => setNewAcc({ ...newAcc, cc: v })}
-                    options={Object.entries(unitMapping).map(([code, name]) => ({ value: code, label: `${code} - ${name}` }))}
-                  />
+                  <select 
+                    value={newAcc.cc} 
+                    onChange={e => setNewAcc({ ...newAcc, cc: e.target.value })}
+                    className="w-full px-4 py-3 rounded-xl border border-white/10 text-sm bg-slate-800 text-white focus:border-cyan-500 outline-none"
+                  >
+                    {Object.entries(unitMapping).map(([code, name]) => (
+                      <option key={code} value={code}>{code} - {name}</option>
+                    ))}
+                  </select>
                 </div>
 
                 <div>
                   <label className="block text-xs font-semibold text-gray-300 mb-1">Location / Campus</label>
-                  <UUSelect
-                    value={newAcc.loc}
-                    onChange={(v) => setNewAcc({ ...newAcc, loc: v })}
-                    options={Object.entries(campusMapping).map(([code, name]) => ({ value: code, label: `${code} - ${name}` }))}
-                  />
+                  <select 
+                    value={newAcc.loc} 
+                    onChange={e => setNewAcc({ ...newAcc, loc: e.target.value })}
+                    className="w-full px-4 py-3 rounded-xl border border-white/10 text-sm bg-slate-800 text-white focus:border-cyan-500 outline-none"
+                  >
+                    {Object.entries(campusMapping).map(([code, name]) => (
+                      <option key={code} value={code}>{code} - {name}</option>
+                    ))}
+                  </select>
                 </div>
 
                 <div className="md:col-span-2">
@@ -497,9 +530,6 @@ const exportToExcelRobustTable = () => {
 
                
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import ReactDOM, { createPortal } from 'react-dom';
-// useCallback via React
-
 import * as Icons from 'lucide-react';
 
 import {
@@ -768,96 +798,112 @@ const exportTableWorkbook = async (data, columns, filename, options = {}) => {
 /** Unified Export button — Excel/PDF/DOCX/CSV all use table columns */
 const ExportButton = ({ data, columns, filename, chartRef, isFinancial = false }) => {
     const [isOpen, setIsOpen] = useState(false);
-    const btnRef = useRef(null);
-    const [menuBox, setMenuBox] = useState(null);
-
+    const dropdownRef = useRef(null);
     const getFilename = () => String(filename || 'Unity_Export').replace(/\s+/g, '_');
-    const visibleCols = () => (columns || []).filter((c) => c && !c.isHidden && c.type !== 'array');
-
-    const placeExportMenu = React.useCallback(() => {
-        const el = btnRef.current;
-        if (!el) return;
-        const r = el.getBoundingClientRect();
-        const width = 256;
-        let left = r.right - width;
-        if (left < 8) left = 8;
-        if (left + width > window.innerWidth - 8) left = Math.max(8, window.innerWidth - width - 8);
-        const gap = 8;
-        const spaceBelow = window.innerHeight - r.bottom - gap;
-        const openUp = spaceBelow < 220 && r.top > spaceBelow;
-        const maxHeight = Math.min(360, openUp ? r.top - gap : Math.max(spaceBelow, 180));
-        const top = openUp ? Math.max(8, r.top - gap - maxHeight) : r.bottom + gap;
-        setMenuBox({ top, left, width, maxHeight });
-    }, []);
-
-    useEffect(() => {
-        if (!isOpen) return undefined;
-        placeExportMenu();
-        const onDoc = (e) => {
-            if (btnRef.current && btnRef.current.contains(e.target)) return;
-            if (e.target && e.target.closest && e.target.closest('[data-uu-export-menu]')) return;
-            setIsOpen(false);
-        };
-        const onRepo = () => placeExportMenu();
-        document.addEventListener('mousedown', onDoc);
-        document.addEventListener('touchstart', onDoc);
-        window.addEventListener('resize', onRepo);
-        window.addEventListener('scroll', onRepo, true);
-        return () => {
-            document.removeEventListener('mousedown', onDoc);
-            document.removeEventListener('touchstart', onDoc);
-            window.removeEventListener('resize', onRepo);
-            window.removeEventListener('scroll', onRepo, true);
-        };
-    }, [isOpen, placeExportMenu]);
+    const visibleCols = () => (columns || []).filter(c => c && !c.isHidden && c.type !== 'array');
 
     const handleAction = async (type) => {
         setIsOpen(false);
         const fname = getFilename();
         const rows = Array.isArray(data) ? data : [];
         const cols = visibleCols();
+
         try {
             if (type === 'PNG') {
-                if (!chartRef?.current) return alert('No capture area for PNG.');
+                if (!chartRef?.current) return alert('System cannot locate display area for capture.');
                 const canvas = await html2canvas(chartRef.current, { backgroundColor: '#020617', scale: 3 });
                 saveAs(canvas.toDataURL('image/png'), `${fname}_${new Date().toISOString().slice(0, 10)}.png`);
                 return;
             }
+
             if (type === 'XLSX') {
-                if (typeof exportTableWorkbook === 'function') {
-                    await exportTableWorkbook(rows, cols.length ? cols : (columns || []), filename || fname, {
-                        sheetName: String(filename || 'Data').slice(0, 31),
-                    });
-                } else if (typeof generateRobustWorkbook === 'function' && isFinancial) {
-                    await generateRobustWorkbook(rows, filename || fname);
+                if (isFinancial && cols.length === 0 && typeof generateRobustWorkbook === 'function') {
+                    const robustData = rows.map(r => ({
+                        label: r.label || r.designation || r.name || '',
+                        note: r.note || '',
+                        amount: r.v25 != null ? r.v25 : (r.amount != null ? r.amount : 0),
+                        v25: r.v25 != null ? r.v25 : (r.amount != null ? r.amount : 0),
+                        v24: r.v24 != null ? r.v24 : 0,
+                        indent: r.indent, isBold: r.isBold || r.type === 'total', type: r.type, isHeader: r.isHeader
+                    }));
+                    await generateRobustWorkbook(robustData, filename || fname);
                 } else {
-                    alert('Excel export is not available in this module.');
+                    await exportTableWorkbook(rows, cols.length ? cols : (columns || []), filename || fname, {
+                        sheetName: String(filename || 'Data').slice(0, 31)
+                    });
                 }
                 return;
             }
+
             if (type === 'PDF') {
-                if (typeof convertToPDF === 'function') convertToPDF(rows, cols, filename || fname);
-                else alert('PDF export is not available.');
+                const doc = new jsPDF({ orientation: cols.length > 6 ? 'landscape' : 'portrait', unit: 'mm', format: 'a4' });
+                doc.setFontSize(14);
+                doc.text('UNITY UNIVERSITY', 14, 14);
+                doc.setFontSize(10);
+                doc.text(String(filename || 'Export').toUpperCase(), 14, 20);
+                doc.setFontSize(8);
+                doc.text(`Generated ${new Date().toLocaleString()} · ${rows.length} records`, 14, 25);
+                doc.autoTable({
+                    head: [cols.map(c => c.label || c.key)],
+                    body: rows.map(r => cols.map(c => {
+                        const v = r[c.key];
+                        if (v == null) return '';
+                        if (typeof v === 'number') return v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                        return String(v);
+                    })),
+                    startY: 28,
+                    theme: 'grid',
+                    styles: { fontSize: 7, cellPadding: 1.5 },
+                    headStyles: { fillColor: [30, 58, 95], textColor: 255, fontStyle: 'bold' },
+                    alternateRowStyles: { fillColor: [241, 245, 249] },
+                    margin: { left: 10, right: 10 }
+                });
+                doc.save(`${fname}_${new Date().toISOString().slice(0, 10)}.pdf`);
                 return;
             }
+
             if (type === 'DOCX') {
-                if (typeof convertToDOCX === 'function') await convertToDOCX(rows, cols, filename || fname);
-                else alert('Word export is not available.');
+                const { Document, Packer, Paragraph, Table, TableCell, TableRow, WidthType, TextRun, ShadingType } = docx;
+                const headerRow = new TableRow({
+                    children: cols.map(c => new TableCell({
+                        children: [new Paragraph({ children: [new TextRun({ text: String(c.label || c.key).toUpperCase(), bold: true, color: 'FFFFFF', size: 16 })] })],
+                        shading: { fill: '1E3A5F', type: ShadingType.CLEAR }
+                    })),
+                    tableHeader: true
+                });
+                const dataRows = rows.map((r, i) => new TableRow({
+                    children: cols.map(c => {
+                        let v = r[c.key];
+                        if (v == null) v = '';
+                        else if (typeof v === 'number') v = v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                        else v = String(v);
+                        return new TableCell({
+                            children: [new Paragraph({ children: [new TextRun({ text: v, size: 16 })] })],
+                            shading: i % 2 === 0 ? { fill: 'F8FAFC', type: ShadingType.CLEAR } : undefined
+                        });
+                    })
+                }));
+                const doc = new Document({
+                    sections: [{
+                        children: [
+                            new Paragraph({ children: [new TextRun({ text: 'UNITY UNIVERSITY', bold: true, size: 32 })] }),
+                            new Paragraph({ children: [new TextRun({ text: String(filename || 'Export').toUpperCase(), bold: true, size: 22 })], spacing: { after: 200 } }),
+                            new Paragraph({ children: [new TextRun({ text: `${rows.length} records · ${new Date().toLocaleString()}`, size: 16, italics: true })], spacing: { after: 200 } }),
+                            new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows: [headerRow, ...dataRows] })
+                        ]
+                    }]
+                });
+                saveAs(await Packer.toBlob(doc), `${fname}_${new Date().toISOString().slice(0, 10)}.docx`);
                 return;
             }
+
             if (type === 'CSV') {
                 const esc = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
                 const lines = [
-                    'UNITY UNIVERSITY',
-                    String(filename || 'Export').toUpperCase() + ' (Official Record)',
-                    `Generated ${new Date().toLocaleString()} · ${rows.length} records`,
-                    '',
-                    cols.map((c) => esc(c.label || c.key)).join(','),
-                    ...rows.map((r) => cols.map((c) => esc(r[c.key])).join(',')),
-                    '',
-                    'Unity University · Official system export · Confidential',
+                    cols.map(c => esc(c.label || c.key)).join(','),
+                    ...rows.map(r => cols.map(c => esc(r[c.key])).join(','))
                 ];
-                saveAs(new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8' }), `${fname}_${new Date().toISOString().slice(0, 10)}.csv`);
+                saveAs(new Blob(['\ufeff' + lines.join(String.fromCharCode(10))], { type: 'text/csv;charset=utf-8' }), `${fname}_${new Date().toISOString().slice(0, 10)}.csv`);
             }
         } catch (err) {
             console.error('[EXPORT]', err);
@@ -865,60 +911,26 @@ const ExportButton = ({ data, columns, filename, chartRef, isFinancial = false }
         }
     };
 
-    const menuItems = (
-        <div className="p-2 grid grid-cols-1 gap-1">
-            <button type="button" onClick={() => handleAction('XLSX')} className="w-full text-left px-4 py-3 text-[11px] font-bold text-emerald-400 hover:bg-white/5 transition flex items-center gap-3 rounded-xl"><Icons.FileSpreadsheet size={16}/> Excel Spreadsheet</button>
-            <button type="button" onClick={() => handleAction('DOCX')} className="w-full text-left px-4 py-3 text-[11px] font-bold text-blue-400 hover:bg-white/5 transition flex items-center gap-3 rounded-xl"><Icons.FileBox size={16}/> Word Document</button>
-            <button type="button" onClick={() => handleAction('PDF')} className="w-full text-left px-4 py-3 text-[11px] font-bold text-rose-400 hover:bg-white/5 transition flex items-center gap-3 rounded-xl"><Icons.FileText size={16}/> PDF Document</button>
-            <button type="button" onClick={() => handleAction('CSV')} className="w-full text-left px-4 py-3 text-[11px] font-bold text-gray-400 hover:bg-white/5 transition flex items-center gap-3 rounded-xl"><Icons.Filter size={16}/> CSV (Raw Data)</button>
-            <hr className="border-white/5 mx-2 my-1" />
-            <button type="button" onClick={() => handleAction('PNG')} className="w-full text-left px-4 py-3 text-[11px] font-bold text-cyan-400 hover:bg-white/5 transition flex items-center gap-3 rounded-xl"><Icons.Camera size={16}/> Image Capture (PNG)</button>
-        </div>
-    );
-
     return (
-        <div className="relative inline-block text-left shrink-0">
-            <button
-                ref={btnRef}
-                type="button"
-                onClick={() => setIsOpen((v) => !v)}
-                className="bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-2.5 px-6 rounded-xl flex items-center gap-2 shadow-lg transition-all active:scale-95 text-[11px] uppercase tracking-widest border border-white/20"
-            >
-                <Icons.Download size={16}/> Export Options
+        <div className="relative inline-block text-left" ref={dropdownRef}>
+            <button type="button" onClick={() => setIsOpen(!isOpen)} className="bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-2.5 px-6 rounded-xl flex items-center gap-2 shadow-lg transition-all active:scale-95 text-[11px] uppercase tracking-widest border border-white/20">
+                <Icons.Download size={16}/> Export Options ⏷
             </button>
-            {(() => {
-                if (!isOpen || !menuBox) return null;
-                const menu = (
-                    <div
-                        data-uu-export-menu="1"
-                        className="rounded-2xl bg-slate-900 border border-white/15 shadow-2xl overflow-hidden backdrop-blur-xl"
-                        style={{
-                            position: 'fixed',
-                            top: menuBox.top,
-                            left: menuBox.left,
-                            width: menuBox.width,
-                            maxHeight: menuBox.maxHeight,
-                            zIndex: 2147483646,
-                            overflowY: 'auto',
-                        }}
-                        onMouseDown={(e) => e.stopPropagation()}
-                    >
-                        {menuItems}
+            {isOpen && (
+                <div className="absolute right-0 top-full mt-2 w-64 rounded-2xl bg-slate-900 border border-white/10 shadow-2xl overflow-hidden backdrop-blur-xl z-[10001]">
+                    <div className="p-2 grid grid-cols-1 gap-1">
+                        <button type="button" onClick={() => handleAction('XLSX')} className="w-full text-left px-4 py-3 text-[11px] font-bold text-emerald-400 hover:bg-white/5 transition flex items-center gap-3 rounded-xl"><Icons.FileSpreadsheet size={16}/> Excel Spreadsheet</button>
+                        <button type="button" onClick={() => handleAction('DOCX')} className="w-full text-left px-4 py-3 text-[11px] font-bold text-blue-400 hover:bg-white/5 transition flex items-center gap-3 rounded-xl"><Icons.FileBox size={16}/> Word Document</button>
+                        <button type="button" onClick={() => handleAction('PDF')} className="w-full text-left px-4 py-3 text-[11px] font-bold text-rose-400 hover:bg-white/5 transition flex items-center gap-3 rounded-xl"><Icons.FileText size={16}/> PDF Document</button>
+                        <button type="button" onClick={() => handleAction('CSV')} className="w-full text-left px-4 py-3 text-[11px] font-bold text-gray-400 hover:bg-white/5 transition flex items-center gap-3 rounded-xl"><Icons.Filter size={16}/> CSV (Raw Data)</button>
+                        <hr className="border-white/5 mx-2 my-1" />
+                        <button type="button" onClick={() => handleAction('PNG')} className="w-full text-left px-4 py-3 text-[11px] font-bold text-cyan-400 hover:bg-white/5 transition flex items-center gap-3 rounded-xl"><Icons.Camera size={16}/> Image Capture (PNG)</button>
                     </div>
-                );
-                const portalFn = (typeof createPortal === 'function')
-                    ? createPortal
-                    : (typeof ReactDOM !== 'undefined' && ReactDOM.createPortal ? ReactDOM.createPortal : null);
-                if (portalFn && typeof document !== 'undefined' && document.body) {
-                    return portalFn(menu, document.body);
-                }
-                return menu;
-            })()}
+                </div>
+            )}
         </div>
     );
 };
-
-
 
 
 
@@ -1031,26 +1043,28 @@ const uuMergeHrEmployees = (local = []) => {
     const dropDemo = (n) => {
         if (!n) return null;
         const name = String(n.name || n.full_name || n.employee_name || '').trim();
-        if (!name) return null;
         if (/^staff member\s*\d*$/i.test(name)) return null;
         if (/^ultimate sample/i.test(name)) return null;
         return n;
     };
+    // Prefer the list passed in (bootstrap / allData from HR). Do not let stale localStorage revive old names.
+    const fromLocal = (Array.isArray(local) ? local : []).map(uuNormHrEmp).map(dropDemo).filter(Boolean);
+    if (fromLocal.length) {
+        const by = new Map();
+        fromLocal.forEach((n) => {
+            const k = String(n.id_number || n.id || n.name).toLowerCase();
+            by.set(k, n);
+        });
+        return Array.from(by.values());
+    }
+    // Fallback: shared storage only when allData has no HR rows yet
     const by = new Map();
-    const put = (e) => {
-        const n = dropDemo(typeof uuNormHrEmp === 'function' ? uuNormHrEmp(e) : e);
+    uuLoadHrEmployees().forEach((e) => {
+        const n = dropDemo(uuNormHrEmp(e));
         if (!n) return;
-        const k = String(n.id_number || n.id || n.name).toLowerCase().trim();
-        if (!k) return;
-        by.set(k, { ...(by.get(k) || {}), ...n });
-    };
-    // Finance in-memory rows (may be stale)
-    (Array.isArray(local) ? local : []).forEach(put);
-    // Live Employee Master published by HR module (always overlays same id/name)
-    try {
-        const shared = typeof uuLoadHrEmployees === 'function' ? uuLoadHrEmployees() : [];
-        (Array.isArray(shared) ? shared : []).forEach(put);
-    } catch (e) {}
+        const k = String(n.id_number || n.id || n.name).toLowerCase();
+        by.set(k, n);
+    });
     return Array.from(by.values());
 };
 const uuPublishHrEmployees = (list) => {
@@ -1530,7 +1544,7 @@ const generateMockData = (collectionName, count = 35) => {
                     // Page 2 Fields
                     id_number: `UU-${String(i).padStart(3, '0')}`,
                     name: employeeName, 
-                    gender: i % 2 === 0 ? 'Male' : 'Female',
+                    gender: uuGuessGenderFromName(typeof employeeName !== 'undefined' ? employeeName : (typeof fullName !== 'undefined' ? fullName : '')) || (i % 2 === 0 ? 'Male' : 'Female'),
                     dob_gc: dob_gc,
                     dob_ec: dob_ec,
                     age: (2026 - birthYear).toString(),
@@ -1717,113 +1731,26 @@ case 'HR_RECRUITMENT_CRUD':
     break;   
     // Inside your generateMockData function switch statement:
 case 'HR_COMPETENCE_CRUD':
-case 'competenceMatrix': {
-                if (i !== 1) break;
-                const skillCats = (typeof NEW_MOCK_SKILLS !== 'undefined' && NEW_MOCK_SKILLS)
-                    ? NEW_MOCK_SKILLS
-                    : {
-                        'Core / Foundational Competencies (Universal for all jobs)': ['Critical thinking', 'Problem-solving', 'Decision-making', 'Learning agility'],
-                        'Communication Skills': ['Verbal communication', 'Written communication', 'Presentation skills', 'Active listening'],
-                        'Interpersonal Skills': ['Teamwork', 'Collaboration', 'Conflict resolution', 'Emotional intelligence'],
-                        'Technical / Professional': ['Domain expertise', 'Process compliance', 'Quality focus', 'Digital literacy'],
-                      };
-                const catNames = Object.keys(skillCats);
-                const levelLabel = (s) => ({ 1: 'Novice', 2: 'Developing', 3: 'Competent', 4: 'Proficient', 5: 'Expert' }[Number(s)] || 'Competent');
-                const periods = ['2025-H2', '2026-H1', '2026-H2'];
-                // Same index space as HR_EMPLOYEE_CRUD mocks (i = 1..count)
-                for (let i = 1; i <= Math.min(count, 18); i++) {
-                    const empNameRaw = employeeNames[(i - 1) % employeeNames.length];
-                    const low = String(empNameRaw || '').toLowerCase();
-                    if (['admin', 'hr_manager', 'hr_staff', 'employee'].includes(low)) continue;
-                    const empName = String(empNameRaw).includes(' ') ? empNameRaw : `${empNameRaw} Unity`;
-                    const empId = `UU-${String(i).padStart(3, '0')}`;
-                    const dept = departments[i % departments.length];
-                    const pos = i % 2 === 0 ? `Lecturer ${i % 3 + 1}` : `Officer ${i % 3 + 1}`;
-                    for (let s = 0; s < 6; s++) {
-                        const cat = catNames[s % catNames.length];
-                        const skills = skillCats[cat] || ['General competency'];
-                        const skill = skills[s % skills.length];
-                        const score = 2 + ((i * 3 + s * 7) % 4);
-                        const weight = cat.toLowerCase().includes('core') ? 1.2
-                            : (cat.toLowerCase().includes('tech') || cat.toLowerCase().includes('professional')) ? 1.1
-                            : 1.0;
-                        data.push({
-                            id: `comp-${empId}-${s + 1}`,
-                            employee_id: empId,
-                            employee_name: empName,
-                            department: dept,
-                            position: pos,
-                            skill_category: cat,
-                            skill,
-                            score: String(score),
-                            rating_label: levelLabel(score),
-                            weight: Number(weight.toFixed(2)),
-                            weighted_score: Number((score * weight).toFixed(2)),
-                            period: periods[i % periods.length],
-                            last_assessed: itemDate || getRandomDate(),
-                            evaluator: 'HR Manager',
-                            evidence: `Observed on duty · ${skill} · ${dept}`,
-                            notes: score >= 4 ? 'Exceeds role expectation' : (score <= 2 ? 'Development plan required' : 'Meets expectation'),
-                            status: score <= 2 ? 'Development' : 'Active',
-                        });
-                    }
-                }
+case 'competenceMatrix': 
+    // Flatten all skills from the categories into one array
+    const allAvailableSkills = Object.values(NEW_MOCK_SKILLS).flat();
+    
+    data.push({ 
+        id,
+        // Use the consistent employee name
+        employee_name: employeeName,
+        employee_id: `UU-00${i}`,
+        department: departments[i % departments.length],
+        // FIX: This ensures a skill is picked from the full list for every mock record
+        skill: allAvailableSkills[i % allAvailableSkills.length], 
+        score: (Math.floor(Math.random() * 5) + 1).toString(),
+        last_assessed: itemDate,
+        evaluator: employeeNames[(i + 5) % employeeNames.length] || 'HR Manager'
+    });
+    break;
+            case 'appraisalRecords':
+                data.push({ id, employee_name: employeeName, appraisal_date: itemDate, appraisal_score: employeeName === 'employee' ? '4.5' : (Math.random() * 5).toFixed(1), feedback_manager: `Manager Feedback ${i}`, feedback_peer: `Peer Feedback ${i}`, feedback_self: `Self Review ${i}`, status: employeeName === 'employee' && i % 2 === 0 ? 'Pending' : 'Completed' });
                 break;
-            }
-            case 'appraisalRecords': {
-                if (i !== 1) break;
-                const levelBand = (avg) => {
-                    const a = Number(avg) || 0;
-                    if (a >= 4.5) return 'Outstanding';
-                    if (a >= 4.0) return 'Exceeds Expectations';
-                    if (a >= 3.0) return 'Meets Expectations';
-                    if (a >= 2.0) return 'Needs Improvement';
-                    return 'Unsatisfactory';
-                };
-                for (let i = 1; i <= Math.min(count, 18); i++) {
-                    const empNameRaw = employeeNames[(i - 1) % employeeNames.length];
-                    const low = String(empNameRaw || '').toLowerCase();
-                    if (['admin', 'hr_manager', 'hr_staff', 'employee'].includes(low)) continue;
-                    const empName = String(empNameRaw).includes(' ') ? empNameRaw : `${empNameRaw} Unity`;
-                    const empId = `UU-${String(i).padStart(3, '0')}`;
-                    const dept = departments[i % departments.length];
-                    const pos = i % 2 === 0 ? `Lecturer ${i % 3 + 1}` : `Officer ${i % 3 + 1}`;
-                    let wSum = 0, wTot = 0, skills = 0;
-                    for (let s = 0; s < 6; s++) {
-                        const score = 2 + ((i * 3 + s * 7) % 4);
-                        const weight = 1.0 + (s % 3) * 0.1;
-                        wSum += score * weight;
-                        wTot += weight;
-                        skills += 1;
-                    }
-                    const avg = wTot ? Math.round((wSum / wTot) * 100) / 100 : 3;
-                    const band = levelBand(avg);
-                    const statuses = ['Completed', 'Completed', 'Completed', 'Pending', 'In Review'];
-                    data.push({
-                        id: `apr-${empId}-2026`,
-                        employee_id: empId,
-                        employee_name: empName,
-                        department: dept,
-                        position: pos,
-                        appraisal_period: '2026-H1',
-                        appraisal_date: itemDate || getRandomDate(),
-                        competence_avg: avg,
-                        skills_assessed: skills,
-                        appraisal_score: avg,
-                        performance_band: band,
-                        goals_score: Math.min(5, Math.round((avg + 0.2) * 10) / 10),
-                        conduct_score: Math.min(5, Math.round((avg - 0.1) * 10) / 10),
-                        feedback_manager: `${String(empName).split(' ')[0]} demonstrates ${band.toLowerCase()} performance. Competence average ${avg}/5 across ${skills} skills.`,
-                        feedback_peer: `Peer input: collaborative and reliable in ${dept}.`,
-                        feedback_self: `Self review: committed to continuous improvement for ${pos}.`,
-                        development_plan: avg < 3.5 ? 'Targeted training on lowest-scored competencies within 90 days.' : 'Maintain strengths; mentor junior staff.',
-                        next_review_date: '2026-12-15',
-                        evaluator: 'HR Manager',
-                        status: statuses[i % statuses.length],
-                    });
-                }
-                break;
-            }
             case 'leaveRecords':
                 data.push({ id, employee_name: employeeName, leave_type: ['Annual Leave', 'Sick Leave', 'Emergency Leave'][i % 3], start_date: itemDate, end_date: itemDate, days_taken: (Math.floor(Math.random() * 10) + 1).toFixed(0), status: 'Approved' });
                 break;
@@ -2233,7 +2160,10 @@ const UIProvider = ({ children }) => {
     // GAUGE STATES
     const [bgScale, setBgScale] = useState(1);
     const [bgBlur, setBgBlur] = useState(0);
-    const [bgBrightness, setBgBrightness] = useState(100); 
+    const [bgBrightness, setBgBrightness] = useState(100);
+    const [aiDockEnabled, setAiDockEnabled] = useState(() => {
+        try { return localStorage.getItem('uu_ai_dock') === '1'; } catch (e) { return false; }
+    }); 
 
     // --- NEW: Global Transparency Injector ---
     // This forcibly removes solid backgrounds from your Main, Sidebar, and Nav components
@@ -2304,6 +2234,10 @@ const UIProvider = ({ children }) => {
         }
         if (settings.bgScale !== undefined) setBgScale(settings.bgScale);
         if (settings.bgBlur !== undefined) setBgBlur(settings.bgBlur);
+        if (settings.aiDockEnabled !== undefined) {
+            setAiDockEnabled(!!settings.aiDockEnabled);
+            try { localStorage.setItem('uu_ai_dock', settings.aiDockEnabled ? '1' : '0'); } catch (e) {}
+        }
         if (settings.bgBrightness !== undefined) setBgBrightness(settings.bgBrightness);
     };
 
@@ -2327,7 +2261,7 @@ const UIProvider = ({ children }) => {
     const exportCSV = (slug) => {
         const data = allData[slug] || [];
         if (!data.length) return;
-        const csv = [Object.keys(data[0]).join(','), ...data.map(r => Object.values(r).join(','))].join('\n');
+        const csv = [Object.keys(data[0]).join(','), ...data.map(r => Object.values(r).join(','))].join(String.fromCharCode(10));
         const blob = new Blob([csv], { type: 'text/csv' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a'); a.href = url; a.download = `${slug}.csv`; a.click();
@@ -2335,8 +2269,8 @@ const UIProvider = ({ children }) => {
 
     return (
         <UIContext.Provider value={{ 
-            rootStyle, updateUISettings, resetToDefault,
-            uiSettings: { backgroundImage, logoURL, primaryColor: backgroundColor, textColor, bgBlur, bgScale, bgBrightness } 
+            rootStyle, updateUISettings, resetToDefault, aiDockEnabled,
+            uiSettings: { backgroundImage, logoURL, primaryColor: backgroundColor, textColor, bgBlur, bgScale, bgBrightness, aiDockEnabled } 
         }}>
             {/* THE BACKGROUND IMAGE LAYER */}
             <div style={rootStyle} />
@@ -2389,174 +2323,19 @@ export const AuthProvider = ({ children }) => {
     }, []);
 
     const changePassword = async (oldPassword, newPassword, getCollection, updateRecord) => {
-        try {
-            if (!currentUser || !currentUser.username) {
-                return { success: false, message: 'Not signed in.' };
-            }
-            const uName = String(currentUser.username).trim();
-            const oldP = String(oldPassword ?? '');
-            const newP = String(newPassword ?? '').trim();
-            if (!oldP) return { success: false, message: 'Current password is required.' };
-            if (!newP || newP.length < 4) {
-                return { success: false, message: 'New password must be at least 4 characters.' };
-            }
-            if (oldP === newP) {
-                return { success: false, message: 'New password must be different from the current password.' };
-            }
+        if (!getCollection || !updateRecord) return { success: false, message: 'Database failure.' };
+        const employees = getCollection('HR_EMPLOYEE_CRUD') || [];
+        const userRecord = employees.find(u => u.username === currentUser.username);
 
-            // Prefer shared helper; fall back to local implementation
-            let applyShared = null;
-            try {
-                if (typeof changeSharedPassword === 'function') applyShared = changeSharedPassword;
-            } catch (e) {}
-            if (!applyShared) {
-                applyShared = (username, o, n) => {
-                    try {
-                        const users = (typeof getSharedUsers === 'function' ? getSharedUsers() : []) || [];
-                        const found = users.find(
-                            (u) => String(u.username || '').trim().toLowerCase() === String(username).toLowerCase()
-                        );
-                        if (!found) return { success: false, message: 'User account not found.' };
-                        const stored = String(found.password ?? '');
-                        if (stored !== String(o ?? '') && stored.trim() !== String(o ?? '').trim()) {
-                            return { success: false, message: 'Current password incorrect.' };
-                        }
-                        if (typeof upsertSharedUser === 'function') {
-                            upsertSharedUser({
-                                username: found.username,
-                                password: String(n).trim(),
-                                name: found.name,
-                                role: found.role,
-                                system_role: found.system_role || found.role,
-                                role_id: found.role_id,
-                                role_name: found.role_name,
-                                modules: found.modules,
-                                id: found.id,
-                                _forceRole: true,
-                            });
-                        } else {
-                            // raw localStorage write
-                            const key = 'uu_shared_users_v1';
-                            const raw = JSON.parse(localStorage.getItem(key) || '[]');
-                            const list = Array.isArray(raw) ? raw : [];
-                            const idx = list.findIndex(
-                                (u) => String(u.username || '').toLowerCase() === String(username).toLowerCase()
-                            );
-                            const row = {
-                                ...(idx >= 0 ? list[idx] : {}),
-                                username: found.username || username,
-                                password: String(n).trim(),
-                                role: found.role,
-                                name: found.name,
-                            };
-                            if (idx >= 0) list[idx] = { ...list[idx], ...row };
-                            else list.push(row);
-                            localStorage.setItem(key, JSON.stringify(list));
-                        }
-                        return { success: true, message: 'Password updated successfully. Please sign in again.' };
-                    } catch (err) {
-                        console.error(err);
-                        return { success: false, message: 'Password change failed.' };
-                    }
-                };
-            }
-
-            let result = applyShared(uName, oldP, newP);
-
-            // If not in shared store, try matching session-only / HR employee password
-            if (!result.success && result.message === 'User account not found.') {
-                // Seed shared user from current session + provided current password
-                try {
-                    if (typeof upsertSharedUser === 'function') {
-                        // Only accept if they can prove old password against HR or we allow set
-                        let hrOk = false;
-                        if (getCollection) {
-                            const employees = getCollection('HR_EMPLOYEE_CRUD') || [];
-                            const userRecord = employees.find(
-                                (u) =>
-                                    u &&
-                                    String(u.username || u.user_name || '').toLowerCase() === uName.toLowerCase()
-                            );
-                            if (userRecord && String(userRecord.password ?? '') === oldP) hrOk = true;
-                        }
-                        // Also accept if they just logged in with this password (session active)
-                        // User is logged in — trust oldP only when HR matches OR shared gets created with verify
-                        if (hrOk) {
-                            upsertSharedUser({
-                                username: uName,
-                                password: newP,
-                                name: currentUser.name || uName,
-                                role: currentUser.role,
-                                role_id: currentUser.role_id,
-                                role_name: currentUser.role_name,
-                                _forceRole: true,
-                            });
-                            result = { success: true, message: 'Password updated successfully. Please sign in again.' };
-                        }
-                    }
-                } catch (e) {}
-            }
-
-            // HR employee password sync
-            try {
-                if (result.success && getCollection && updateRecord) {
-                    const employees = getCollection('HR_EMPLOYEE_CRUD') || [];
-                    const userRecord = employees.find(
-                        (u) =>
-                            u &&
-                            String(u.username || u.user_name || '').toLowerCase() === uName.toLowerCase()
-                    );
-                    if (userRecord && userRecord.id != null) {
-                        await updateRecord('HR_EMPLOYEE_CRUD', userRecord.id, {
-                            ...userRecord,
-                            password: newP,
-                        });
-                    }
-                }
-            } catch (e) {
-                console.warn('[changePassword] HR sync', e);
-            }
-
-            // HR-only fallback when shared said incorrect / not found
-            if (!result.success && getCollection && updateRecord) {
-                const employees = getCollection('HR_EMPLOYEE_CRUD') || [];
-                const userRecord = employees.find(
-                    (u) =>
-                        u &&
-                        String(u.username || u.user_name || '').toLowerCase() === uName.toLowerCase()
-                );
-                if (userRecord && String(userRecord.password ?? '') === oldP) {
-                    const ok = await updateRecord('HR_EMPLOYEE_CRUD', userRecord.id, {
-                        ...userRecord,
-                        password: newP,
-                    });
-                    if (ok) {
-                        try {
-                            if (typeof upsertSharedUser === 'function') {
-                                upsertSharedUser({
-                                    username: uName,
-                                    password: newP,
-                                    name: userRecord.name || userRecord.employee_name || uName,
-                                    role: currentUser.role,
-                                    _forceRole: true,
-                                });
-                            }
-                        } catch (e) {}
-                        result = {
-                            success: true,
-                            message: 'Password updated successfully. Please sign in again.',
-                        };
-                    }
-                }
-            }
-
-            return result.success
-                ? result
-                : { success: false, message: result.message || 'Current password incorrect.' };
-        } catch (err) {
-            console.error(err);
-            return { success: false, message: 'Password change failed.' };
+        if (!userRecord || userRecord.password !== oldPassword.trim()) {
+            return { success: false, message: 'Current password incorrect.' };
         }
+
+        const success = await updateRecord('HR_EMPLOYEE_CRUD', userRecord.id, { 
+            ...userRecord, 
+            password: newPassword.trim() 
+        });
+        return success ? { success: true, message: 'Updated! Please re-login.' } : { success: false };
     };
 
     /**
@@ -2577,7 +2356,6 @@ export const AuthProvider = ({ children }) => {
             else if (typeof getSharedRoles === 'function') roles = [...roles, ...(getSharedRoles() || [])];
         } catch (e) {}
 
-        const norm = (x) => String(x || '').trim().toLowerCase().replace(/\s+/g, '_');
         const roleDef = roles.find(
             (r) =>
                 r &&
@@ -2585,11 +2363,7 @@ export const AuthProvider = ({ children }) => {
                     String(r.name) === role ||
                     String(r.roleName || '') === role ||
                     String(r.id || '').toLowerCase() === role.toLowerCase() ||
-                    String(r.name || '').toLowerCase() === role.toLowerCase() ||
-                    norm(r.roleName) === norm(role) ||
-                    norm(r.name) === norm(role) ||
-                    String(r.id) === String(currentUser.role_id || '') ||
-                    norm(r.roleName) === norm(currentUser.role_name))
+                    String(r.name || '').toLowerCase() === role.toLowerCase())
         );
 
         if (roleDef) {
@@ -2624,70 +2398,38 @@ export const AuthProvider = ({ children }) => {
 
     const login = async (username, password, allEmployees = []) => {
         setLoading(true);
-        const applyRole = (baseUser) => {
-            const uName = (baseUser && baseUser.username) || username;
-            let assigned = null;
-            try {
-                assigned = typeof resolveAssignedRole === 'function' ? resolveAssignedRole(uName) : null;
-            } catch (e) {}
-            if (!assigned) {
-                try {
-                    const cat = (typeof getSharedUsers === 'function' ? getSharedUsers() : []).find(
-                        (x) => String(x.username || '').toLowerCase() === String(uName || '').toLowerCase()
-                    );
-                    if (cat && (cat.role || cat.system_role)) {
-                        assigned = {
-                            role: cat.role || cat.system_role,
-                            role_id: cat.role_id,
-                            role_name: cat.role_name,
-                            name: cat.name,
-                            modules: cat.modules,
-                        };
-                    }
-                } catch (e) {}
-            }
-            const role = (assigned && assigned.role) || (baseUser && baseUser.role) || 'employee';
-            return {
-                ...(baseUser || {}),
-                username: uName,
-                name: (baseUser && baseUser.name) || (assigned && assigned.name) || uName,
-                role,
-                system_role: role,
-                role_id: (assigned && assigned.role_id) || (baseUser && baseUser.role_id) || null,
-                role_name: (assigned && assigned.role_name) || (baseUser && baseUser.role_name) || null,
-                modules: (baseUser && baseUser.modules) || (assigned && assigned.modules) || null,
-            };
-        };
         try {
+            // 1) Prefer backend JWT login (Postgres users)
             try {
                 const { login: apiLogin } = await import('../../unity/api');
                 const data = await apiLogin(username, password);
                 if (data && data.token && data.user) {
-                    const u = applyRole({
+                    const u = {
                         ...data.user,
-                        username: data.user.username || username,
+                        role: data.user.role || data.user.role_id || 'admin',
                         modules: data.user.modules || ['finance', 'hr', 'material'],
-                    });
+                    };
                     setCurrentUser(u);
                     setIsLoggedIn(true);
                     try { saveSharedSession(u); } catch (e) {}
                     setCurrentView('FIN_DASHBOARD');
                     setLoading(false);
+                    // notify data layer to bootstrap
                     try { window.dispatchEvent(new Event('uu-auth-changed')); } catch (e) {}
                     return { success: true };
                 }
             } catch (apiErr) {
                 console.warn('API login failed, trying local shared login', apiErr);
             }
+            // 2) Fallback local shared credentials (only if API unreachable)
             const result = attemptSharedLogin(username, password, allEmployees || []);
             if (result.success && result.user) {
-                const u = applyRole(result.user);
-                setCurrentUser(u);
+                setCurrentUser(result.user);
                 setIsLoggedIn(true);
-                try { saveSharedSession(u); } catch (e) {}
+                try { saveSharedSession(result.user); } catch (e) {}
                 setCurrentView('FIN_DASHBOARD');
                 setLoading(false);
-                return { success: true };
+                return { success: true, message: 'Logged in offline (no API token — data will stay empty until API login works)' };
             }
             setLoading(false);
             return { success: false, message: (result && result.message) || 'Invalid username or password.' };
@@ -2697,6 +2439,7 @@ export const AuthProvider = ({ children }) => {
             return { success: false, message: 'Login error.' };
         }
     };
+
 
     const authValue = useMemo(() => ({
         isLoggedIn, currentUser, loading, login, changePassword, 
@@ -14794,51 +14537,19 @@ useEffect(() => {
 
     useEffect(() => {
         const refresh = () => {
-            (async () => {
-                try {
-                    let fromDb = null;
-                    try {
-                        const api = await import('../../unity/api.js');
-                        fromDb = await api.listCollection('HR_EMPLOYEE_CRUD');
-                    } catch (e) {}
-                    setAllData((prev) => {
-                        const base = Array.isArray(fromDb) && fromDb.length
-                            ? fromDb.map((e) => ({
-                                ...e,
-                                name: e.name || e.employee_name || e.full_name || '',
-                                employee_name: e.name || e.employee_name || e.full_name || '',
-                                full_name: e.full_name || e.name || e.employee_name || '',
-                            }))
-                            : (prev.HR_EMPLOYEE_CRUD || []);
-                        const merged = uuMergeHrEmployees(base);
-                        // Prefer DB/shared full names
-                        if (Array.isArray(fromDb) && fromDb.length) {
-                            try { uuSaveHrEmployees(merged); } catch (e) {}
-                        }
-                        if (!merged.length) return prev;
-                        try {
-                            if (JSON.stringify(merged) === JSON.stringify(prev.HR_EMPLOYEE_CRUD || [])) return prev;
-                        } catch (e) {}
-                        return { ...prev, HR_EMPLOYEE_CRUD: merged };
-                    });
-                } catch (e) {}
-            })();
+            try {
+                setAllData((prev) => {
+                    const merged = uuMergeHrEmployees(prev.HR_EMPLOYEE_CRUD || []);
+                    return { ...prev, HR_EMPLOYEE_CRUD: merged };
+                });
+            } catch (e) {}
         };
         window.addEventListener('focus', refresh);
         window.addEventListener('uu-module-change', refresh);
-        window.addEventListener('uu-hr-employees-updated', refresh);
-        window.addEventListener('uu-sis-sync', refresh);
-        const onStorage = (e) => {
-            if (!e || e.key === UU_HR_EMP_KEY || e.key === 'uu_shared_hr_employees_v1') refresh();
-        };
-        window.addEventListener('storage', onStorage);
-        const t = setInterval(refresh, 2000);
+        const t = setInterval(refresh, 3000);
         return () => {
             window.removeEventListener('focus', refresh);
             window.removeEventListener('uu-module-change', refresh);
-            window.removeEventListener('uu-hr-employees-updated', refresh);
-            window.removeEventListener('uu-sis-sync', refresh);
-            window.removeEventListener('storage', onStorage);
             clearInterval(t);
         };
     }, []);
@@ -15757,17 +15468,15 @@ const postAllJournals = useCallback(() => {
         }
 
         setAllData(prev => ({ ...prev, [collectionName]: [recordToSave, ...(prev[collectionName] || [])] }));
-        // Persist to PostgreSQL in background — never block modal close / UI refresh
-        void (async () => {
-            try {
-                const mod = await import('../../unity/api.js').catch(() => import('../../unity/api'));
-                if (mod && typeof mod.createRecord === 'function') {
-                    await mod.createRecord(collectionName, recordToSave);
-                }
-            } catch (apiErr) {
-                console.warn('[addRecord] API persist skipped', collectionName, apiErr?.message || apiErr);
+        // Persist to PostgreSQL when API is available
+        try {
+            const mod = await import('../../unity/api.js').catch(() => import('../../unity/api'));
+            if (mod && typeof mod.createRecord === 'function') {
+                await mod.createRecord(collectionName, recordToSave);
             }
-        })();
+        } catch (apiErr) {
+            console.warn('[addRecord] API persist skipped', collectionName, apiErr?.message || apiErr);
+        }
         // Cross-module login: persist users/roles
         try {
             if (['HR_EMPLOYEE_CRUD', 'EMPLOYEE_CRUD', 'SYS_USERS_CRUD', 'USERS_CRUD'].includes(collectionName)) {
@@ -15778,39 +15487,20 @@ const postAllJournals = useCallback(() => {
             }
         } catch (e) {}
         
-        if (collectionName === 'PAY_PROCESS_CRUD') {
-            // Default new process rows to Committed so finance (TB / single txn) updates immediately
-            if (!String(recordToSave.status || '').trim()) {
-                recordToSave = { ...recordToSave, status: 'Committed' };
-            }
-            // Re-apply into state if we just upgraded status
-            setAllData(prev => {
-                const list = prev[collectionName] || [];
-                const without = list.filter(r => String(r.id) !== String(recordToSave.id));
-                return { ...prev, [collectionName]: [recordToSave, ...without] };
-            });
-            if (String(recordToSave.status || '').trim() === 'Committed') {
-                console.log('[PAYROLL] addRecord → postPayrollToFinance', recordToSave.employee_name, recordToSave.id);
-                setTimeout(() => {
-                    try { postPayrollToFinance({ ...recordToSave, status: 'Committed' }); } catch (e) { console.error(e); }
-                }, 0);
-            }
+        if (collectionName === 'PAY_PROCESS_CRUD' && String(recordToSave.status || '').trim() === 'Committed') {
+            console.log('[PAYROLL] addRecord → postPayrollToFinance', recordToSave.employee_name);
+            queueMicrotask(() => postPayrollToFinance({ ...recordToSave, status: 'Committed' }));
         }
         return true;
     };
 
     const updateRecord = useCallback(async (collectionName, id, updatedFields) => {
-        let mergedForPost = null;
+        let shouldPost = null;
         setAllData(prev => {
             const list = prev[collectionName] || [];
             const updatedList = list.map(r => String(r.id) === String(id) ? { ...r, ...updatedFields } : r);
-            // If id was new / missing from list, append
-            const exists = list.some(r => String(r.id) === String(id));
-            const finalList = exists
-                ? updatedList
-                : [{ ...updatedFields, id }, ...list];
-            const current = finalList.find(r => String(r.id) === String(id)) || { ...updatedFields, id };
-            let next = { ...prev, [collectionName]: finalList };
+            const current = updatedList.find(r => String(r.id) === String(id));
+            let next = { ...prev, [collectionName]: updatedList };
 
             if (collectionName === 'PAY_MASTER_CRUD' && updatedFields.basic_salary) {
                 const empName = updatedFields.employee_name || current?.employee_name;
@@ -15822,29 +15512,25 @@ const postAllJournals = useCallback(() => {
                 };
             }
 
-            if (collectionName === 'PAY_PROCESS_CRUD') {
-                mergedForPost = { ...current, status: String(current.status || updatedFields.status || 'Committed').trim() || 'Committed' };
+            if (collectionName === 'PAY_PROCESS_CRUD' && current && String(current.status || '').trim() === 'Committed') {
+                shouldPost = { ...current, status: 'Committed' };
             }
             return next;
         });
 
-        // Persist in background — do not block UI
-        void (async () => {
-            try {
-                const mod = await import('../../unity/api.js').catch(() => import('../../unity/api'));
-                if (mod && typeof mod.updateRecord === 'function') {
-                    await mod.updateRecord(collectionName, id, updatedFields);
-                }
-            } catch (apiErr) {
-                console.warn('[updateRecord] API persist skipped', collectionName, apiErr?.message || apiErr);
+        try {
+            const mod = await import('../../unity/api.js').catch(() => import('../../unity/api'));
+            if (mod && typeof mod.updateRecord === 'function') {
+                await mod.updateRecord(collectionName, id, updatedFields);
             }
-        })();
+        } catch (apiErr) {
+            console.warn('[updateRecord] API persist skipped', collectionName, apiErr?.message || apiErr);
+        }
 
-        if (mergedForPost && String(mergedForPost.status || '').trim() === 'Committed') {
-            console.log('[PAYROLL] Commit → post', mergedForPost.employee_name, mergedForPost.id);
-            setTimeout(() => {
-                try { postPayrollToFinance({ ...mergedForPost, status: 'Committed' }); } catch (e) { console.error(e); }
-            }, 0);
+        if (shouldPost) {
+            console.log('[PAYROLL] Commit → post', shouldPost.employee_name, shouldPost.id);
+            // Queue after React applies the process status update
+            queueMicrotask(() => postPayrollToFinance({ ...shouldPost, status: 'Committed' }));
         }
         return true;
     }, []);
@@ -15913,7 +15599,7 @@ const postAllJournals = useCallback(() => {
     const exportCSV = (slug) => {
         const data = allData[slug] || [];
         if (!data.length) return;
-        const csv = [Object.keys(data[0]).join(','), ...data.map(r => Object.values(r).join(','))].join('\n');
+        const csv = [Object.keys(data[0]).join(','), ...data.map(r => Object.values(r).join(','))].join(String.fromCharCode(10));
         const blob = new Blob([csv], { type: 'text/csv' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a'); a.href = url; a.download = `${slug}.csv`; a.click();
@@ -15933,206 +15619,100 @@ const postAllJournals = useCallback(() => {
 const getIcon = (name) => Icons[name] || Icons.File;
 
 /* --- FIXED INPUT COMPONENT (SELECT + DUAL CALENDARS + REDIRECT) --- */
-/** Dark in-app select — opens above nearby UI (filters, tables, cards) */
-/** Dark select — list always above nearby UI */
-/** Dark select — wide readable options; list above nearby UI */
-/** Dark select — full readable width for long labels (campus, COA, employee, etc.) */
-/** Dark select — menu portaled to document.body so it always stacks above tables/modals */
-const UUSelect = ({ value, onChange, options = [], allLabel = 'All', className = '', compact = false, placeholder }) => {
+const UUSelect = ({ value, onChange, options = [], allLabel = 'All', className = '', compact = false }) => {
     const [open, setOpen] = useState(false);
-    const [menuBox, setMenuBox] = useState(null);
     const ref = useRef(null);
-    const btnRef = useRef(null);
     const list = Array.isArray(options) ? options : [];
-
-    const placeMenu = React.useCallback(() => {
-        const el = btnRef.current;
-        if (!el) return;
-        const r = el.getBoundingClientRect();
-        const gap = 4;
-        const maxH = 320;
-        const spaceBelow = window.innerHeight - r.bottom - gap;
-        const spaceAbove = r.top - gap;
-        const openUp = spaceBelow < 160 && spaceAbove > spaceBelow;
-        const height = Math.min(maxH, openUp ? spaceAbove : spaceBelow, maxH);
-        const width = Math.min(Math.max(r.width, 280), Math.min(window.innerWidth - 16, 560));
-        let left = r.left;
-        if (left + width > window.innerWidth - 8) left = Math.max(8, window.innerWidth - width - 8);
-        if (left < 8) left = 8;
-        const top = openUp ? Math.max(8, r.top - gap - height) : r.bottom + gap;
-        setMenuBox({ top, left, width, maxHeight: height, openUp });
-    }, []);
 
     useEffect(() => {
         if (!open) return undefined;
-        placeMenu();
         const onDoc = (e) => {
-            if (ref.current && !ref.current.contains(e.target)
-                && !(e.target && e.target.closest && e.target.closest('[data-uu-select-menu]'))) {
-                setOpen(false);
-            }
+            if (ref.current && !ref.current.contains(e.target)) setOpen(false);
         };
-        const onReposition = () => placeMenu();
         document.addEventListener('mousedown', onDoc);
         document.addEventListener('touchstart', onDoc);
-        window.addEventListener('resize', onReposition);
-        window.addEventListener('scroll', onReposition, true);
         return () => {
             document.removeEventListener('mousedown', onDoc);
             document.removeEventListener('touchstart', onDoc);
-            window.removeEventListener('resize', onReposition);
-            window.removeEventListener('scroll', onReposition, true);
         };
-    }, [open, placeMenu]);
+    }, [open]);
 
     const labelFor = (v) => {
-        if (v === 'ALL' || v === 'All' || v === 'all') return allLabel;
-        return String(v ?? '');
+        if (v === 'ALL' || v === 'All') return allLabel;
+        return String(v);
     };
-    const currentLabel = (value === '' || value == null || value === 'ALL' || value === 'All')
-        ? (placeholder || allLabel || '-- SELECT --')
-        : labelFor(value);
-
-    const portalFn = (typeof createPortal === 'function')
-        ? createPortal
-        : (typeof ReactDOM !== 'undefined' && ReactDOM.createPortal ? ReactDOM.createPortal : null);
-
-    const menu = (open && menuBox) ? (
-        <div
-            data-uu-select-menu="1"
-            role="listbox"
-            className="overflow-y-auto rounded-xl border border-white/25 bg-slate-900 shadow-2xl shadow-black/80 text-white"
-            style={{
-                position: 'fixed',
-                top: menuBox.top,
-                left: menuBox.left,
-                width: menuBox.width,
-                maxHeight: menuBox.maxHeight,
-                zIndex: 2147483646,
-            }}
-        >
-            {list.length === 0 ? (
-                <div className="px-4 py-3 text-sm text-white/50">No options</div>
-            ) : list.map((s) => {
-                const val = (s && typeof s === 'object') ? (s.value ?? s.id ?? s.name) : s;
-                const lab = (s && typeof s === 'object') ? (s.label ?? s.name ?? String(val)) : labelFor(s);
-                const selected = String(value) === String(val);
-                return (
-                    <button
-                        key={String(val)}
-                        type="button"
-                        role="option"
-                        aria-selected={selected}
-                        className={`w-full text-left px-4 py-3.5 min-h-[48px] text-sm border-b border-white/10 last:border-b-0
-                                    flex items-center justify-between gap-3
-                                    ${selected ? 'bg-cyan-600/40 text-white' : 'text-white hover:bg-white/10'}`}
-                        style={{ fontSize: 15, lineHeight: 1.4 }}
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => { onChange(val); setOpen(false); }}
-                    >
-                        <span className="whitespace-normal break-words text-left pr-2">{lab}</span>
-                        <span className={`w-4 h-4 rounded-full border-2 shrink-0 ${selected ? 'border-cyan-300 bg-cyan-400' : 'border-white/40'}`} />
-                    </button>
-                );
-            })}
-        </div>
-    ) : null;
-
-    const menuNode = menu && portalFn && typeof document !== 'undefined' && document.body
-        ? portalFn(menu, document.body)
-        : menu;
+    const currentLabel = labelFor(value);
 
     return (
-        <div
-            className={`relative w-full max-w-full min-w-0 ${className || ''}`}
-            ref={ref}
-            style={{
-                zIndex: open ? 40 : 1,
-                isolation: 'isolate',
-                minWidth: 0,
-                maxWidth: '100%',
-                width: '100%',
-                boxSizing: 'border-box',
-            }}
-        >
+        <div className={`relative ${className}`} ref={ref}>
             <button
-                ref={btnRef}
                 type="button"
                 onClick={() => setOpen((o) => !o)}
-                className={`w-full flex items-center justify-between gap-2 bg-slate-900/90 border border-white/20 rounded-xl
+                className={`w-full flex items-center justify-between gap-2 bg-black/50 border border-white/10 rounded-xl
                             text-white outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/40
-                            ${compact ? 'px-3 py-2.5 text-sm min-h-[44px]' : 'px-4 py-3 text-base min-h-[48px]'}`}
-                style={{ fontSize: compact ? 14 : 15 }}
+                            ${compact ? 'px-3 py-2 text-xs min-h-[40px] max-w-[180px]' : 'px-3.5 py-3 text-base min-h-[48px]'}`}
+                style={{ fontSize: compact ? undefined : 16 }}
                 aria-haspopup="listbox"
                 aria-expanded={open}
             >
-                <span
-                    className={`text-left flex-1 min-w-0 ${(!value || value === 'ALL' || value === 'All') ? 'text-white/55' : 'text-white'}`}
-                    style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                >
-                    {currentLabel}
-                </span>
-                <span className="text-cyan-400 text-xs shrink-0 ml-2">{open ? '▲' : '▼'}</span>
+                <span className="truncate">{currentLabel}</span>
+                <span className="text-cyan-400/80 text-[10px] shrink-0">{open ? '▲' : '▼'}</span>
             </button>
-            {menuNode}
+            {open && (
+                <div
+                    className="absolute left-0 right-0 top-full mt-1 z-[10050] min-w-[160px] max-h-56 overflow-y-auto
+                               rounded-xl border border-white/20 bg-slate-900 shadow-2xl shadow-black/60"
+                    role="listbox"
+                >
+                    {list.map((s) => {
+                        const val = s;
+                        const selected = String(value) === String(val);
+                        return (
+                            <button
+                                key={String(val)}
+                                type="button"
+                                role="option"
+                                aria-selected={selected}
+                                className={`w-full text-left px-4 py-3 min-h-[44px] text-sm
+                                            border-b border-white/10 last:border-b-0
+                                            flex items-center justify-between gap-2
+                                            ${selected ? 'bg-cyan-600/35 text-cyan-100' : 'text-white hover:bg-white/5 active:bg-cyan-500/20'}`}
+                                style={{ fontSize: 16 }}
+                                onClick={() => {
+                                    onChange(val);
+                                    setOpen(false);
+                                }}
+                            >
+                                <span className="truncate">{labelFor(val)}</span>
+                                <span className={`w-4 h-4 rounded-full border-2 shrink-0 flex items-center justify-center
+                                    ${selected ? 'border-cyan-400 bg-cyan-500' : 'border-white/30'}`}>
+                                    {selected ? <span className="w-1.5 h-1.5 rounded-full bg-white" /> : null}
+                                </span>
+                            </button>
+                        );
+                    })}
+                </div>
+            )}
         </div>
     );
 };
 
 
-
-
-
-
-
-
-
-
-
-const Input = ({ label, type, value, onChange, placeholder, isRequired = false, isReadOnly = false, options = [], hint, fieldKey, intelModule, intelCollection }) => {
+const Input = ({ label, type, value, onChange, placeholder, isRequired = false, isReadOnly = false, options = [] }) => {
     const id = React.useId();
     const [showECPicker, setShowECPicker] = useState(false);
     const [selectOpen, setSelectOpen] = useState(false);
-    const [selectMenuBox, setSelectMenuBox] = useState(null);
     const selectRootRef = useRef(null);
-    const selectBtnRef = useRef(null);
     useEffect(() => {
-        if (!selectOpen) {
-            setSelectMenuBox(null);
-            return undefined;
-        }
-        const place = () => {
-            const el = selectBtnRef.current;
-            if (!el) return;
-            const r = el.getBoundingClientRect();
-            const gap = 4;
-            const maxH = 320;
-            const spaceBelow = window.innerHeight - r.bottom - gap;
-            const spaceAbove = r.top - gap;
-            const openUp = spaceBelow < 160 && spaceAbove > spaceBelow;
-            const height = Math.min(maxH, Math.max(120, openUp ? spaceAbove : spaceBelow));
-            const width = Math.min(Math.max(r.width, 220), Math.min(window.innerWidth - 16, 480));
-            let left = r.left;
-            if (left + width > window.innerWidth - 8) left = Math.max(8, window.innerWidth - width - 8);
-            if (left < 8) left = 8;
-            const top = openUp ? Math.max(8, r.top - gap - height) : r.bottom + gap;
-            setSelectMenuBox({ top, left, width, maxHeight: height });
-        };
-        place();
+        if (!selectOpen) return undefined;
         const onDoc = (e) => {
-            if (selectRootRef.current && selectRootRef.current.contains(e.target)) return;
-            if (e.target && e.target.closest && e.target.closest('[data-uu-input-select-menu]')) return;
-            setSelectOpen(false);
+            if (selectRootRef.current && !selectRootRef.current.contains(e.target)) setSelectOpen(false);
         };
         document.addEventListener('mousedown', onDoc);
         document.addEventListener('touchstart', onDoc);
-        window.addEventListener('resize', place);
-        window.addEventListener('scroll', place, true);
         return () => {
             document.removeEventListener('mousedown', onDoc);
             document.removeEventListener('touchstart', onDoc);
-            window.removeEventListener('resize', place);
-            window.removeEventListener('scroll', place, true);
         };
     }, [selectOpen]);
 
@@ -16183,47 +15763,37 @@ const Input = ({ label, type, value, onChange, placeholder, isRequired = false, 
         const current = normalized.find((o) => o.value === String(value ?? '')) || null;
 
         return (
-            <div className="flex flex-col space-y-1.5 mb-0 group relative min-w-0 max-w-full w-full overflow-visible" ref={selectRootRef}>
+            <div className="flex flex-col space-y-2 mb-4 group relative" ref={selectRootRef}>
                 {label && (
                 <label 
                     onClick={handleLabelClick}
-                    className="text-[9px] font-black uppercase tracking-[0.12em] text-white/50 group-focus-within:text-cyan-400 flex items-center gap-1 max-w-full cursor-help"
-                    title={label}
+                    className="text-[10px] font-black uppercase tracking-[0.2em] text-white/50 group-focus-within:text-cyan-400"
                 >
-                    <span className="truncate">{label}{isRequired ? <span className="text-red-500"> *</span> : null}</span>
-                    <IntelTip label={label} fieldKey={fieldKey || label} module={intelModule} collection={intelCollection} help={hint} />
+                    {label} {isRequired && <span className="text-red-500">*</span>}
                 </label>
                 )}
                 <button
                     type="button"
                     id={id}
-                    ref={selectBtnRef}
                     onClick={() => setSelectOpen((o) => !o)}
-                    className="w-full max-w-full min-w-0 min-h-[42px] flex items-center justify-between gap-2
-                               px-3 py-2.5 rounded-xl bg-black/60 border border-white/20 text-left
-                               text-white text-sm focus:ring-2 focus:ring-cyan-500/50 outline-none
-                               hover:bg-black/80 transition-all cursor-pointer box-border"
-                    style={{ fontSize: 14 }}
+                    className="w-full min-h-[48px] flex items-center justify-between gap-2
+                               p-3.5 rounded-xl bg-black/60 border border-white/20 text-left
+                               text-white text-base focus:ring-2 focus:ring-cyan-500/50 outline-none
+                               hover:bg-black/80 transition-all cursor-pointer"
+                    style={{ fontSize: 16 }}
                     aria-haspopup="listbox"
                     aria-expanded={selectOpen}
                 >
-                    <span className={current ? 'text-white' : 'text-white/50'} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <span className={current ? 'text-white truncate' : 'text-white/40'}>
                         {current ? current.label : (placeholder || '-- SELECT --')}
                     </span>
                     <span className="text-cyan-400/80 text-xs shrink-0">{selectOpen ? '▲' : '▼'}</span>
                 </button>
-                {selectOpen && selectMenuBox && createPortal(
+                {selectOpen && (
                     <div
-                        data-uu-input-select-menu="1"
-                        className="overflow-y-auto rounded-xl border border-white/25 bg-slate-900 shadow-2xl shadow-black/80"
-                        style={{
-                            position: 'fixed',
-                            top: selectMenuBox.top,
-                            left: selectMenuBox.left,
-                            width: selectMenuBox.width,
-                            maxHeight: selectMenuBox.maxHeight,
-                            zIndex: 2147483646,
-                        }}
+                        className="absolute left-0 right-0 top-full mt-1 z-[10050]
+                                   max-h-56 overflow-y-auto rounded-xl
+                                   border border-white/20 bg-slate-900 shadow-2xl shadow-black/60"
                         role="listbox"
                     >
                         <button
@@ -16261,8 +15831,7 @@ const Input = ({ label, type, value, onChange, placeholder, isRequired = false, 
                                 </button>
                             );
                         })}
-                    </div>,
-                    document.body
+                    </div>
                 )}
             </div>
         );
@@ -16274,7 +15843,7 @@ const Input = ({ label, type, value, onChange, placeholder, isRequired = false, 
     const exportCSV = (slug) => {
         const data = allData[slug] || [];
         if (!data.length) return;
-        const csv = [Object.keys(data[0]).join(','), ...data.map(r => Object.values(r).join(','))].join('\n');
+        const csv = [Object.keys(data[0]).join(','), ...data.map(r => Object.values(r).join(','))].join(String.fromCharCode(10));
         const blob = new Blob([csv], { type: 'text/csv' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a'); a.href = url; a.download = `${slug}.csv`; a.click();
@@ -16285,11 +15854,10 @@ const Input = ({ label, type, value, onChange, placeholder, isRequired = false, 
             {label && (
                 <label 
                     onClick={handleLabelClick}
-                    className={`text-[10px] font-black uppercase tracking-[0.2em] transition-all flex items-center gap-1 max-w-full cursor-help
+                    className={`text-[10px] font-black uppercase tracking-[0.2em] transition-all
                         ${(label.toLowerCase().includes('experience') || label.toLowerCase().includes('beneficiary')) ? 'text-cyan-400 cursor-pointer hover:underline' : 'text-white/50'}`}
                 >
-                    <span className="truncate">{label}{isRequired ? <span className="text-red-500"> *</span> : null}</span>
-                    <IntelTip label={label} fieldKey={fieldKey || label} module={intelModule} collection={intelCollection} help={hint} />
+                    {label} {isRequired && <span className="text-red-500">*</span>}
                 </label>
             )}
 
@@ -16337,7 +15905,7 @@ const Input = ({ label, type, value, onChange, placeholder, isRequired = false, 
                 {isEC && showECPicker && (
                     <div className="absolute top-full left-0 mt-2 p-4 bg-slate-900 border border-cyan-500/50 rounded-xl shadow-2xl z-[999] w-72 backdrop-blur-2xl">
                         <div className="flex justify-between items-center mb-4">
-                            <span className="text-[11px] font-black text-white uppercase italic">Ethiopian Calendar</span>
+                            <span className="text-[11px] font-black text-white uppercase italic">Power Geez · Ethiopian Calendar</span>
                             <button onClick={() => setShowECPicker(false)}><Icons.X size={16} className="text-red-400"/></button>
                         </div>
                         
@@ -16369,56 +15937,51 @@ const Input = ({ label, type, value, onChange, placeholder, isRequired = false, 
         </div>
     );
 };
+
+// Component for Generic Reports (Only available to Admins/Managers/Staff)
 const ReportsGenerator = ({ glassClass }) => {
-    const { allData, getCollection } = useData();
+    const { allData, getCollection } = useData(); 
     const { currentUser, checkPermission } = useAuth();
 
+    // New constants for Report Type
     const REPORT_TYPES = [
         { label: 'All Time', value: 'all' },
         { label: 'Daily', value: 'daily' },
         { label: 'Weekly', value: 'weekly' },
         { label: 'Monthly', value: 'monthly' },
         { label: 'Quarterly', value: 'quarterly' },
-        { label: 'Annually', value: 'annually' },
-    ];
-
-    const REPORT_PRESETS = [
-        { id: '', label: 'Custom selection' },
-        { id: 'FIN_TX', label: 'Finance · Transactions', collection: 'transactions' },
-        { id: 'FIN_COA', label: 'Finance · Chart of Accounts', collection: 'FIN_COA_CRUD' },
-        { id: 'FIN_PARTNERS', label: 'Finance · Partners', collection: 'FIN_PARTNERS_CRUD' },
-        { id: 'PAY_PROCESS', label: 'Payroll · Process', collection: 'PAY_PROCESS_CRUD' },
-        { id: 'PAY_OT', label: 'Payroll · Overtime', collection: 'PAY_OVERTIME_CRUD' },
-        { id: 'HR_EMP', label: 'HR · Employees', collection: 'HR_EMPLOYEE_CRUD' },
-        { id: 'HR_LEAVE', label: 'HR · Leave', collection: 'HR_LEAVE_CRUD' },
+        { label: 'Annually', value: 'annually' }
     ];
 
     const getCollectionLabel = useCallback((name) => {
-        if (!name || typeof name !== 'string') return '';
+        if (!name) return '';
+        if (typeof name !== 'string') return ''; 
         return name.replace(/_/g, ' ').replace('CRUD', '(Data)').trim();
     }, []);
 
-    const collectionNames = useMemo(() => Object.keys(allData || {}).sort(), [allData]);
-    const initialSelected = collectionNames.length > 0 ? collectionNames[0] : '';
-
-    const [selectedCollection, setSelectedCollection] = useState(initialSelected);
+    const collectionNames = useMemo(() => Object.keys(allData).sort(), [allData]);
+    const initialSelectedCollectionName = collectionNames.length > 0 ? collectionNames[0] : '';
+    
+    const [selectedCollection, setSelectedCollection] = useState(initialSelectedCollectionName);
     const [sortKey, setSortKey] = useState('');
     const [groupByKey, setGroupByKey] = useState('');
-    const [reportType, setReportType] = useState('all');
-    const [dateFrom, setDateFrom] = useState('');
-    const [dateTo, setDateTo] = useState('');
-    const [preset, setPreset] = useState('');
-    const [statusFilter, setStatusFilter] = useState('All');
-    const [searchTerm, setSearchTerm] = useState('');
+    const [reportType, setReportType] = useState('all'); // New State for Type
 
-    const columns = useMemo(() => (typeof COLUMN_CONFIG !== 'undefined' ? (COLUMN_CONFIG[selectedCollection] || []) : []), [selectedCollection]);
+    const columns = useMemo(() => COLUMN_CONFIG[selectedCollection] || [], [selectedCollection]);
 
-    const filterableColumns = useMemo(
-        () => (columns || []).filter((col) => !col.isHidden && col.type !== 'array'),
+    const filterableColumns = useMemo(() =>
+        (columns || []).filter(col => !col.isHidden && col.type !== 'array'),
         [columns]
     );
 
-    const [columnFilters, setColumnFilters] = useState({});
+    const [columnFilters, setColumnFilters] = useState(() => {
+        return filterableColumns.reduce((acc, col) => {
+            acc[col.key] = '';  
+            return acc;
+        }, {});
+    });
+
+    const currentData = useMemo(() => getCollection(selectedCollection) || [], [getCollection, selectedCollection]);
 
     useEffect(() => {
         if (selectedCollection) {
@@ -16430,103 +15993,47 @@ const ReportsGenerator = ({ glassClass }) => {
             );
             setSortKey('');
             setGroupByKey('');
-            setReportType('all');
+            setReportType('all'); // Reset type on collection change
         }
     }, [selectedCollection, filterableColumns]);
 
-    const currentData = useMemo(() => getCollection(selectedCollection) || [], [getCollection, selectedCollection]);
-
     const getColumnFilterOptions = useCallback((data, columnKey) => {
         const values = new Set(['All']);
-        (data || []).forEach((item) => {
+        data.forEach(item => {
             const value = item[columnKey];
-            if (value !== null && value !== undefined) values.add(String(value));
+            if (value !== null && value !== undefined) {
+                values.add(String(value));
+            }
         });
-        return Array.from(values).map((v) => ({ label: v, value: v }));
+        return Array.from(values).map(v => ({ label: v, value: v }));
     }, []);
 
-    const columnOptions = useMemo(() => {
+    const columnOptions = React.useMemo(() => {
         const options = {};
-        filterableColumns.forEach((col) => {
+        filterableColumns.forEach(col => {
             options[col.key] = getColumnFilterOptions(currentData, col.key);
         });
         return options;
     }, [currentData, filterableColumns, getColumnFilterOptions]);
 
+    const [searchTerm, setSearchTerm] = useState('');
+
     const filteredAndSortedData = useMemo(() => {
         let data = [...currentData];
 
-        data = data.filter((item) =>
-            (filterableColumns || []).every((col) => {
+        data = data.filter(item => {
+            return (filterableColumns || []).every(col => {
                 const filterValue = columnFilters[col.key] || '';
                 if (filterValue === 'All' || !filterValue) return true;
-                return String(item[col.key] || '').toLowerCase() === filterValue.toLowerCase();
-            })
-        );
-
-        if (statusFilter && statusFilter !== 'All') {
-            const sf = statusFilter.toLowerCase();
-            data = data.filter((item) => String(item.status || item.Status || '').toLowerCase() === sf);
-        }
-
-        const dateKeys = [
-            'date', 'posting_date', 'createdAt', 'created_at', 'payroll_process_date',
-            'process_date', 'leave_start', 'start_date', 'transaction_date', 'grv_date', 'period',
-        ];
-
-        if (dateFrom || dateTo) {
-            const fromTs = dateFrom ? new Date(dateFrom).setHours(0, 0, 0, 0) : null;
-            const toTs = dateTo ? new Date(dateTo).setHours(23, 59, 59, 999) : null;
-            data = data.filter((item) => {
-                let raw = null;
-                for (const k of dateKeys) {
-                    if (item[k] != null && String(item[k]).trim() !== '') {
-                        raw = item[k];
-                        break;
-                    }
-                }
-                if (!raw) return true;
-                const ts = new Date(raw).getTime();
-                if (isNaN(ts)) return true;
-                if (fromTs != null && ts < fromTs) return false;
-                if (toTs != null && ts > toTs) return false;
-                return true;
+                const itemValue = String(item[col.key] || '').toLowerCase();
+                return itemValue === filterValue.toLowerCase();
             });
-        }
-
-        if (reportType && reportType !== 'all') {
-            const now = new Date();
-            data = data.filter((item) => {
-                let raw = null;
-                for (const k of dateKeys) {
-                    if (item[k] != null && String(item[k]).trim() !== '') {
-                        raw = item[k];
-                        break;
-                    }
-                }
-                if (!raw) return true;
-                const d = new Date(raw);
-                if (isNaN(d.getTime())) return true;
-                if (reportType === 'daily') return d.toDateString() === now.toDateString();
-                if (reportType === 'weekly') {
-                    const weekAgo = new Date(now);
-                    weekAgo.setDate(now.getDate() - 7);
-                    return d >= weekAgo && d <= now;
-                }
-                if (reportType === 'monthly') return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-                if (reportType === 'quarterly') {
-                    const q = Math.floor(now.getMonth() / 3);
-                    return Math.floor(d.getMonth() / 3) === q && d.getFullYear() === now.getFullYear();
-                }
-                if (reportType === 'annually') return d.getFullYear() === now.getFullYear();
-                return true;
-            });
-        }
+        });
 
         if (searchTerm && searchTerm.trim()) {
             const q = searchTerm.trim().toLowerCase();
-            data = data.filter((item) =>
-                Object.values(item || {}).some((v) => String(v ?? '').toLowerCase().includes(q))
+            data = data.filter(item =>
+                Object.values(item || {}).some(v => String(v ?? '').toLowerCase().includes(q))
             );
         }
 
@@ -16534,33 +16041,40 @@ const ReportsGenerator = ({ glassClass }) => {
             data.sort((a, b) => {
                 const aVal = a[sortKey];
                 const bVal = b[sortKey];
-                const na = parseFloat(aVal);
-                const nb = parseFloat(bVal);
-                if (!isNaN(na) && !isNaN(nb) && isFinite(na) && isFinite(nb)) return na - nb;
-                return String(aVal || '').toLowerCase().localeCompare(String(bVal || '').toLowerCase());
+                if ((typeof aVal === 'number' || (!isNaN(parseFloat(aVal)) && isFinite(aVal))) &&
+                    (typeof bVal === 'number' || (!isNaN(parseFloat(bVal)) && isFinite(bVal)))) {
+                    return parseFloat(aVal) - parseFloat(bVal);
+                }
+                const stringA = String(aVal || '').toLowerCase();
+                const stringB = String(bVal || '').toLowerCase();
+                if (stringA < stringB) return -1;
+                if (stringA > stringB) return 1;
+                return 0;
             });
         }
 
         return data;
-    }, [currentData, columnFilters, sortKey, filterableColumns, searchTerm, dateFrom, dateTo, reportType, statusFilter]);
+    }, [currentData, columnFilters, sortKey, filterableColumns, searchTerm]);
 
     const groupedData = useMemo(() => {
-        if (!groupByKey) return { 'All Records': filteredAndSortedData };
+        if (!groupByKey) {
+            return { 'All Records': filteredAndSortedData };
+        }
         return filteredAndSortedData.reduce((acc, item) => {
             const key = String(item[groupByKey] || 'N/A');
-            if (!acc[key]) acc[key] = [];
+            acc[key] = acc[key] || [];
             acc[key].push(item);
             return acc;
         }, {});
     }, [filteredAndSortedData, groupByKey]);
 
-    const displayColumns = useMemo(
-        () => (columns || []).filter((col) => !col.isHidden && col.type !== 'array').slice(0, 8),
-        [columns]
-    );
+    const displayColumns = useMemo(() => (columns || []).filter(col => !col.isHidden && col.type !== 'array').slice(0, 8), [columns]);
 
     const handleFilterChange = (columnKey, value) => {
-        setColumnFilters((prev) => ({ ...prev, [columnKey]: value }));
+        setColumnFilters(prevFilters => ({
+            ...prevFilters,
+            [columnKey]: value,
+        }));
     };
 
     useEffect(() => {
@@ -16569,303 +16083,209 @@ const ReportsGenerator = ({ glassClass }) => {
         }
     }, [collectionNames, selectedCollection]);
 
-    const exportCSV = () => {
-        const rows = filteredAndSortedData;
+    const exportCSV = (slug) => {
+        const rows = (slug && allData[slug]) ? allData[slug] : filteredAndSortedData;
         if (!rows || !rows.length) return;
-        const cols = displayColumns.length
-            ? displayColumns
-            : Object.keys(rows[0] || {}).map((k) => ({ key: k, label: k }));
-        const headers = cols.map((c) => c.label || c.key);
-        const body = rows.map((r) =>
-            cols
-                .map((c) => {
-                    const v = r[c.key];
-                    const s = v == null ? '' : String(v).replace(/"/g, '""');
-                    return `"${s}"`;
-                })
-                .join(',')
-        );
-        const csv = [headers.join(','), ...body].join('\n');
+        const cols = displayColumns.length ? displayColumns : Object.keys(rows[0]).map(k => ({ key: k, label: k }));
+        const headers = cols.map(c => c.label || c.key);
+        const body = rows.map(r => cols.map(c => {
+            const v = r[c.key];
+            const s = v == null ? '' : String(v).replace(/"/g, '""');
+            return `"${s}"`;
+        }).join(','));
+        const csv = [headers.join(','), ...body].join(String.fromCharCode(10));
         const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `${selectedCollection || 'report'}.csv`;
+        a.download = `${slug || selectedCollection || 'report'}.csv`;
         a.click();
         URL.revokeObjectURL(url);
     };
 
-    const partners = getCollection('FIN_PARTNERS_CRUD') || [];
-
     return (
-        <ContainerCard Icon="FileText" glassClass={glassClass} className="h-full max-w-full min-w-0 overflow-x-hidden overflow-y-auto">
-            <div className="space-y-3 mb-4 p-3 sm:p-4 border border-white/10 rounded-xl max-w-full min-w-0 overflow-hidden bg-black/20">
-                <h3 className="text-base font-semibold text-cyan-400 flex items-center shrink-0">
-                    <Icons.FileBarChart className="w-5 h-5 mr-2 shrink-0" />
-                    Institutional Report Studio
+        <ContainerCard  Icon='FileText' glassClass={glassClass} className="h-full">
+            <div className="space-y-4 mb-6 p-4 border border-gray-700/50 rounded-xl">
+                <h3 className="text-lg font-semibold text-cyan-400 flex items-center">
+                    <Icons.Building className="w-5 h-5 mr-2" />
+                    Report Configuration
                 </h3>
-                <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">
-                    Presets · date range · column filters · group · export
-                </p>
 
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-2">
-                    <div className="rounded-xl border border-cyan-500/20 bg-cyan-950/20 p-3">
-                        <p className="text-[9px] text-cyan-400/80 uppercase font-black">Rows</p>
-                        <p className="text-lg font-black text-white">{filteredAndSortedData.length}</p>
-                    </div>
-                    <div className="rounded-xl border border-white/10 bg-black/30 p-3">
-                        <p className="text-[9px] text-gray-500 uppercase font-black">Source</p>
-                        <p className="text-xs font-bold text-white truncate">{getCollectionLabel(selectedCollection) || '—'}</p>
-                    </div>
-                    <div className="rounded-xl border border-white/10 bg-black/30 p-3">
-                        <p className="text-[9px] text-gray-500 uppercase font-black">Period</p>
-                        <p className="text-xs font-bold text-white">{reportType}</p>
-                    </div>
-                    <div className="rounded-xl border border-white/10 bg-black/30 p-3">
-                        <p className="text-[9px] text-gray-500 uppercase font-black">Groups</p>
-                        <p className="text-lg font-black text-white">{Object.keys(groupedData || {}).length}</p>
-                    </div>
-                </div>
-
-                <div className="w-full max-w-full min-w-0 overflow-x-auto overflow-y-visible">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 items-end min-w-0 w-full">
-                        <div className="min-w-0 max-w-full w-full overflow-hidden">
-                            <Input
-                                label="Report preset"
-                                type="select"
-                                options={REPORT_PRESETS.map((p) => ({ label: p.label, value: p.id }))}
-                                value={preset}
-                                onChange={(val) => {
-                                    setPreset(val);
-                                    const hit = REPORT_PRESETS.find((p) => p.id === val);
-                                    if (hit && hit.collection && collectionNames.includes(hit.collection)) {
-                                        setSelectedCollection(hit.collection);
-                                    }
-                                }}
-                            />
-                        </div>
-
-                        <div className="min-w-0 max-w-full w-full overflow-hidden">
-                            <Input
-                                label="Data Collection"
-                                type="select"
-                                options={collectionNames.map((name) => ({ label: getCollectionLabel(name), value: name }))}
-                                value={selectedCollection}
-                                onChange={(val) => setSelectedCollection(val)}
-                                isRequired
-                            />
-                        </div>
-
-                        <div className="min-w-0 max-w-full w-full overflow-hidden">
-                            <label className="text-[10px] font-black uppercase text-gray-500 tracking-widest">Date from</label>
-                            <input
-                                type="date"
-                                value={dateFrom}
-                                onChange={(e) => setDateFrom(e.target.value)}
-                                className="w-full mt-1 bg-black/50 border border-white/15 rounded-xl px-3 py-2.5 text-white text-sm outline-none focus:ring-1 focus:ring-cyan-500/40"
-                            />
-                        </div>
-
-                        <div className="min-w-0 max-w-full w-full overflow-hidden">
-                            <label className="text-[10px] font-black uppercase text-gray-500 tracking-widest">Date to</label>
-                            <input
-                                type="date"
-                                value={dateTo}
-                                onChange={(e) => setDateTo(e.target.value)}
-                                className="w-full mt-1 bg-black/50 border border-white/15 rounded-xl px-3 py-2.5 text-white text-sm outline-none focus:ring-1 focus:ring-cyan-500/40"
-                            />
-                        </div>
-
-                        <div className="min-w-0 max-w-full w-full overflow-hidden">
-                            <Input
-                                label="Status"
-                                type="select"
-                                options={[
-                                    { label: 'All', value: 'All' },
-                                    { label: 'Draft', value: 'Draft' },
-                                    { label: 'Posted', value: 'Posted' },
-                                    { label: 'Approved', value: 'Approved' },
-                                    { label: 'Pending', value: 'Pending' },
-                                    { label: 'Active', value: 'Active' },
-                                ]}
-                                value={statusFilter}
-                                onChange={(val) => setStatusFilter(val)}
-                            />
-                        </div>
-
-                        <div className="min-w-0 max-w-full w-full overflow-hidden">
-                            <Input
-                                label="Filter by Partner/Entity"
-                                type="select"
-                                options={[
-                                    { label: 'All Entities', value: 'All' },
-                                    ...partners.map((p) => ({
-                                        label: p.partner_name || p.name || p.id,
-                                        value: p.partner_name || p.name || p.id,
-                                    })),
-                                ]}
-                                value={columnFilters.partner_name || ''}
-                                onChange={(val) => handleFilterChange('partner_name', val)}
-                            />
-                        </div>
-
-                        {(filterableColumns || []).map((col) => (
-                            <div key={col.key} className="min-w-0 max-w-full w-full overflow-hidden">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                    <div className="col-span-full">
+                        <div className="flex flex-wrap gap-4 justify-start items-end">
+                            
+                            {/* Data Collection Select */}
+                            <div className="flex-grow min-w-[200px]">
                                 <Input
-                                    label={`Filter: ${col.label}`}
+                                    label="Data Collection"
                                     type="select"
-                                    options={columnOptions[col.key] || [{ label: 'All', value: 'All' }]}
-                                    value={columnFilters[col.key] || ''}
-                                    onChange={(val) => handleFilterChange(col.key, val)}
+                                    options={collectionNames.map(name => ({ label: getCollectionLabel(name), value: name }))}
+                                    value={selectedCollection}
+                                    onChange={(val) => setSelectedCollection(val)}
+                                    isRequired
                                 />
                             </div>
-                        ))}
 
-                        <div className="min-w-0 max-w-full w-full overflow-hidden">
-                            <Input
-                                label="Report Type"
-                                type="select"
-                                options={REPORT_TYPES}
-                                value={reportType}
-                                onChange={(val) => setReportType(val)}
-                            />
-                        </div>
+                            {/* Dynamic Filter Selects */}
+                            
+                            {/* Entity/Partner Filter */}
+                            <div className="flex-grow min-w-[200px]">
+                                <Input
+                                    label="Filter by Partner/Entity"
+                                    type="select"
+                                    options={[{label: 'All Entities', value: 'All'}, ...getCollection('FIN_PARTNERS_CRUD').map(p => ({label: p.partner_name, value: p.partner_name}))]}
+                                    value={columnFilters['partner_name'] || ''}
+                                    onChange={(val) => handleFilterChange('partner_name', val)}
+                                />
+                            </div>
 
-                        <div className="min-w-0 max-w-full w-full overflow-hidden">
-                            <Input
-                                label="Sort By"
-                                type="select"
-                                options={[
-                                    { label: 'None', value: '' },
-                                    ...(filterableColumns || []).map((c) => ({ label: c.label, value: c.key })),
-                                ]}
-                                value={sortKey}
-                                onChange={(val) => setSortKey(val)}
-                            />
-                        </div>
+                            {selectedCollection && (filterableColumns || []).map(col => (
+                                <div key={col.key} className="flex-grow min-w-[200px]">
+                                    <Input
+                                        label={`Filter: ${col.label}`}
+                                        type="select"
+                                        options={columnOptions[col.key] || [{ label: 'All', value: 'All' }]}
+                                        value={columnFilters[col.key] || ''}
+                                        onChange={(val) => handleFilterChange(col.key, val)}
+                                    />
+                                </div>
+                            ))}
 
-                        <div className="min-w-0 max-w-full w-full overflow-hidden">
-                            <Input
-                                label="Group By"
-                                type="select"
-                                options={[
-                                    { label: 'None', value: '' },
-                                    ...(filterableColumns || []).map((c) => ({ label: c.label, value: c.key })),
-                                ]}
-                                value={groupByKey}
-                                onChange={(val) => setGroupByKey(val)}
-                            />
+                            {/* Report Type Select (DAILY, WEEKLY, etc) */}
+                            <div className="flex-grow min-w-[200px]">
+                                <Input
+                                    label="Report Type"
+                                    type="select"
+                                    options={REPORT_TYPES}
+                                    value={reportType}
+                                    onChange={(val) => setReportType(val)}
+                                />
+                            </div>
+
+                            {/* Sort By Select */}
+                            <div className="flex-grow min-w-[200px]">
+                                <Input
+                                    label="Sort By"
+                                    type="select"
+                                    options={[{ label: 'None', value: '' }, ...(filterableColumns || []).map(c => ({ label: c.label, value: c.key }))]}
+                                    value={sortKey}
+                                    onChange={(val) => setSortKey(val)}
+                                />
+                            </div>
+
+                            {/* Group By Select */}
+                            <div className="flex-grow min-w-[200px]">
+                                <Input
+                                    label="Group By"
+                                    type="select"
+                                    options={[{ label: 'None', value: '' }, ...(filterableColumns || []).map(c => ({ label: c.label, value: c.key }))]}
+                                    value={groupByKey}
+                                    onChange={(val) => setGroupByKey(val)}
+                                />
+                            </div>
                         </div>
                     </div>
-                </div>
 
-                <div className="w-full pt-2 flex flex-wrap justify-end gap-2">
-                    {typeof ExportButton === 'function' ? (
+                    {/* Export Button Integration */}
+                    <div className="col-span-full pt-4 flex justify-end">
                         <ExportButton
                             data={filteredAndSortedData}
                             columns={columns}
-                            filename={selectedCollection || 'report'}
-                            isFinancial
+                            filename={`${getCollectionLabel(selectedCollection)}-${reportType}-Report`}
                         />
-                    ) : (
-                        <button
-                            type="button"
-                            onClick={exportCSV}
-                            className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700 transition font-semibold"
-                        >
-                            Export CSV
-                        </button>
-                    )}
-                </div>
-            </div>
-
-            <div className="mb-4 flex flex-wrap gap-2 items-center">
-                <input
-                    type="text"
-                    placeholder="Search records..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="border border-cyan-500/30 bg-black/50 text-white placeholder:text-gray-500 p-2 rounded-lg text-sm w-full md:w-64 outline-none focus:ring-2 focus:ring-cyan-500/40"
-                />
-                <button
-                    type="button"
-                    onClick={exportCSV}
-                    className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700 transition font-semibold"
-                >
-                    Export to CSV
-                </button>
-            </div>
-
-            {Object.entries(groupedData).map(([groupName, rows]) => (
-                <div key={groupName} className="mb-6">
-                    {groupByKey ? (
-                        <h4 className="text-sm font-black text-cyan-400 uppercase tracking-widest mb-2 px-1">
-                            {groupName} · {rows.length}
-                        </h4>
-                    ) : null}
-                    <div className="uu-table-scroll w-full max-w-full min-w-0 overflow-x-auto overflow-y-auto max-h-[min(55vh,520px)] rounded-xl border border-white/10 bg-black/40">
-                        <table className="w-max min-w-full border-collapse table-auto">
-                            <thead className="bg-slate-950/95 sticky top-0 z-10">
-                                <tr className="border-b border-white/10">
-                                    {(displayColumns || []).map((col, i) => (
-                                        <th
-                                            key={i}
-                                            className="px-3 py-2.5 text-left text-[10px] font-black uppercase tracking-wider text-cyan-300/90 whitespace-nowrap border-r border-white/5 last:border-r-0"
-                                        >
-                                            {col.label}
-                                        </th>
-                                    ))}
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {(rows || []).map((row, ri) => (
-                                    <tr key={row.id || ri} className="border-b border-white/5 hover:bg-white/5">
-                                        {(displayColumns || []).map((col, j) => {
-                                            const raw = row[col.key];
-                                            let cell;
-                                            if (Array.isArray(raw)) {
-                                                cell = (raw || []).slice(0, 2).map((entry, idx) => (
-                                                    <span
-                                                        key={idx}
-                                                        className="bg-gray-700 text-gray-200 rounded-full px-2 py-1 text-xs mr-1 inline-block"
-                                                    >
-                                                        {typeof entry === 'object' ? Object.values(entry).join(' / ') : String(entry)}
-                                                    </span>
-                                                ));
-                                            } else if (raw === null || raw === undefined || raw === '') {
-                                                cell = <span className="text-gray-500">—</span>;
-                                            } else if (
-                                                col.type === 'number' ||
-                                                typeof raw === 'number' ||
-                                                (typeof raw === 'string' &&
-                                                    raw !== '' &&
-                                                    !isNaN(Number(raw)) &&
-                                                    /salary|pay|gross|net|amount|tax|pension|basic|ot|allowance/i.test(col.key || ''))
-                                            ) {
-                                                const n = Number(raw);
-                                                cell = Number.isFinite(n)
-                                                    ? n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-                                                    : String(raw);
-                                            } else {
-                                                cell = String(raw);
-                                            }
-                                            return (
-                                                <td key={j} className="px-4 py-3.5 whitespace-nowrap text-sm text-white font-medium">
-                                                    {cell}
-                                                </td>
-                                            );
-                                        })}
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
                     </div>
                 </div>
-            ))}
+            </div>
 
-            {filteredAndSortedData.length === 0 ? (
-                <p className="text-center py-8 text-gray-500">No records match the current criteria.</p>
-            ) : null}
+            {/* Results Table */}
+            {selectedCollection && (
+                <div className="flex-grow overflow-y-auto p-2 mt-4">
+                    <h3 className="text-xl font-bold text-white mb-4">
+                        Report Results: {getCollectionLabel(selectedCollection)} ({filteredAndSortedData.length} Records)
+                    </h3>
+
+                    {Object.entries(groupedData).map(([groupKey, data]) => (
+                        <div key={groupKey} className="mb-6 p-4 rounded-lg bg-gray-800/50">
+                            <h4 className="text-lg font-semibold text-gray-300 sticky top-0 bg-gray-800/80 p-2 -m-2 mb-2 z-10">
+                                {groupByKey ? `${filterableColumns.find(col => col.key === groupByKey)?.label || groupByKey}: ${groupKey} (${data.length})` : `All Records (${data.length})`}
+                            </h4>
+                            <div className="mb-4 flex flex-wrap gap-2 items-center no-print">
+                               <input
+                                    type="text"
+                                    placeholder="Search records..."
+                                    value={searchTerm}
+                                    onChange={(e) => setSearchTerm(e.target.value)}
+                                    className="border border-cyan-500/30 bg-black/50 text-white placeholder:text-gray-500 p-2 rounded-lg text-sm w-full md:w-64 outline-none focus:ring-2 focus:ring-cyan-500/40"
+                               />
+                               <button
+                                    type="button"
+                                    onClick={() => exportCSV(selectedCollection)}
+                                    className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700 transition font-semibold"
+                               >
+                                 Export to CSV
+                               </button>
+                             </div>
+                             <div className="uu-table-scroll overflow-x-auto rounded-xl border border-white/10 bg-black/40">
+                                <table className="min-w-full divide-y divide-gray-700">
+                                    <thead className="bg-slate-900">
+                                        <tr>
+                                            {(displayColumns || []).map((col, i) => (
+                                                <th key={i} className="px-4 py-3 text-left text-[10px] font-black uppercase tracking-wider text-cyan-300/90 whitespace-nowrap">
+                                                    {col.label}
+                                                </th>
+                                            ))}
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-gray-800">
+                                        {data.length === 0 ? (
+                                            <tr>
+                                                <td colSpan={Math.max(displayColumns.length, 1)} className="px-4 py-8 text-center text-gray-500 text-sm">
+                                                    No rows to display
+                                                </td>
+                                            </tr>
+                                        ) : data.map((record, ri) => (
+                                            <tr
+                                                key={record.id || ri}
+                                                className={`transition duration-150 hover:bg-cyan-500/10 ${ri % 2 === 0 ? 'bg-white/[0.03]' : 'bg-transparent'}`}
+                                            >
+                                                {(displayColumns || []).map((col, j) => {
+                                                    const raw = record[col.key];
+                                                    let cell;
+                                                    if (Array.isArray(raw)) {
+                                                        cell = raw.slice(0, 2).map((entry, idx) => (
+                                                            <span key={idx} className="bg-gray-700 text-gray-200 rounded-full px-2 py-1 text-xs mr-1 inline-block">
+                                                                {typeof entry === 'object' ? Object.values(entry).join(' / ') : String(entry)}
+                                                            </span>
+                                                        ));
+                                                    } else if (raw === null || raw === undefined || raw === '') {
+                                                        cell = <span className="text-gray-500">—</span>;
+                                                    } else if (col.type === 'number' || (typeof raw === 'number') || (typeof raw === 'string' && raw !== '' && !isNaN(Number(raw)) && /salary|pay|gross|net|amount|tax|pension|basic|ot|allowance/i.test(col.key || ''))) {
+                                                        const n = Number(raw);
+                                                        cell = Number.isFinite(n)
+                                                            ? n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                                                            : String(raw);
+                                                    } else {
+                                                        cell = String(raw);
+                                                    }
+                                                    return (
+                                                        <td key={j} className="px-4 py-3.5 whitespace-nowrap text-sm text-white font-medium">
+                                                            {cell}
+                                                        </td>
+                                                    );
+                                                })}
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    ))}
+                    {filteredAndSortedData.length === 0 && (
+                        <p className="text-center py-8 text-gray-500">No records match the current criteria.</p>
+                    )}
+                </div>
+            )}
         </ContainerCard>
     );
 };
@@ -16892,7 +16312,7 @@ const MultiEntryField = ({ label, entries, fieldConfig, onChange, glassClass }) 
     const exportCSV = (slug) => {
         const data = allData[slug] || [];
         if (!data.length) return;
-        const csv = [Object.keys(data[0]).join(','), ...data.map(r => Object.values(r).join(','))].join('\n');
+        const csv = [Object.keys(data[0]).join(','), ...data.map(r => Object.values(r).join(','))].join(String.fromCharCode(10));
         const blob = new Blob([csv], { type: 'text/csv' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a'); a.href = url; a.download = `${slug}.csv`; a.click();
@@ -16941,7 +16361,7 @@ const MultiEntryField = ({ label, entries, fieldConfig, onChange, glassClass }) 
     const exportCSV = (slug) => {
         const data = allData[slug] || [];
         if (!data.length) return;
-        const csv = [Object.keys(data[0]).join(','), ...data.map(r => Object.values(r).join(','))].join('\n');
+        const csv = [Object.keys(data[0]).join(','), ...data.map(r => Object.values(r).join(','))].join(String.fromCharCode(10));
         const blob = new Blob([csv], { type: 'text/csv' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a'); a.href = url; a.download = `${slug}.csv`; a.click();
@@ -17005,7 +16425,7 @@ const ContainerCard = ({ title, Icon, children, glassClass, className = '' }) =>
     const exportCSV = (slug) => {
         const data = allData[slug] || [];
         if (!data.length) return;
-        const csv = [Object.keys(data[0]).join(','), ...data.map(r => Object.values(r).join(','))].join('\n');
+        const csv = [Object.keys(data[0]).join(','), ...data.map(r => Object.values(r).join(','))].join(String.fromCharCode(10));
         const blob = new Blob([csv], { type: 'text/csv' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a'); a.href = url; a.download = `${slug}.csv`; a.click();
@@ -17023,96 +16443,63 @@ const ContainerCard = ({ title, Icon, children, glassClass, className = '' }) =>
         </div>
     );
 };
-/** Viewport-fixed glass modal — always centered on screen, not next to table rows */
-/** Viewport-fixed glass modal — portaled to document.body so it is never stuck mid-table */
-/** Content-sized glass modal — page stays visible behind; does not stretch full viewport */
-/** Always viewport-centered via portal to document.body — never next to table/button */
 const Modal = ({ isOpen, onClose, title, children, glassClass = '', footer }) => {
     if (!isOpen) return null;
 
-    const panel = (
+    return (
         <div
-            className={`w-full max-w-lg sm:max-w-xl md:max-w-2xl max-h-[min(88dvh,720px)] flex flex-col
-                        overflow-hidden rounded-2xl border border-white/25 bg-slate-900/95 backdrop-blur-xl
-                        text-white shadow-[0_20px_60px_rgba(0,0,0,0.55)] ring-1 ring-cyan-400/20
-                        ${glassClass || ''}`}
-            role="dialog"
-            aria-modal="true"
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => e.stopPropagation()}
-        >
-            <div className="h-1 w-full shrink-0 bg-gradient-to-r from-cyan-500 via-sky-400 to-violet-500" />
-            <div className="shrink-0 flex items-center justify-between gap-3 px-4 py-3 border-b border-white/15 bg-white/5">
-                <h3 className="text-sm sm:text-base font-black uppercase tracking-wide text-cyan-300 truncate">{title}</h3>
-                <button type="button" onClick={onClose}
-                    className="p-2 rounded-xl border border-white/20 bg-white/5 min-h-[40px] min-w-[40px]
-                               flex items-center justify-center text-gray-300 hover:text-red-300"
-                    aria-label="Close">
-                    <Icons.X className="w-5 h-5" />
-                </button>
-            </div>
-            <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-4 py-4 overscroll-contain custom-scrollbar">
-                {children}
-            </div>
-            <div className="shrink-0 flex flex-wrap justify-end gap-2 px-4 py-3 border-t border-white/15 bg-slate-900/95
-                            pb-[max(0.5rem,env(safe-area-inset-bottom))]">
-                {footer}
-                <button type="button" onClick={onClose}
-                    className="px-4 py-2.5 rounded-xl text-xs font-bold uppercase border border-white/20
-                               bg-white/5 text-gray-200 min-h-[40px]">
-                    Cancel
-                </button>
-            </div>
-        </div>
-    );
-
-    const shell = (
-        <div
-            style={{
-                position: 'fixed',
-                top: 0,
-                left: 0,
-                right: 0,
-                bottom: 0,
-                zIndex: 2147483000,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                padding: '12px',
-                boxSizing: 'border-box',
-            }}
+            className="fixed inset-0 z-[9999] flex items-end sm:items-center justify-center
+                       p-0 sm:p-5 bg-slate-950/50 backdrop-blur-md"
             role="presentation"
         >
             <div
-                style={{
-                    position: 'absolute',
-                    inset: 0,
-                    background: 'rgba(2, 6, 23, 0.35)',
-                    backdropFilter: 'blur(2px)',
-                    WebkitBackdropFilter: 'blur(2px)',
-                }}
-                aria-hidden="true"
-            />
-            <div style={{ position: 'relative', zIndex: 1, width: '100%', maxWidth: '42rem', display: 'flex', justifyContent: 'center' }}>
-                {panel}
+                className={`relative z-[10000] w-full sm:max-w-2xl max-h-[92dvh] flex flex-col
+                            overflow-hidden rounded-t-2xl sm:rounded-2xl
+                            border-2 border-white/25 bg-slate-900/95 backdrop-blur-xl text-white
+                            shadow-[0_25px_80px_rgba(0,0,0,0.65)] ring-1 ring-cyan-400/25
+                            ${glassClass || ''}`}
+                role="dialog"
+                aria-modal="true"
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => e.stopPropagation()}
+            >
+                <div className="h-1 w-full shrink-0 bg-gradient-to-r from-cyan-500 via-sky-400 to-violet-500" />
+
+                <div className="shrink-0 flex items-center justify-between gap-3 px-4 py-3 border-b border-white/15 bg-white/5">
+                    <h3 className="text-sm sm:text-lg font-black uppercase tracking-wide text-cyan-300 truncate">
+                        {title}
+                    </h3>
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        className="p-2.5 rounded-xl border border-white/20 bg-white/5 min-h-[44px] min-w-[44px]
+                                   flex items-center justify-center text-gray-300 hover:text-red-300"
+                        aria-label="Close"
+                    >
+                        <Icons.X className="w-5 h-5" />
+                    </button>
+                </div>
+
+                <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-4 py-4 overscroll-contain">
+                    {children}
+                </div>
+
+                <div className="shrink-0 flex flex-wrap justify-end gap-2 px-4 py-3 border-t border-white/15 bg-slate-900/95
+                                pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+                    {footer}
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        className="px-4 py-3 rounded-xl text-xs font-bold uppercase border border-white/20
+                                   bg-white/5 text-gray-200 min-h-[44px] flex-1 sm:flex-none"
+                    >
+                        Cancel
+                    </button>
+                </div>
             </div>
         </div>
     );
-
-    const portalFn = (typeof createPortal === 'function')
-        ? createPortal
-        : (ReactDOM && typeof ReactDOM.createPortal === 'function' ? ReactDOM.createPortal : null);
-
-    if (portalFn && typeof document !== 'undefined' && document.body) {
-        return portalFn(shell, document.body);
-    }
-    return shell;
 };
-
-
-
-
-
 
 
 // New Component: Export Helpers
@@ -17216,37 +16603,8 @@ const DataTable = ({ collectionName, data, columns: columnsProp, glassClass, tit
     const [searchTerm, setSearchTerm] = useState("");
     const [statusFilter, setStatusFilter] = useState("All");
     const [periodFilter, setPeriodFilter] = useState("All");
-    const [listTick, setListTick] = useState(0);
-    const closeModal = React.useCallback(() => {
-        setIsModalOpen(false);
-        setEditingRecord(null);
-        setListTick((n) => n + 1);
-    }, []);
 
     const allRoles = useMemo(() => getCollection('ROLE_CRUD') || [], [getCollection]);
-
-    // Safe filter option lists (never reference undefined identifiers)
-    const statusOptions = useMemo(() => {
-        const s = new Set(['All']);
-        const raw = (typeof getCollection === 'function' ? getCollection(collectionName) : null);
-        const rows = Array.isArray(raw) ? raw : (Array.isArray(data) ? data : []);
-        rows.forEach((r) => {
-            if (r && r.status != null && String(r.status).trim()) s.add(String(r.status));
-        });
-        ['Active', 'Pending', 'Committed', 'Approved', 'Inactive', 'Posted', 'Draft'].forEach((x) => s.add(x));
-        return Array.from(s);
-    }, [getCollection, collectionName, data]);
-
-    const periodOptions = useMemo(() => {
-        const s = new Set(['All']);
-        const raw = (typeof getCollection === 'function' ? getCollection(collectionName) : null);
-        const rows = Array.isArray(raw) ? raw : (Array.isArray(data) ? data : []);
-        rows.forEach((r) => {
-            const p = r?.period || r?.month || r?.payroll_period;
-            if (p != null && String(p).trim()) s.add(String(p));
-        });
-        return Array.from(s);
-    }, [getCollection, collectionName, data]);
     const dataMemo = useMemo(() => {
         const raw = (typeof getCollection === 'function' ? getCollection(collectionName) : null);
         const rows = (Array.isArray(raw) ? raw : Array.isArray(data) ? data : []).filter((r) => r && typeof r === 'object');
@@ -17259,7 +16617,7 @@ const DataTable = ({ collectionName, data, columns: columnsProp, glassClass, tit
             });
         }
         return rows;
-    }, [getCollection, collectionName, data, listTick]);
+    }, [getCollection, collectionName, data]);
     const isPayrollModule = ['PAY_MASTER_CRUD','PAY_OVERTIME_CRUD','PAY_AD_CRUD','PAY_PROCESS_CRUD','PAY_RECON_CRUD','PAY_FACTOR_MASTER_CRUD'].includes(collectionName);
     const isFinanceModule = ['transactions', 'dayJournals', 'FIN_PARTNERS_CRUD', 'FIN_COA_CRUD', 'chartsOfAccounts'].includes(collectionName);
 
@@ -17508,24 +16866,18 @@ const DataTable = ({ collectionName, data, columns: columnsProp, glassClass, tit
                 <div className="flex flex-wrap items-center gap-2">
                     {isPayrollModule && (
                         <>
-                            <UUSelect
-                                value={statusFilter}
-                                onChange={setStatusFilter}
-                                options={(typeof statusOptions !== 'undefined' && statusOptions.length)
-                                    ? statusOptions
-                                    : ['All', 'Active', 'Draft', 'Pending', 'Committed', 'Approved', 'Inactive', 'Reconciled']}
-                                allLabel="All statuses"
-                                className="min-w-[240px] w-full max-w-[280px]"
-                            />
-                            <UUSelect
-                                value={periodFilter}
-                                onChange={setPeriodFilter}
-                                options={(typeof periodOptions !== 'undefined' && periodOptions.length)
-                                    ? periodOptions
-                                    : ['All']}
-                                allLabel="All periods"
-                                className="min-w-[240px] w-full max-w-[280px]"
-                            />
+                            <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="bg-black/40 border border-white/10 rounded-xl py-2 px-3 text-xs text-white">
+                                <option value="All">All statuses</option>
+                                <option value="Active">Active</option>
+                                <option value="Draft">Draft</option>
+                                <option value="Pending">Pending</option>
+                                <option value="Committed">Committed</option>
+                                <option value="Approved">Approved</option>
+                                <option value="Inactive">Inactive</option>
+                            </select>
+                            <select value={periodFilter} onChange={e => setPeriodFilter(e.target.value)} className="bg-black/40 border border-white/10 rounded-xl py-2 px-3 text-xs text-white">
+                                {periods.map(p => <option key={p} value={p}>{p === 'All' ? 'All periods' : p}</option>)}
+                            </select>
                         </>
                     )}
                     <div className="relative w-72">
@@ -17557,13 +16909,8 @@ const DataTable = ({ collectionName, data, columns: columnsProp, glassClass, tit
                 </table>
             </div>
 
-            <Modal isOpen={isModalOpen} onClose={closeModal} title={`${editingRecord && editingRecord.id ? 'Edit' : 'New'} ${getAddLabel()}`}>
-                <FormModal
-                    collectionName={collectionName}
-                    initialData={editingRecord}
-                    onSave={closeModal}
-                    onCancel={closeModal}
-                />
+            <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={`New ${getAddLabel()}`}>
+                <FormModal collectionName={collectionName} initialData={editingRecord} onSave={() => setIsModalOpen(false)} onCancel={() => setIsModalOpen(false)} />
             </Modal>
         </ContainerCard>
     );
@@ -18025,44 +17372,29 @@ const COLUMN_CONFIG = {
     { key: 'approved_by_signature', label: 'Authority Master Stamp', isReadOnly: true, placeholder: 'MASTER_APPROVAL_PROTOCOL_SECURE' }
 ],   // Update this in your COLUMN_CONFIG object
 'HR_COMPETENCE_CRUD': [
-        { key: 'employee_id', label: 'ID NO (HR)', type: 'text', isReadOnly: true },
-        { key: 'employee_name', label: 'Employee Name', type: 'select', isRequired: true, source: 'HR_EMPLOYEE_CRUD', sourceLabel: 'name', sourceValue: 'name' },
-        { key: 'department', label: 'Department', type: 'text', isReadOnly: true },
-        { key: 'position', label: 'Position', type: 'text', isReadOnly: true },
-        { key: 'skill_category', label: 'Competency Category', type: 'select', isRequired: true, options: (typeof NEW_MOCK_SKILLS !== 'undefined' ? Object.keys(NEW_MOCK_SKILLS) : ['Core', 'Communication', 'Technical']) },
-        { key: 'skill', label: 'Skill / Competency', type: 'select', isRequired: true, options: (typeof NEW_MOCK_SKILLS !== 'undefined' ? Object.values(NEW_MOCK_SKILLS).flat() : []) },
-        { key: 'score', label: 'Score (1–5)', type: 'select', options: ['1','2','3','4','5'], isRequired: true },
-        { key: 'rating_label', label: 'Proficiency', type: 'text', isReadOnly: true },
-        { key: 'weight', label: 'Weight', type: 'number', isReadOnly: true },
-        { key: 'weighted_score', label: 'Weighted Score', type: 'number', isReadOnly: true },
-        { key: 'period', label: 'Period', type: 'select', options: ['2025-H2','2026-H1','2026-H2'] },
-        { key: 'last_assessed', label: 'Assessment Date', type: 'date', isRequired: true },
-        { key: 'evaluator', label: 'Evaluator', type: 'text' },
-        { key: 'evidence', label: 'Evidence', type: 'text' },
-        { key: 'notes', label: 'Notes', type: 'text' },
-        { key: 'status', label: 'Status', type: 'select', options: ['Active', 'Development', 'Archived'] },
-    ],
+    { key: 'employee_name', label: 'Employee Name', type: 'select', isRequired: true, options: MOCK_EMPLOYEES.map(e => e.name) },
+    { 
+        key: 'skill', 
+        label: 'Skill / Competency', 
+        type: 'select', 
+        isRequired: true, 
+        // This ensures the dropdown in the "Add" form also has all skills
+        options: Object.values(NEW_MOCK_SKILLS).flat() 
+    },
+    { key: 'score', label: 'Score (1-5)', type: 'select', options: COMPETENCE_LEVELS.map(String), isRequired: true },
+    { key: 'last_assessed', label: 'Assessment Date', type: 'date', isRequired: true },
+    { key: 'department', label: 'Department', isReadOnly: true },
+    { key: 'evaluator', label: 'Evaluator', isReadOnly: true }
+],
     'HR_APPRAISAL_CRUD': [
         { key: 'id', label: 'ID', isHidden: true, isReadOnly: true },
-        { key: 'employee_id', label: 'ID NO (HR)', type: 'text', isReadOnly: true },
-        { key: 'employee_name', label: 'Employee Name', type: 'select', isRequired: true, source: 'HR_EMPLOYEE_CRUD', sourceLabel: 'name', sourceValue: 'name' },
-        { key: 'department', label: 'Department', type: 'text', isReadOnly: true },
-        { key: 'position', label: 'Position', type: 'text', isReadOnly: true },
-        { key: 'appraisal_period', label: 'Appraisal Period', type: 'select', options: ['2025-H2','2026-H1','2026-H2'], isRequired: true },
+        { key: 'employee_name', label: 'Employee Name', type: 'select', isRequired: true, options: MOCK_EMPLOYEES.map(e => e.name) },
         { key: 'appraisal_date', label: 'Appraisal Date', type: 'date', isRequired: true },
-        { key: 'skills_assessed', label: 'Skills Assessed (from Matrix)', type: 'number', isReadOnly: true },
-        { key: 'competence_avg', label: 'Competence Avg (Matrix)', type: 'number', isReadOnly: true },
-        { key: 'goals_score', label: 'Goals Score (1–5)', type: 'number' },
-        { key: 'conduct_score', label: 'Conduct Score (1–5)', type: 'number' },
-        { key: 'appraisal_score', label: 'Overall Score (1.0–5.0)', type: 'number', isRequired: true },
-        { key: 'performance_band', label: 'Performance Band', type: 'select', options: ['Outstanding','Exceeds Expectations','Meets Expectations','Needs Improvement','Unsatisfactory'], isReadOnly: true },
+        { key: 'appraisal_score', label: 'Score (1.0 - 5.0)', type: 'number', isRequired: true },
         { key: 'feedback_manager', label: 'Manager Feedback', type: 'textarea' },
         { key: 'feedback_peer', label: 'Peer Feedback', type: 'textarea' },
         { key: 'feedback_self', label: 'Self Review', type: 'textarea' },
-        { key: 'development_plan', label: 'Development Plan', type: 'textarea' },
-        { key: 'next_review_date', label: 'Next Review', type: 'date' },
-        { key: 'evaluator', label: 'Evaluator', type: 'text' },
-        { key: 'status', label: 'Status', type: 'select', options: ['Pending', 'In Review', 'Completed', 'Canceled'] },
+        { key: 'status', label: 'Status', type: 'select', options: ['Pending', 'Completed', 'Canceled'] },
     ],
     'HR_LEAVE_CRUD': [
         { key: 'id', label: 'ID', isHidden: true, isReadOnly: true },
@@ -18297,7 +17629,7 @@ const AuthScreen = ({ glassClass }) => {
     const exportCSV = (slug) => {
         const data = allData[slug] || [];
         if (!data.length) return;
-        const csv = [Object.keys(data[0]).join(','), ...data.map(r => Object.values(r).join(','))].join('\n');
+        const csv = [Object.keys(data[0]).join(','), ...data.map(r => Object.values(r).join(','))].join(String.fromCharCode(10));
         const blob = new Blob([csv], { type: 'text/csv' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a'); a.href = url; a.download = `${slug}.csv`; a.click();
@@ -18977,7 +18309,7 @@ const KPI = ({ title, value, iconName, glassClass, colorClass, explanation }) =>
     const exportCSV = (slug) => {
         const data = allData[slug] || [];
         if (!data.length) return;
-        const csv = [Object.keys(data[0]).join(','), ...data.map(r => Object.values(r).join(','))].join('\n');
+        const csv = [Object.keys(data[0]).join(','), ...data.map(r => Object.values(r).join(','))].join(String.fromCharCode(10));
         const blob = new Blob([csv], { type: 'text/csv' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a'); a.href = url; a.download = `${slug}.csv`; a.click();
@@ -19015,7 +18347,7 @@ const KPI = ({ title, value, iconName, glassClass, colorClass, explanation }) =>
     const exportCSV = (slug) => {
         const data = allData[slug] || [];
         if (!data.length) return;
-        const csv = [Object.keys(data[0]).join(','), ...data.map(r => Object.values(r).join(','))].join('\n');
+        const csv = [Object.keys(data[0]).join(','), ...data.map(r => Object.values(r).join(','))].join(String.fromCharCode(10));
         const blob = new Blob([csv], { type: 'text/csv' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a'); a.href = url; a.download = `${slug}.csv`; a.click();
@@ -19051,7 +18383,7 @@ const StatCard = ({ label, value, Icon, color, glassClass }) => {
     const exportCSV = (slug) => {
         const data = allData[slug] || [];
         if (!data.length) return;
-        const csv = [Object.keys(data[0]).join(','), ...data.map(r => Object.values(r).join(','))].join('\n');
+        const csv = [Object.keys(data[0]).join(','), ...data.map(r => Object.values(r).join(','))].join(String.fromCharCode(10));
         const blob = new Blob([csv], { type: 'text/csv' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a'); a.href = url; a.download = `${slug}.csv`; a.click();
@@ -19100,7 +18432,7 @@ const ChartExportButton = ({ data, chartTitle, glassClass }) => {
     const exportCSV = (slug) => {
         const data = allData[slug] || [];
         if (!data.length) return;
-        const csv = [Object.keys(data[0]).join(','), ...data.map(r => Object.values(r).join(','))].join('\n');
+        const csv = [Object.keys(data[0]).join(','), ...data.map(r => Object.values(r).join(','))].join(String.fromCharCode(10));
         const blob = new Blob([csv], { type: 'text/csv' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a'); a.href = url; a.download = `${slug}.csv`; a.click();
@@ -19227,7 +18559,7 @@ const RoleManagement = ({ glassClass }) => {
     const exportCSV = (slug) => {
         const data = allData[slug] || [];
         if (!data.length) return;
-        const csv = [Object.keys(data[0]).join(','), ...data.map(r => Object.values(r).join(','))].join('\n');
+        const csv = [Object.keys(data[0]).join(','), ...data.map(r => Object.values(r).join(','))].join(String.fromCharCode(10));
         const blob = new Blob([csv], { type: 'text/csv' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a'); a.href = url; a.download = `${slug}.csv`; a.click();
@@ -19423,9 +18755,6 @@ const FormModal = ({ collectionName, initialData, onSave, onCancel, glassClass }
                 <div key={keySafe} className="md:col-span-2 pt-4">
                     <MultiEntryField 
                         label={field.label} 
-                        fieldKey={field.key}
-                        hint={field.help || field.intel}
-                        intelCollection={typeof collectionName !== 'undefined' ? collectionName : undefined}
                         entries={formData[keySafe] || []} 
                         fieldConfig={field.arrayConfig} 
                         glassClass={glassClass} 
@@ -19454,10 +18783,7 @@ const FormModal = ({ collectionName, initialData, onSave, onCancel, glassClass }
                 const live = (typeof getCollection === 'function')
                     ? getCollection('HR_EMPLOYEE_CRUD')
                     : (allData.HR_EMPLOYEE_CRUD || []);
-                // Prefer live HR publish in localStorage + Finance allData
-                src = typeof uuMergeHrEmployees === 'function'
-                    ? uuMergeHrEmployees([...(live || []), ...(typeof uuLoadHrEmployees === 'function' ? uuLoadHrEmployees() : [])])
-                    : live;
+                src = typeof uuMergeHrEmployees === 'function' ? uuMergeHrEmployees(live) : live;
                 src = (src || []).filter((e) => {
                     const n = String(e.name || e.full_name || e.employee_name || '').trim();
                     if (!n) return false;
@@ -19488,17 +18814,9 @@ const FormModal = ({ collectionName, initialData, onSave, onCancel, glassClass }
                 return code ? { label: code + ' — ' + nm, value: code } : null;
             }).filter(Boolean);
         }
-                if (keySafe === 'employee_name' && (
-            collectionName === 'PAY_PROCESS_CRUD' || collectionName === 'PAY_OVERTIME_CRUD' ||
-            collectionName === 'PAY_AD_CRUD' || collectionName === 'PAY_MASTER_CRUD' ||
-            collectionName === 'PAY_SLIP_CRUD' || collectionName === 'HR_COMPETENCE_CRUD' ||
-            collectionName === 'HR_APPRAISAL_CRUD' || collectionName === 'HR_LEAVE_CRUD' ||
-            collectionName === 'HR_TRAINING_CRUD' || collectionName === 'HR_TRANSFER_CRUD'
-        )) {
-            const hrList = typeof uuMergeHrEmployees === 'function'
-                ? uuMergeHrEmployees(allData['HR_EMPLOYEE_CRUD'] || [])
-                : (allData['HR_EMPLOYEE_CRUD'] || []);
-            options = hrList.map((e) => e.name || e.full_name || e.employee_name).filter(Boolean);
+                if (keySafe === 'employee_name' && (collectionName === 'PAY_PROCESS_CRUD' || collectionName === 'PAY_OVERTIME_CRUD' || collectionName === 'PAY_AD_CRUD' || collectionName === 'PAY_MASTER_CRUD' || collectionName === 'PAY_SLIP_CRUD')) {
+            const hrList = uuMergeHrEmployees(allData['HR_EMPLOYEE_CRUD'] || []);
+            options = hrList.map((e) => e.name || e.employee_name).filter(Boolean);
             options = [...new Set(options)].sort((a, b) => String(a).localeCompare(String(b)));
             if (!options.length) {
                 options = ['(No HR employees — open HR Employee master once)'];
@@ -19543,50 +18861,6 @@ const FormModal = ({ collectionName, initialData, onSave, onCancel, glassClass }
                     value={formData[keySafe] || ''}
                     onChange={(v) => {
                         let updates = { [keySafe]: v };
-
-                        // --- HR competence / appraisal: employee master + matrix rollup ---
-                        if ((collectionName === 'HR_COMPETENCE_CRUD' || collectionName === 'HR_APPRAISAL_CRUD') && keySafe === 'employee_name') {
-                            const hrList = typeof uuMergeHrEmployees === 'function'
-                                ? uuMergeHrEmployees(allData['HR_EMPLOYEE_CRUD'] || [])
-                                : (allData['HR_EMPLOYEE_CRUD'] || []);
-                            const emp = (hrList || []).find(e =>
-                                (e.name === v) || (e.full_name === v) || (e.employee_name === v)
-                            );
-                            if (emp) {
-                                updates.employee_id = emp.id_number || emp.id_no || emp.id || '';
-                                updates.department = emp.department || '';
-                                updates.position = emp.job_title || emp.current_position || '';
-                            }
-                            if (collectionName === 'HR_APPRAISAL_CRUD') {
-                                const matrix = (allData['HR_COMPETENCE_CRUD'] || []).filter(r =>
-                                    r && (r.employee_name === v || (emp && r.employee_id === (emp.id_number || emp.id)))
-                                );
-                                if (matrix.length) {
-                                    let wSum = 0, wTot = 0;
-                                    matrix.forEach(r => {
-                                        const sc = Number(r.score) || 0;
-                                        const w = Number(r.weight) || 1;
-                                        wSum += sc * w; wTot += w;
-                                    });
-                                    const avg = wTot ? Math.round((wSum / wTot) * 100) / 100 : 0;
-                                    updates.skills_assessed = matrix.length;
-                                    updates.competence_avg = avg;
-                                    updates.appraisal_score = avg;
-                                    updates.performance_band =
-                                        avg >= 4.5 ? 'Outstanding' :
-                                        avg >= 4.0 ? 'Exceeds Expectations' :
-                                        avg >= 3.0 ? 'Meets Expectations' :
-                                        avg >= 2.0 ? 'Needs Improvement' : 'Unsatisfactory';
-                                }
-                            }
-                        }
-                        if (collectionName === 'HR_COMPETENCE_CRUD' && keySafe === 'score') {
-                            const sc = Number(v) || 0;
-                            updates.rating_label = ({ 1: 'Novice', 2: 'Developing', 3: 'Competent', 4: 'Proficient', 5: 'Expert' })[sc] || '';
-                            const w = Number(formData.weight) || 1;
-                            updates.weight = w;
-                            updates.weighted_score = Math.round(sc * w * 100) / 100;
-                        }
 
                         // --- FINANCE ROBUST: COA + partner autofill ---
                         if ((collectionName === 'transactions' || collectionName === 'dayJournals') && (keySafe === 'account_id' || keySafe === 'balancing_account' || keySafe === 'type' || keySafe === 'amount' || keySafe === 'partner_name')) {
@@ -19912,45 +19186,17 @@ const FormModal = ({ collectionName, initialData, onSave, onCancel, glassClass }
     };
 
     return (
-        <form
-            onSubmit={(e) => { e.preventDefault(); e.stopPropagation(); }}
-            className="space-y-6 p-6 max-h-[70vh] overflow-y-auto custom-scrollbar"
-        >
+        <form onSubmit={async (e) => { 
+            e.preventDefault(); 
+            const success = formData.id ? await updateRecord(collectionName, formData.id, formData) : await addRecord(collectionName, formData);
+            if (success) onSave();
+        }} className="space-y-6 p-6 max-h-[70vh] overflow-y-auto custom-scrollbar">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {columns.map(renderField)}
             </div>
-            <div className="flex justify-end gap-4 mt-8 sticky bottom-0 bg-slate-900 p-4 border-t border-white/10 z-10">
+            <div className="flex justify-end gap-4 mt-8 sticky bottom-0 bg-slate-900 p-4 border-t border-white/10">
                 <button type="button" onClick={onCancel} className="px-6 py-2 text-gray-400 font-bold uppercase text-xs">Cancel</button>
-                <button
-                    type="button"
-                    className="bg-cyan-600 px-10 py-2 rounded-xl font-bold text-white uppercase text-xs shadow-lg"
-                    onClick={async () => {
-                        try {
-                            let payload = { ...formData };
-                            if (!payload.id) {
-                                payload.id = `${collectionName === 'PAY_PROCESS_CRUD' ? 'proc' : 'rec'}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-                            }
-                            if (collectionName === 'PAY_PROCESS_CRUD') {
-                                if (!String(payload.status || '').trim()) payload.status = 'Committed';
-                                // Normalize period for table filters
-                                if (!payload.period) payload.period = new Date().toISOString().slice(0, 7);
-                            }
-                            // Close modal immediately so UI never stays stuck
-                            if (typeof onSave === 'function') onSave();
-                            // Then write state (and finance post for Committed process)
-                            if (formData.id || !isNew) {
-                                await updateRecord(collectionName, payload.id, payload);
-                            } else {
-                                await addRecord(collectionName, payload);
-                            }
-                        } catch (err) {
-                            console.error('[FormModal] save failed', collectionName, err);
-                            alert(`Save failed: ${err?.message || err}`);
-                        }
-                    }}
-                >
-                    Save Record
-                </button>
+                <button type="submit" className="bg-cyan-600 px-10 py-2 rounded-xl font-bold text-white uppercase text-xs shadow-lg">Save Record</button>
             </div>
         </form>
     );
@@ -19985,22 +19231,1677 @@ const Sidebar = ({ currentView, setCurrentView, glassClass }) => {
 
     // ... rest of Sidebar JSX
 };
-/* —— Ethiopian (Geez) ↔ Gregorian calendar —— */
-const ethiopianMonthNames = [
-    'Meskerem', 'Tikimt', 'Hidar', 'Tahsas', 'Tir', 'Yekatit',
-    'Megabit', 'Miazia', 'Genbot', 'Sene', 'Hamle', 'Nehase', 'Pagumen'
+
+/* ===== unityUniversity AI (live + knowledge) ===== */
+const UU_FEMALE_FIRST_DUP = new Set(['lomi','saba','tigist','eleni','hanna','aster','netsanet','sara','sarah','bethlehem','mahlet','selam','rahel','helen','meseret','hiwot','kidist','marta','martha','yeshi','almaz','tsion','beten','sosina','liya','ruth','meron','eden','abeba','tsehay','worknesh','senait','bezawit','hawi','meaza','frehiwot','genet','ayelech','mekdes','selamawit','tsehaynesh','bethel','hirut','firehiwot','yelena']);
+const UU_MALE_FIRST_DUP = new Set(['abebe','kebede','chala','jemal','fasil','bereket','yonas','henok','kalab','tadesse','dawit','lemma','daniel','samuel','solomon','yared','mulugeta','getachew','tesfaye','hailu','mekonnen','assefa','girma','wolde','negash','bekele','yonatan','nahom','abel','kaleb','biruk','natnael','robelt','kirubel','ammanuel','amanuel','eyob','yohannes','melaku','sisay','asfaw','desta','haile','tewodros','mengistu','berhanu','gashaw','tamiru','fikadu','teklu','damte']);
+const uuGuessGenderFromName_UNUSED = (fullName) => {
+    const first = String(fullName || '').trim().split(/\s+/)[0].toLowerCase();
+    if (!first) return '';
+    if (UU_FEMALE_FIRST.has(first)) return 'Female';
+    if (UU_MALE_FIRST.has(first)) return 'Male';
+    return '';
+};
+const uuCorrectEmployeeGender_DUP = (e) => {
+    if (!e || typeof e !== 'object') return e;
+    const name = e.full_name || e.employee_name || e.name || e.Name || '';
+    const guessed = uuGuessGenderFromName(name);
+    if (!guessed) return e;
+    return Object.assign({}, e, { gender: guessed, Gender: guessed });
+};
+const uuCorrectEmployeeList_DUP = (list) => Array.isArray(list) ? list.map(uuCorrectEmployeeGender) : [];
+
+
+
+/* ---- unityUniversity AI: dictionary + literal/contextual analyzers ---- */
+const UU_AI_DICTIONARY = [
+  { term: 'SKU', aliases: ['stock keeping unit', 'item code'], def: 'Stock Keeping Unit — unique code for an inventory item in Material master.', tags: ['material', 'inventory'] },
+  { term: 'GRV', aliases: ['goods received voucher', 'goods received'], def: 'Goods Received Voucher — stock received into store; may post to Finance.', tags: ['material', 'finance'] },
+  { term: 'GIV', aliases: ['goods issued voucher', 'goods issued'], def: 'Goods Issued Voucher — stock issued from store to a department or job.', tags: ['material'] },
+  { term: 'COA', aliases: ['chart of accounts', 'chart of account'], def: 'Chart of Accounts — list of ledger accounts in Finance.', tags: ['finance'] },
+  { term: 'TB', aliases: ['trial balance'], def: 'Trial Balance — accounts with debit and credit totals that should balance.', tags: ['finance'] },
+  { term: 'GL', aliases: ['general ledger'], def: 'General Ledger — account-level history of postings.', tags: ['finance'] },
+  { term: 'PAYE', aliases: ['income tax', 'pay as you earn'], def: 'Pay As You Earn — employee income tax withheld in payroll.', tags: ['finance', 'hr'] },
+  { term: 'Basic salary', aliases: ['basic pay', 'base salary'], def: 'Core contracted pay before allowances, overtime, and deductions (HR master → payroll).', tags: ['hr', 'finance'] },
+  { term: 'Parts robbing', aliases: ['part robbing', 'cannibalization'], def: 'Taking parts from one item/asset to maintain another while tracking both sides in Material.', tags: ['material'] },
+  { term: 'Power Geez', aliases: ['geez calendar', 'ethiopian calendar'], def: 'Ethiopian (Geez) ↔ Gregorian converter in UI Customization.', tags: ['ui'] },
+  { term: 'RBAC', aliases: ['role based access', 'roles'], def: 'Role-Based Access Control — roles grant module and permission access.', tags: ['security'] },
+  { term: 'Gerji campus', aliases: ['gerji', 'al-amoudi campus', 'alamoudi'], def: 'Main Unity University campus identity in Addis Ababa.', tags: ['university'] },
+  { term: 'Bootstrap', aliases: ['api bootstrap'], def: 'API load of collections from PostgreSQL into the SPA session.', tags: ['system'] },
+  { term: 'Appraisal', aliases: ['performance review', 'evaluation'], def: 'HR performance evaluation record (employee, period, score).', tags: ['hr'] },
+  { term: 'Award', aliases: ['recognition', 'prize'], def: 'HR recognition record under Awards.', tags: ['hr'] },
+  { term: 'Equity', aliases: ['share capital', 'capital', 'owners equity'], def: 'Owners residual interest; Share Capital and related equity accounts (often 3xxx).', tags: ['finance'] },
+  { term: 'Question paper', aliases: ['exam paper', 'test paper', 'a4 paper', 'copy paper', 'paper ream'], def: 'Stationery inventory concept — match Material SKUs whose name/description mentions paper / A4 / ream / exam paper.', tags: ['material', 'inventory'] },
+  { term: 'Chair', aliases: ['office chair', 'seat'], def: 'Furniture inventory — SKUs with chair/seat in name or description.', tags: ['material', 'inventory'] },
+  { term: 'Table', aliases: ['desk', 'office table'], def: 'Furniture inventory — SKUs with table/desk in name or description.', tags: ['material', 'inventory'] },
+  { term: 'Toner', aliases: ['cartridge', 'laser toner'], def: 'IT consumable inventory — toner/cartridge SKUs.', tags: ['material', 'inventory'] },
+  { term: 'Unity University', aliases: ['uu', 'unity'], def: 'Private higher education institution in Ethiopia; modules Finance, HR, Material under shared SIS login.', tags: ['university'] },
+  { term: 'Moral use', aliases: ['ethics'], def: 'Report only operational facts from accessible session data; do not invent quantities or confidential fields.', tags: ['system'] },
 ];
 
-const isGregorianLeap = (y) => (y % 4 === 0 && y % 100 !== 0) || (y % 400 === 0);
-const isEthiopianLeap = (y) => (y % 4) === 3;
+const UU_STOPWORDS = new Set(('a an the in on at to for of and or is are was were be been being how many much what is there store inventory stock sku item items quantity qty total sum count number please show list me our university unity have has had do does did with from by about than then also just only campus campuses president vice founder chairman leadership faculty college school'.split(/\s+/)));
 
-const gregorianToJDN = (year, month, day) => {
-    const a = Math.floor((14 - month) / 12);
-    const y = year + 4800 - a;
-    const m = month + 12 * a - 3;
-    return day + Math.floor((153 * m + 2) / 5) + 365 * y + Math.floor(y / 4) - Math.floor(y / 100) + Math.floor(y / 400) - 32045;
+const uuNormalizeText = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9\s\-./]/g, ' ').replace(/\s+/g, ' ').trim();
+
+/** Extract subject phrase from count/amount questions */
+const uuExtractSubject = (question) => {
+    const q = uuNormalizeText(question);
+    let m =
+        q.match(/how many (.+?)(?:\s+are|\s+is|\s+in|\s+at|\s+do|\s+does|\?|$)/) ||
+        q.match(/how much (.+?)(?:\s+is|\s+are|\s+in|\s+at|\s+do|\s+does|\?|$)/) ||
+        q.match(/(?:quantity|qty|total|sum|count|number) (?:of )?(.+?)(?:\s+in|\s+at|\?|$)/) ||
+        q.match(/(.+?) in (?:the )?store/) ||
+        q.match(/store (?:has|have|hold) (.+)/);
+    let sub = m ? m[1] : '';
+    sub = sub.replace(/\b(are|is|there|available|currently|now|total|please)\b/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!sub || sub.length < 2) {
+        // fallback: meaningful tokens
+        sub = q.split(/\s+/).filter((w) => w.length > 2 && !UU_STOPWORDS.has(w)).join(' ');
+    }
+    return sub;
 };
 
+const uuTokenize = (s) => uuNormalizeText(s).split(/\s+/).filter((w) => w.length > 1 && !UU_STOPWORDS.has(w));
+
+/** Literal + contextual score of query tokens against a text blob */
+
+const uuStem = (w) => {
+    let t = String(w || '').toLowerCase();
+    if (t.length > 4 && t.endsWith('ies')) t = t.slice(0, -3) + 'y';
+    else if (t.length > 3 && t.endsWith('es') && !t.endsWith('ss')) t = t.slice(0, -2);
+    else if (t.length > 3 && t.endsWith('s') && !t.endsWith('ss')) t = t.slice(0, -1);
+    return t;
+};
+
+const uuExpandTokens = (tokens) => {
+    const out = [];
+    const seen = {};
+    const add = (t) => {
+        t = String(t || '').toLowerCase().trim();
+        if (!t || t.length < 2 || seen[t]) return;
+        seen[t] = true;
+        out.push(t);
+    };
+    (tokens || []).forEach((tok) => {
+        add(tok);
+        add(uuStem(tok));
+        // domain synonyms
+        if (/^papers?$/.test(tok) || uuStem(tok) === 'paper') {
+            ['paper', 'papers', 'a4', 'ream', 'copy', 'exam', 'stationery', 'bond'].forEach(add);
+        }
+        if (/^chairs?$/.test(tok) || uuStem(tok) === 'chair') {
+            ['chair', 'chairs', 'seat', 'stool', 'furniture'].forEach(add);
+        }
+        if (/^tables?$/.test(tok) || uuStem(tok) === 'table') {
+            ['table', 'tables', 'desk', 'desks', 'furniture'].forEach(add);
+        }
+        if (/toner|cartridge/.test(tok)) ['toner', 'cartridge', 'laser', 'hp'].forEach(add);
+        if (/^pens?$/.test(tok) || uuStem(tok) === 'pen') ['pen', 'pens', 'biro', 'ballpoint'].forEach(add);
+    });
+    return out;
+};
+
+/** Flatten all fields of a table row for search */
+const uuRowBlob = (r) => {
+    if (!r || typeof r !== 'object') return '';
+    const parts = [];
+    try {
+        Object.keys(r).forEach((k) => {
+            const v = r[k];
+            if (v == null) return;
+            if (typeof v === 'object') {
+                try { parts.push(JSON.stringify(v)); } catch (e) {}
+            } else {
+                parts.push(String(v));
+                parts.push(String(k)); // field names help contextual match
+            }
+        });
+    } catch (e) {
+        try { parts.push(JSON.stringify(r)); } catch (e2) {}
+    }
+    return parts.join(' ');
+};
+
+const uuMatchScore = (queryTokens, blob) => {
+    const b = uuNormalizeText(blob);
+    if (!b || !queryTokens || !queryTokens.length) return 0;
+    const expanded = uuExpandTokens(queryTokens);
+    let score = 0;
+    const phrase = queryTokens.join(' ');
+    if (phrase.length > 2 && b.indexOf(uuNormalizeText(phrase)) >= 0) score += 14;
+    expanded.forEach((tok) => {
+        if (!tok) return;
+        if (b.indexOf(tok) >= 0) score += tok.length >= 4 ? 5 : 3;
+        const st = uuStem(tok);
+        if (st !== tok && b.indexOf(st) >= 0) score += 4;
+        // soft: token inside longer words (copy-paper, papertowel)
+        if (st.length >= 4 && b.indexOf(st) >= 0) score += 1;
+    });
+    return score;
+};
+
+/** Analyze Material inventory for any subject — uses ALL row fields */
+const uuAnalyzeStoreSubject = (question, items) => {
+    const subject = uuExtractSubject(question);
+    const tokens = uuTokenize(subject);
+    const focus = tokens.filter((t) => !/^(store|stores|stock|inventory|sku|item|items|qty|quantity)$/.test(t));
+    if (!focus.length) return null;
+    const rows = Array.isArray(items) ? items : [];
+    const expanded = uuExpandTokens(focus);
+    const scored = [];
+    rows.forEach((r) => {
+        const blob = uuRowBlob(r);
+        const score = uuMatchScore(focus, blob);
+        if (score >= 3) {
+            const qty = Number(
+                r.quantity != null ? r.quantity :
+                r.qty != null ? r.qty :
+                r.qty_on_hand != null ? r.qty_on_hand :
+                r.on_hand != null ? r.on_hand :
+                r.stock_qty != null ? r.stock_qty :
+                r.balance_qty != null ? r.balance_qty : 0
+            ) || 0;
+            scored.push({ r: r, score: score, qty: qty });
+        }
+    });
+    scored.sort((a, b) => b.score - a.score || b.qty - a.qty);
+    const best = scored[0] ? scored[0].score : 0;
+    const hit = scored.filter((s) => s.score >= Math.max(3, best * 0.4));
+    const qtySum = hit.reduce((s, x) => s + x.qty, 0);
+    const nl = String.fromCharCode(10);
+    const lines = hit.slice(0, 25).map((x) => {
+        const r = x.r;
+        const sku = (r.sku || r.item_sku || r.item_code || r.code || r.id) || '—';
+        const name = (r.name || r.item_name || r.description || r.desc) || '';
+        const store = (r.location || r.store || r.warehouse || r.receiving_store || r.store_name) || '—';
+        const unit = (r.unit || r.uom || r.unit_of_measure) || '';
+        return '• ' + sku + (name ? ' — ' + name : '') + ' | qty ' + x.qty + (unit ? ' ' + unit : '') + ' | ' + store + ' | score ' + Math.round(x.score);
+    });
+    // Near misses when empty
+    let near = '';
+    if (!hit.length && rows.length) {
+        const soft = rows.map((r) => {
+            const blob = uuRowBlob(r);
+            return { r: r, score: uuMatchScore(focus, blob) };
+        }).sort((a, b) => b.score - a.score).slice(0, 5);
+        near = nl + 'Closest rows (low score — may still help):' + nl + soft.map((x) => {
+            const r = x.r;
+            const sku = (r.sku || r.item_code || r.id) || '—';
+            const name = (r.name || r.item_name || r.description) || '';
+            return '• ' + sku + (name ? ' — ' + name : '') + ' | score ' + Math.round(x.score);
+        }).join(nl);
+    }
+    const body = [
+        'Store / inventory analysis (all table fields · literal + stem + synonyms):',
+        '• Question subject: ' + (subject || focus.join(' ')),
+        '• Focus tokens: ' + focus.join(', '),
+        '• Expanded search tokens: ' + expanded.slice(0, 12).join(', '),
+        '• Matching SKU types: ' + hit.length,
+        '• Total quantity on matches: ' + qtySum,
+        '• Inventory rows scanned: ' + rows.length,
+        '',
+        hit.length ? 'Matches:' : 'No strong SKU match for those tokens.',
+        lines.join(nl) || '• —',
+        near,
+        '',
+        'Logic: every column on the item row is searched; plurals stem (papers→paper); synonyms (paper↔A4/ream/copy). Quantities come only from qty fields.',
+        'Source: MAT_ITEM_CRUD / inventory master.',
+    ].filter((x) => x !== '').join(nl);
+    return {
+        title: 'Live · Store analysis · ' + (subject || focus.join(' ')) + ' (' + hit.length + ' SKU · qty ' + qtySum + ')',
+        body: body,
+        topic: 'store_item',
+        source: 'session',
+    };
+};
+
+const uuDictionarySearch = (question) => {
+    const q = uuNormalizeText(question);
+    const qTokens = uuTokenize(q);
+    const hits = [];
+    (UU_AI_DICTIONARY || []).forEach((d) => {
+        const term = uuNormalizeText(d.term);
+        const aliases = (d.aliases || []).map(uuNormalizeText);
+        let score = 0;
+        if (q.indexOf(term) >= 0) score += 10;
+        aliases.forEach((a) => { if (a && q.indexOf(a) >= 0) score += 8; });
+        score += uuMatchScore(qTokens, term + ' ' + aliases.join(' ') + ' ' + (d.def || '') + ' ' + (d.tags || []).join(' ')) * 0.35;
+        if (score >= 3) hits.push({ d: d, score: score });
+    });
+    hits.sort((a, b) => b.score - a.score);
+    return hits;
+};
+
+const uuDictionaryAnswer = (question) => {
+    try {
+        const q = String(question || '');
+        const wantsDef = /\b(what is|what's|whats|define|definition|meaning of|explain|dictionary|glossary)\b/i.test(q);
+        const hits = uuDictionarySearch(q);
+        if (!hits.length) return null;
+        if (!wantsDef && hits[0].score < 8) return null;
+        const top = hits.slice(0, 6);
+        const nl = String.fromCharCode(10);
+        const body = [
+            'Dictionary search (literal + contextual):',
+            ...top.map((h, i) => (i + 1) + '. ' + h.d.term + ' — ' + h.d.def + (h.d.aliases && h.d.aliases.length ? ' (also: ' + h.d.aliases.join(', ') + ')' : '')),
+            '',
+            'Tip: for stock quantities ask “how many [item] in store?” — the analyzer searches SKU names/descriptions.',
+        ].join(nl);
+        return { title: 'Dictionary · ' + top[0].d.term, body: body, topic: 'dictionary', source: 'dictionary' };
+    } catch (e) { return null; }
+};
+
+
+const UU_AI_KNOWLEDGE = [
+    {
+        id: 'uu_profile',
+        title: 'Unity University profile',
+        tags: ['unity university', 'university', 'profile', 'about', 'what is unity', 'private', 'ethiopia', 'quality house', 'motto', 'founder', 'president', 'chairman', 'midroc', 'accreditation', 'herqa'],
+        body: 'Unity University (Amharic: ዩኒቲ ዩኒቨርስቲ) is Ethiopia’s pioneer private higher education institution. Motto: “Quality House”. Type: private, co-educational, English-medium instruction. Established 1991 as Unity Language School (English, Arabic, French, Italian). Became the first private college (1998), Unity University College (2002), and the first full-fledged private university (June 2008). Founder: Fisseha Eshetu. Chairman (historical/public listings): Mohammed Hussein Al Amoudi. President/CEO (public listings): Dr. Arega Yirdaw. Accredited by the Ethiopian Ministry of Education; quality agency HERQA is commonly cited. Official website: https://www.uu.edu.et · Student portal: sis.uu.edu.et · General: info@uu.edu.et · Registrar: registrar@uu.edu.et · P.O. Box 6722, Addis Ababa. Main campus identity: Gerji / Al-Amoudi Campus, Addis Ababa. Note: program and leadership titles can change—confirm on uu.edu.et for official decisions.'
+    },
+    {
+        id: 'uu_history',
+        title: 'Unity University history',
+        tags: ['history', 'established', '1991', 'language school', 'college', '2008', 'timeline', 'phases', 'midroc', 'founded', 'founder', 'construct', 'constructed', 'construction', 'built', 'build', 'when', 'year', 'started', 'start', 'opened', 'opening', 'begin', 'began'],
+        body: 'Founded / constructed (as language school): 1991. Full private university status: June 2008.\nTimeline (public institutional history):\n• 1991 — Unity Language School founded; small cohort, language courses.\n• 1993–1994 — Certificate/Diploma in Basic Law; Adama branch begins expanding reach.\n• 1997–1999 — Diploma programs (Accounting, Marketing, Business, Personnel Admin, Secretarial Science); upgraded to college level (~1998), first private college in Ethiopia.\n• 1999–2000 — Undergraduate degrees expand (Accounting, Management, Economics; MIS, Law, Marketing, Computer Technology).\n• Aug 2002 — Renamed Unity University College (first private university college).\n• 2003 — Architecture & Urban Planning, Civil Engineering, Mining, Construction Technology Management; distance education college expands.\n• Feb 2007 — Postgraduate launch: MBA and Master of Development Economics.\n• Jun 2008 — Full university status; later associated with MIDROC Technology Group (public accounts cite membership ~2008–2020).\n• 2011/12 — Health sciences (SalaM Nurses College absorbed); Dessie campus (~2012).\n• 2013/14 onward — Unity Academy (KG–secondary) linked to the university ecosystem.\n• 2016/17 — Burayu campus developments (printing, academy hub, distance).\nPublic sources also cite later expansion of postgraduate fields (e.g. marketing, economics, leadership, project management) and plans toward PhD pathways.'
+    },
+    {
+        id: 'uu_campuses',
+        title: 'Campuses and locations',
+        tags: ['campus', 'campuses', 'gerji', 'al-amoudi', 'adama', 'dessie', 'burayu', 'keranio', 'cmc', 'location', 'address', 'where', 'bole', 'addis', 'phone', 'contact'],
+        body: 'Primary campus identity: Gerji / Al-Amoudi Campus, Addis Ababa (main operational and academic hub). Other locations cited across official and public sources:\n• Adama (Oromia) — undergraduate and related programs; historical early branch.\n• Dessie (Amhara) — undergraduate programs such as Accounting & Finance, Business Administration, Computer Science; TVET offerings reported.\n• Burayu — distance hub / academy / support services.\n• Additional Addis names appearing in public lists: CMC, Keranio/Keranyo (academy/general education contexts).\nContacts (from university contact pages; verify current numbers):\n• Main / Al-Amoudi: +251 (0)11 629 8154 · Fax +251 (0)11 629 8156 · info@uu.edu.et · registrar@uu.edu.et · P.O. Box 6722.\n• Adama: +251 (0)22 111 3666 / 4650 · P.O. Box 1486.\n• Dessie: +251 (0)33 111 5050 / 8604.\n• Burayu: +251 (0)11 260 4983 / 4731.\nModes of study: Regular, Extension, Distance/Continuing; distance coordination centers reported in Addis, Adama, Burayu, Bahir Dar, Debre Berhan.'
+    },
+  { id: 'uu_leadership', title: 'Unity University leadership', tags: ['president', 'vice president', 'vice-president', 'vp', 'ceo', 'chairman', 'founder', 'leadership', 'fisseha', 'amoudi', 'arega', 'vice'], body: 'Publicly cited leadership (always verify on https://www.uu.edu.et for current office-holders):\n• Founder: Fisseha Eshetu\n• Chairman (historical/public listings): Mohammed Hussein Al Amoudi\n• President / CEO (public listings): Dr. Arega Yirdaw\nVice President: universities often have academic and administrative vice presidents. This SIS library does not invent a specific current vice-president name when not published here. Use the official website, board notices, or registrar for the authoritative current vice-president name.' },
+
+    {
+        id: 'uu_programs',
+        title: 'Academic programs and faculties',
+        tags: ['program', 'programs', 'faculty', 'course', 'courses', 'degree', 'undergraduate', 'postgraduate', 'mba', 'engineering', 'nursing', 'computer', 'accounting', 'law', 'tvet', 'masters', 'bachelor'],
+        body: 'Unity organizes teaching mainly under Business/Economics/Social Sciences; Engineering/Technology/Computational Sciences; Health Sciences; and Distance & Continuing Education.\nUndergraduate examples (campus offerings vary): Accounting & Finance, Economics, Business Administration, Marketing Management, Management, Sociology & Social Anthropology, Computer Science, Architecture & Urban Planning, Civil Engineering, Nursing, Public Health, Medical Laboratory Sciences, Law (historical listings).\nPostgraduate examples: MBA, Development Economics, Project Management; expanded masters areas (marketing, economics, leadership) reported by the university.\nTVET examples: Accounting & Finance, Marketing & Sales, Nursing, Midwifery, Hardware Maintenance & Networking, Pharmacy (campus-dependent).\nGeneral education: Unity Academy — KG through primary/secondary at Gerji, Keranyo, Burayu, Adama (as reported).\nDelivery: Regular, Extension, Distance. Always confirm the live prospectus on uu.edu.et because program lists change by campus and year.'
+    },
+    {
+        id: 'uu_vision_mission',
+        title: 'Vision mission and values',
+        tags: ['vision', 'mission', 'goal', 'values', 'strategy', '2030', 'quality'],
+        body: 'Vision (university public statement): to be among leading African universities in teaching-learning and research with international reputation by 2030.\nMission (public statement): contribute to sustainable development of society by providing education from KG to PhD, conducting research at high standards, and participating in community development.\nMotto: Quality House. Positioning: pioneer private HEI in Ethiopia; English-medium; multi-campus; mix of academic, TVET, and academy pathways.'
+    },
+    {
+        id: 'uu_students_admissions',
+        title: 'Students admissions and SIS portal',
+        tags: ['admission', 'admissions', 'student', 'students', 'tuition', 'fee', 'sis', 'registrar', 'enrollment', 'how to apply', 'portal'],
+        body: 'Student information systems and registrar services are central to operations. Public guides point to sis.uu.edu.et for student portal services and registrar@uu.edu.et for academic records.\nAdmissions (typical private HEI pattern in Ethiopia — confirm current rules with Registrar):\n• Undergraduate: secondary completion (Grade 12 / equivalent), institutional requirements, English-medium study.\n• Postgraduate: accredited bachelor degree, institutional GPA/exam requirements (e.g. entrance processes for MBA), recommendations/statement as required.\nTuition is charged in ETB; amounts vary by program and year (media has reported fee adjustments—always use official fee schedules). Scholarships and staff/family support schemes have been described in university history materials (e.g. targeted grants).\nHistorical size notes: older public figures cited ~5,000 students; later media mentions substantially larger multi-campus enrollment—treat headcount as time-sensitive.'
+    },
+    {
+        id: 'uu_notable',
+        title: 'Leadership alumni and recognition',
+        tags: ['alumni', 'notable', 'bethlehem', 'solereb', 'president', 'arega', 'fisseha', 'amoudi', 'ranking'],
+        body: 'Public leadership associations: founder Fisseha Eshetu; chairman listings for Mohammed Hussein Al Amoudi; president/CEO Dr. Arega Yirdaw in contemporary public materials.\nNotable alumni often cited: Bethlehem Tilahun Alemu (entrepreneur, soleRebels), Maria Yusuf (activist).\nRecognition: first private college and first full-fledged private university in Ethiopia; MOE recognition; HERQA referenced for quality assurance. Rankings in global directories are secondary signals only—not substitutes for accreditation status.'
+    },
+    {
+        id: 'sis_overview',
+        title: 'Unity SIS software overview',
+        tags: ['sis', 'system', 'dashboard', 'modules', 'rbac', 'login', 'integration', 'unity sis', 'software', 'app'],
+        body: 'Unity SIS (this application) is an integrated institutional system for Unity University operations with three core modules under shared authentication and RBAC:\n1) Finance — chart of accounts, partners, journals/single transactions, trial balance, general ledger, payroll process & reconciliation, financial statements (position, P&L, cash flow), exports.\n2) HR — employee master, departments, leave, recruitment, training, transfer, appraisal, competence, awards/penalties, role assignment, notifications.\n3) Material — inventory/SKU master, GRV, GIV, purchases, parts robbing; posting hooks toward Finance.\nCross-cutting: module switcher after login, shared credentials/roles, bootstrap from API/PostgreSQL when backend is up, UI Customization (theme, Field Intelligence, Power Geez calendar, unityUniversity AI), mobile-friendly layouts, robust search/export on major tables.'
+    },
+    {
+        id: 'finance_module',
+        title: 'Finance module in depth',
+        tags: ['finance', 'coa', 'chart of accounts', 'journal', 'transaction', 'trial balance', 'tb', 'ledger', 'gl', 'payroll', 'payslip', 'reconciliation', 'partner', 'supplier', 'customer', 'fp', 'p&l', 'cashflow', 'cash flow', 'statement', 'export'],
+        body: 'Finance module purpose: institutional accounting and payroll finance for Unity University.\nKey masters/screens:\n• Chart of Accounts (COA) — account codes (e.g. 6110 salaries, 1141 bank, 1520 inventory-related), types Asset/Liability/Equity/Revenue/Expense.\n• Partners — customers, suppliers, banks, government (ERCA, pension) with default AR/AP/bank/expense/income COA maps.\n• Single transactions & day journals — source lines that feed TB/GL (not synthetic COA-only amounts).\n• Trial Balance & General Ledger — balances from posted transactions/journals (+ payroll postings when integrated).\n• Payroll process — select employees from HR master; earnings (basic, doctoral, allowances, OT, cash indemnity), deductions (PAYE, pension EE/ER, cost sharing, credit, sundry), net pay; payslip print.\n• Payroll reconciliation — I Payment totals vs II difference analysis so III net ≈ 0 when changes are explained.\n• Statements — Financial Position, Profit or Loss, Cash Flow (print-oriented layouts).\n• Exports — Excel/PDF/Word/CSV with institutional header framing.\nOutputs users expect: balanced TB, GL movement, payslips, recon sheets, partner balances, statement packs, audit-friendly exports.'
+    },
+    {
+        id: 'hr_module',
+        title: 'HR module in depth',
+        tags: ['hr', 'human resource', 'employee', 'staff', 'leave', 'recruitment', 'training', 'transfer', 'appraisal', 'competence', 'award', 'department', 'role', 'notification', 'retirement', 'resignation'],
+        body: 'HR module purpose: staff system of record and workforce processes.\nEmployee master fields (representative): ID NO, full name, gender, DOB GC/EC, age, marital status, seniority GC/EC, work location, department, position/academic rank, reporting to, employment category/type, education, GPA, field of study, salary, family contact, pension ID, retirement EC, national ID, TIN, phones, emergency contacts, remarks, system access role.\nOther areas: Departments; Leave; Recruitment / vacancies; Training; Transfer; Appraisal & competence matrix scoring; Awards/penalties; Insurance; attrition/resignation/retirement notifications; Role assignment on users (not only staff names); HR dashboard analytics; Report generator.\nIntegration: employee list and salary attributes feed Finance payroll process; roles feed module RBAC.\nOutputs: complete staff registers, leave balances, recruitment pipelines, appraisal scores, role maps, exportable HR reports, notification triggers (e.g. approaching retirement).'
+    },
+    {
+        id: 'material_module',
+        title: 'Material module in depth',
+        tags: ['material', 'inventory', 'sku', 'grv', 'giv', 'store', 'warehouse', 'purchase', 'po', 'lpo', 'robbing', 'stock', 'item'],
+        body: 'Material module purpose: inventory and store logistics for campuses/stores.\nCore ideas:\n• Item/SKU master — codes, descriptions, units, costs, store locations (e.g. Main Store West, IT Store, Furniture Store), campus.\n• GRV (Goods Received Voucher) — receiving against PO/LPO, vendor, qty, unit cost, line value, inspection, GL/COA, status; can post toward Finance.\n• GIV (Goods Issued Voucher) — issues to departments/jobs.\n• Local/foreign purchase documents; parts robbing (take parts from one asset/item to maintain another—Unity operational meaning).\n• Dashboard cards, search, filters, robust exports matching Finance/HR style.\nIntegration: GRV/GIV postings create finance legs (inventory/expense vs payable/bank) via bridge/API when configured.\nOutputs: stock positions by SKU/store, GRV/GIV registers, purchase follow-up, posting status to Finance, export packs.'
+    },
+    {
+        id: 'integration_flow',
+        title: 'Cross-module integration',
+        tags: ['integration', 'posting', 'bridge', 'sync', 'payroll post', 'material post', 'bootstrap', 'api', 'postgres', 'backend'],
+        body: 'Integration design:\n• Shared Auth/RBAC — one login model; module access by role; users created/assigned roles in settings.\n• SharedData / bootstrap — frontend can load collections from Node/Express API + PostgreSQL (`/api/bootstrap`, `/api/collections/...`).\n• HR → Finance: employee master drives payroll employee select; basic salary and identifiers (TIN, pension) flow into process; payroll commit posts journal legs (wages, tax, pension, net payable).\n• Material → Finance: GRV/GIV post creates balanced transaction legs mapped to COA (e.g. inventory/stock and AP/bank).\n• Finance statements/TB should reflect only real transactions/journals/postings—not random COA seed amounts.\n• When API is down, modules may keep local/session data; production intent is DB as source of truth after seed/migrate.'
+    },
+    {
+        id: 'ui_ai_geez',
+        title: 'UI customization AI and Power Geez',
+        tags: ['ui', 'customization', 'theme', 'geez', 'calendar', 'ethiopian', 'power geez', 'ai', 'assistant', 'field intelligence'],
+        body: 'UI Customization (all modules): atmospheric theme (scale, glass, logo/background), Field Intelligence tooltips, Power Geez Ethiopian↔Gregorian converter with month grid, and unityUniversity AI.\nPower Geez: convert Gregorian→Geez and Geez→Gregorian; calendar click fills converter; month names Meskerem–Pagumen.\nunityUniversity AI: answers from (1) live session data (employees, SKUs, GRV, payroll rows, COA counts, etc.) and (2) this knowledge library about the university and the three modules. Prefer live numbers when the question is about current records; prefer library for institutional facts (history, campuses, programs, contacts).'
+    },
+    {
+        id: 'outputs_reports',
+        title: 'Reports exports and outputs',
+        tags: ['report', 'export', 'excel', 'pdf', 'word', 'csv', 'print', 'payslip', 'output', 'dashboard'],
+        body: 'Common outputs across modules:\n• On-screen dashboards with KPI cards (clickable where implemented to retarget charts/tables).\n• Data tables with search, filters, status chips, add/edit modals.\n• Export dropdown: Excel (formatted workbook headers), Word, PDF, CSV, optional PNG capture—Finance-style framing reused in HR/Material.\n• Finance-specific: TB, GL, FP, P&L, Cash Flow print layouts; payslip full-page print; payroll recon sheet.\n• HR-specific: staff lists, leave/training/appraisal extracts.\n• Material-specific: inventory and GRV/GIV registers.\n• Report generator screens build presentable filtered extracts by collection/fields.'
+    },
+];
+
+
+const uuSafeList = (data, key) => {
+    try {
+        if (!data) return [];
+        if (Array.isArray(data[key])) return data[key];
+    } catch (e) {}
+    return [];
+};
+const uuPull = (allData, getCollection, key) => {
+    try {
+        if (typeof getCollection === 'function') {
+            const v = getCollection(key);
+            if (Array.isArray(v)) return v;
+        }
+    } catch (e) {}
+    const aliases = {
+        MAT_ITEM_CRUD: ['MAT_ITEM_CRUD', 'MAT_INVENTORY_CRUD', 'MAT_MASTER_CRUD', 'inventoryItems', 'items'],
+        HR_EMPLOYEE_CRUD: ['HR_EMPLOYEE_CRUD', 'employees'],
+        MAT_GRV_CRUD: ['MAT_GRV_CRUD', 'grv'],
+        MAT_GIV_CRUD: ['MAT_GIV_CRUD', 'giv'],
+        FIN_PARTNERS_CRUD: ['FIN_PARTNERS_CRUD', 'partners'],
+        FIN_COA_CRUD: ['FIN_COA_CRUD', 'chartsOfAccounts', 'coa'],
+        transactions: ['transactions', 'dayJournals', 'FIN_TRANSACTIONS'],
+        PAY_PROCESS_CRUD: ['PAY_PROCESS_CRUD'],
+        HR_AWARD_CRUD: ['HR_AWARD_CRUD', 'HR_AWARD_CRUD_HR', 'HR_STAFF_AWARDS_CRUD', 'awards'],
+        HR_PENALTY_CRUD: ['HR_PENALTY_CRUD', 'penalties'],
+        HR_TRAINING_CRUD: ['HR_TRAINING_CRUD', 'training'],
+        HR_APPRAISAL_CRUD: ['HR_APPRAISAL_CRUD', 'appraisals'],
+        HR_LEAVE_CRUD: ['HR_LEAVE_CRUD'],
+    };
+    try {
+        for (const k of (aliases[key] || [key])) {
+            const arr = uuSafeList(allData || {}, k);
+            if (arr.length) return arr;
+        }
+    } catch (e) {}
+    return uuSafeList(allData || {}, key);
+};
+const uuEmpName = (e) => { try { return String((e && (e.full_name || e.employee_name || e.name || e.Name)) || '—').trim(); } catch (err) { return '—'; } };
+const uuEmpId = (e) => { try { return String((e && (e.id_number || e.employee_id || e.emp_id || e.id)) || '—').trim(); } catch (err) { return '—'; } };
+const uuEmpDept = (e) => { try { return String((e && (e.department || e.dept || e.Department)) || '—').trim(); } catch (err) { return '—'; } };
+const uuEmpPos = (e) => { try { return String((e && (e.current_position || e.job_title || e.position || e.title)) || '—').trim(); } catch (err) { return '—'; } };
+const uuEmpGenderRaw = (e) => {
+    try {
+        if (!e || typeof e !== 'object') return '';
+        if (e.gender != null) return e.gender;
+        if (e.Gender != null) return e.Gender;
+        if (e.sex != null) return e.sex;
+        if (e.Sex != null) return e.Sex;
+        return '';
+    } catch (err) { return ''; }
+};
+const uuNormalizeGender = (g) => {
+    try {
+        const x = String(g == null ? '' : g).toLowerCase().trim();
+        if (!x) return 'unknown';
+        if (x === 'f' || x === 'female' || x === 'woman' || x === 'women' || x === 'girl') return 'female';
+        if (x === 'm' || x === 'male' || x === 'man' || x === 'men' || x === 'boy') return 'male';
+        if (/\bfemale\b|\bwomen\b|\bwoman\b/.test(x)) return 'female';
+        if (/\bmale\b|\bmen\b|\bman\b/.test(x) && !/\bfemale\b|\bwomen\b|\bwoman\b/.test(x)) return 'male';
+        if (x.startsWith('fem')) return 'female';
+        if (x.startsWith('mal')) return 'male';
+        return 'unknown';
+    } catch (err) { return 'unknown'; }
+};
+const uuMatchGender = (recordGender, want) => !want || uuNormalizeGender(recordGender) === want;
+const uuParseEmployeeFilters = (q) => {
+    try {
+        const s = String(q || '').toLowerCase();
+        let gender = null;
+        if (/\bfemale\b|\bwomen\b|\bwoman\b|\bfemales\b/.test(s)) gender = 'female';
+        else if (/\bmale\b|\bmen\b|\bman\b|\bmales\b/.test(s) && !/\bfemale\b|\bwomen\b|\bwoman\b/.test(s)) gender = 'male';
+        let department = null;
+        const deptMatch = s.match(/\b(?:in|from|at)\s+([a-z][a-z\s]{1,40}?)(?:\s+department|\s+dept)?(?:\s|$)/);
+        if (deptMatch) {
+            const d = deptMatch[1].trim();
+            if (!/^(unity|university|the|a|an|hr|finance|material)$/.test(d)) department = d;
+        }
+        let location = null;
+        for (const loc of ['gerji', 'burayu', 'dessie', 'adama', 'torhailoch', 'bole', 'addis ababa', 'west campus']) {
+            if (s.includes(loc)) { location = loc; break; }
+        }
+        return { gender, department, location };
+    } catch (err) {
+        return { gender: null, department: null, location: null };
+    }
+};
+const uuFilterEmployees = (list, filters) => {
+    try {
+        const rows = Array.isArray(list) ? list : [];
+        const f = filters || {};
+        return rows.filter((e) => {
+            if (!e) return false;
+            if (f.gender && !uuMatchGender(uuEmpGenderRaw(e), f.gender)) return false;
+            if (f.department && !uuEmpDept(e).toLowerCase().includes(String(f.department).toLowerCase())) return false;
+            if (f.location) {
+                const loc = String((e.work_location || e.location || '')).toLowerCase();
+                if (!loc.includes(String(f.location).toLowerCase())) return false;
+            }
+            return true;
+        });
+    } catch (err) { return []; }
+};
+const uuGenderCensus = (list) => {
+    try {
+        const rows = Array.isArray(list) ? list : [];
+        let female = 0, male = 0, unknown = 0;
+        rows.forEach((e) => {
+            const g = uuNormalizeGender(uuEmpGenderRaw(e));
+            if (g === 'female') female += 1;
+            else if (g === 'male') male += 1;
+            else unknown += 1;
+        });
+        return { total: rows.length, female, male, unknown };
+    } catch (err) { return { total: 0, female: 0, male: 0, unknown: 0 }; }
+};
+const uuResolveQuery = (question, priorTopic, priorQuestion) => {
+    try {
+        const raw = String(question || '').trim();
+        const q = raw.toLowerCase();
+        if (!q) return { query: '', topic: '', filters: {}, followUp: false };
+
+        let topic = '';
+        if (/\b(how many|how much)\b/.test(q) && /\b(store|stock|inventory)\b/.test(q)) topic = 'store_item';
+        else if (/\b(question paper|copy paper|a4 paper|toner|chairs?|tables?)\b/.test(q)) topic = 'store_item';
+        else if (/\b(chairs?|stools?)\b/.test(q)) topic = 'chairs';
+        else if (/\b(basic salary|total basic|total salary)\b/.test(q) || (/\bsalary\b/.test(q) && /\b(total|sum|how much)\b/.test(q))) topic = 'salary_total';
+        else if (/\b(award|awards|awarded|recognition)\b/.test(q)) topic = 'award';
+        else if (/\b(appraisals?|performance review|competence)\b/.test(q)) topic = 'appraisal';
+        else if (/\b(on leave|leave records?|how many .*leave|annual leave|sick leave)\b/.test(q) || (/\bleave\b/.test(q) && /\b(how many|count|list|who)\b/.test(q))) topic = 'leave';
+        else if (/\b(share capital|paid[- ]?up capital|equity capital|how much .*capital|capital now)\b/.test(q) || (/\bcapital\b/.test(q) && /\b(how much|total|current|now|balance)\b/.test(q))) topic = 'capital';
+        else if (/\b(sku|skus|item|items|inventory|stock|product|tables? in store|store tables)\b/.test(q)) topic = 'sku';
+        else if (/\b(how many tables?|tables? in (the )?store)\b/.test(q)) topic = 'tables';
+        else if (/\b(employee|employees|staff|worker|personnel|female|male|women|men|academic|non[- ]?academic)\b/.test(q)) topic = 'employee';
+        else if (/\b(grv|goods received)\b/.test(q)) topic = 'grv';
+        else if (/\b(giv|goods issued)\b/.test(q)) topic = 'giv';
+        else if (/\bleave\b/.test(q)) topic = 'leave';
+        else if (/\b(partner|supplier|customer|vendor)\b/.test(q)) topic = 'partner';
+        else if (/\b(coa|chart of account)/.test(q)) topic = 'coa';
+        else if (/\b(payroll|payslip|salary process)\b/.test(q)) topic = 'payroll';
+        else if (/\b(profit|loss|p&l|pnl|net income)\b/.test(q)) topic = 'profit';
+        else if (/\b(trial\s*balance|\btb\b)\b/.test(q)) topic = 'tb';
+        else if (/\b(transaction|journal)\b/.test(q)) topic = 'tx';
+
+        const softFollow = /^(be )?specific|more detail|tell me more|what about (them|those|it)|elaborate|details?$|narrow|focus on that|same as above|specific number|exact number|how many exactly/.test(q);
+        const followUp = softFollow && !!priorTopic && !topic;
+        if (followUp) topic = priorTopic;
+
+        let query = raw;
+        if (followUp && priorTopic) {
+            query = raw + ' (about ' + priorTopic + (priorQuestion ? '; earlier: ' + priorQuestion : '') + ')';
+        }
+        // Follow-ups like "specific number of awards?" keep awards topic
+        if (!topic && priorTopic && /\b(specific|number|count|how many|exact)\b/.test(q)) topic = priorTopic;
+
+        const filterSrc = query + (followUp && priorQuestion ? ' ' + priorQuestion : '');
+        return { query, topic, followUp: !!followUp, filters: typeof uuParseEmployeeFilters === 'function' ? uuParseEmployeeFilters(filterSrc) : {} };
+    } catch (err) {
+        return { query: String(question || ''), topic: '', filters: {}, followUp: false };
+    }
+};
+
+
+const unityUniversityLiveAnswer = (question, allData, getCollection, topicHint, filtersIn) => {
+    try {
+        const q = String(question || '').toLowerCase().trim();
+        if (!q && !topicHint) return null;
+        const filters = filtersIn || (typeof uuParseEmployeeFilters === 'function' ? uuParseEmployeeFilters(q) : {}) || {};
+                let topic = topicHint || '';
+        if (!topic) {
+            // Specific operational questions FIRST (before broad employee/module matches)
+            if (/(campus|campuses|president|vice[ -]?president|vp|chairman|founder|leadership|faculty|college|university only)/.test(q)) topic = 'institutional';
+            else if (/(how many|how much|quantity|qty)/.test(q) && /(store|stock|inventory|sku|warehouse)/.test(q) && !/(campus|president|university leadership)/.test(q)) topic = 'store_item';
+            else if (/(question paper|copy paper|a4|toner|chairs?|tables?|desks?|pens?|paper towel)/.test(q) && /(store|stock|how many|how much|inventory)/.test(q)) topic = 'store_item';
+            else if (/\b(chairs?|stools?)\b/.test(q)) topic = 'chairs';
+            else if (/\b(basic salary|total basic|sum of (the )?salary|total salary|payroll basic)\b/.test(q) || (/\bsalary\b/.test(q) && /\b(total|sum|how much|aggregate)\b/.test(q))) topic = 'salary_total';
+            else if (/\b(award|awards|awarded|recognition|medal|prize)\b/.test(q)) topic = 'award';
+            else if (/\b(appraisals?|performance review|competence matrix|evaluation)\b/.test(q)) topic = 'appraisal';
+            else if (/\b(on leave|leave records?|how many .*leave|leave balance|annual leave|sick leave)\b/.test(q) || (/\bleave\b/.test(q) && /\b(how many|count|list|who|employee|staff)\b/.test(q))) topic = 'leave';
+            else if (/\b(share capital|paid[- ]?up capital|equity capital|how much .*capital|capital now|owners'? equity)\b/.test(q) || (/\bcapital\b/.test(q) && /\b(how much|total|current|now|balance)\b/.test(q))) topic = 'capital';
+            else if (/\b(profit|loss|p&l|pnl|surplus|deficit|net income|revenue|income statement)\b/.test(q)) topic = 'profit';
+            else if (/\b(trial\s*balance|\btb\b)\b/.test(q)) topic = 'tb';
+            else if (/\b(transaction|journal|ledger entry|list of transaction)\b/.test(q)) topic = 'tx';
+            else if (/\b(academic|acedamic|non[-\s]?academic|non[-\s]?acedamic|nonacademic|nonacedamic)\b/.test(q)) topic = 'emp_category';
+            else if (/\b(how many tables?|tables? in (the )?store|office tables?|furniture tables?)\b/.test(q)) topic = 'tables';
+            else if (/\btables?\b/.test(q) && /\bstore\b/.test(q)) topic = 'tables';
+            else if (/\b(sku|skus|item|items|inventory|stock)\b/.test(q)) topic = 'sku';
+            else if (/\bgrv\b/.test(q)) topic = 'grv';
+            else if (/\bgiv\b/.test(q)) topic = 'giv';
+            else if (/\bleave\b/.test(q)) topic = 'leave';
+            else if (/\b(employee|staff|female|male|women|men|personnel)\b/.test(q) || filters.gender) topic = 'employee';
+            else if (/\b(partner|supplier|customer)\b/.test(q)) topic = 'partner';
+            else if (/\b(coa|chart of account)/.test(q)) topic = 'coa';
+            else if (/\b(payroll|payslip)\b/.test(q)) topic = 'payroll';
+            else if (/\b(dashboard|overview|summary|kpi)\b/.test(q)) topic = 'dashboard';
+        }
+
+        const employees = (typeof uuCorrectEmployeeList === 'function'
+            ? uuCorrectEmployeeList(uuPull(allData, getCollection, 'HR_EMPLOYEE_CRUD'))
+            : uuPull(allData, getCollection, 'HR_EMPLOYEE_CRUD'));
+        const leave = uuPull(allData, getCollection, 'HR_LEAVE_CRUD');
+        const items = uuPull(allData, getCollection, 'MAT_ITEM_CRUD');
+        const grv = uuPull(allData, getCollection, 'MAT_GRV_CRUD');
+        const giv = uuPull(allData, getCollection, 'MAT_GIV_CRUD');
+        const partners = uuPull(allData, getCollection, 'FIN_PARTNERS_CRUD');
+        const coa = uuPull(allData, getCollection, 'FIN_COA_CRUD');
+        let tx = uuPull(allData, getCollection, 'transactions');
+        if (!tx.length) tx = uuPull(allData, getCollection, 'dayJournals');
+        const process = uuPull(allData, getCollection, 'PAY_PROCESS_CRUD');
+        const awards = uuPull(allData, getCollection, 'HR_AWARD_CRUD');
+        const penalties = uuPull(allData, getCollection, 'HR_PENALTY_CRUD');
+        const training = uuPull(allData, getCollection, 'HR_TRAINING_CRUD');
+        const appraisals = uuPull(allData, getCollection, 'HR_APPRAISAL_CRUD');
+        const yearNow = new Date().getFullYear();
+
+        const money = (n) => {
+            const v = Number(n) || 0;
+            try { return v.toLocaleString('en-ET', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+            catch (e) { return String(Math.round(v * 100) / 100); }
+        };
+        const txDebit = (r) => Number(r && (r.debit != null ? r.debit : (r.type === 'Debit' || r.txn_type === 'Debit' ? r.amount : 0))) || 0;
+        const txCredit = (r) => Number(r && (r.credit != null ? r.credit : (r.type === 'Credit' || r.txn_type === 'Credit' ? r.amount : 0))) || 0;
+        const txAcc = (r) => String((r && (r.account_code || r.account_no || r.account_id || r.accountCode || r.coa)) || '—').replace(/^acc-/i, '');
+        const txName = (r) => String((r && (r.account_name || r.narration || r.description || r.name)) || '').trim();
+        const txDate = (r) => String((r && (r.date || r.txn_date || r.posting_date || r.created_at)) || '').slice(0, 10);
+        const txYear = (r) => {
+            const d = txDate(r);
+            const y = parseInt(d.slice(0, 4), 10);
+            return Number.isFinite(y) ? y : yearNow;
+        };
+
+        // Build simple TB from transactions
+        const buildTb = () => {
+            const ledger = {};
+            (tx || []).forEach((r) => {
+                const acc = txAcc(r);
+                if (!acc || acc === '—') return;
+                if (!ledger[acc]) ledger[acc] = { account: acc, name: txName(r) || acc, debit: 0, credit: 0 };
+                ledger[acc].debit += txDebit(r);
+                ledger[acc].credit += txCredit(r);
+                if (!ledger[acc].name || ledger[acc].name === acc) {
+                    const nm = txName(r);
+                    if (nm) ledger[acc].name = nm;
+                }
+            });
+            // enrich names from COA
+            (coa || []).forEach((c) => {
+                const code = String((c && (c.account_no || c.account_code || c.id)) || '').replace(/^acc-/i, '');
+                if (code && ledger[code]) {
+                    ledger[code].name = c.name || c.desc || c.description || ledger[code].name;
+                    ledger[code].type = c.account_type || c.type || c.category || '';
+                }
+            });
+            return Object.values(ledger).sort((a, b) => String(a.account).localeCompare(String(b.account)));
+        };
+
+        const classifyAcc = (code, typeHint) => {
+            const t = String(typeHint || '').toLowerCase();
+            if (/revenue|income/.test(t)) return 'revenue';
+            if (/expense|cost/.test(t)) return 'expense';
+            if (/asset/.test(t)) return 'asset';
+            if (/liab/.test(t)) return 'liability';
+            if (/equity|capital/.test(t)) return 'equity';
+            const c = String(code || '');
+            const head = parseInt(c.slice(0, 1), 10) || parseInt(c.slice(0, 4), 10);
+            // UU-style: 1xxx assets, 2xxx liabilities, 3xxx equity, 4xxx revenue, 5-6xxx expense (approx)
+            if (/^4/.test(c)) return 'revenue';
+            if (/^[56]/.test(c)) return 'expense';
+            if (/^1/.test(c)) return 'asset';
+            if (/^2/.test(c)) return 'liability';
+            if (/^3/.test(c)) return 'equity';
+            return 'other';
+        };
+
+        const empCategory = (e) => {
+            const raw = String((e && (e.employment_category || e.category || e.emp_category || e.EmploymentCategory || e.staff_type)) || '').toLowerCase();
+            if (/non[-\s]?academic|nonacademic|admin|support/.test(raw)) return 'non-academic';
+            if (/academic|lecturer|faculty|teaching/.test(raw)) return 'academic';
+            // infer from position
+            const pos = String((e && (e.current_position || e.position || e.job_title || e.title)) || '').toLowerCase();
+            if (/lecturer|professor|dean|academic/.test(pos)) return 'academic';
+            if (/officer|registrar|finance|hr |human|store|material|it |admin/.test(pos)) return 'non-academic';
+            return raw ? raw : 'unspecified';
+        };
+
+        // —— Dashboard overview ——
+        if (topic === 'dashboard' || (!topic && /\b(overview|summary)\b/.test(q))) {
+            const census = typeof uuGenderCensus === 'function' ? uuGenderCensus(employees) : { total: employees.length, female: 0, male: 0, unknown: 0 };
+            const tb = buildTb();
+            let td = 0, tc = 0;
+            tb.forEach((r) => { td += r.debit; tc += r.credit; });
+            return {
+                title: 'Live · SIS dashboard snapshot',
+                body: [
+                    'Institutional live snapshot (session data):',
+                    '• Employees: ' + census.total + ' (F ' + census.female + ' · M ' + census.male + ')',
+                    '• Leave rows: ' + leave.length,
+                    '• Inventory SKUs: ' + items.length,
+                    '• GRV: ' + grv.length + ' · GIV: ' + giv.length,
+                    '• Partners: ' + partners.length,
+                    '• COA rows: ' + coa.length,
+                    '• Transactions/journals: ' + tx.length,
+                    '• Payroll process rows: ' + process.length,
+                    '• Trial balance accounts with movement: ' + tb.length,
+                    '• TB totals — Debit ' + money(td) + ' · Credit ' + money(tc),
+                    '',
+                    'Ask follow-ups: trial balance · list of transactions · profit this year · academic vs non-academic · female staff · SKUs · GRV',
+                ].join(String.fromCharCode(10)),
+            };
+        }
+
+        // —— Academic vs non-academic ——
+        if (topic === 'emp_category' || /\b(academic|acedamic|non[-\s]?academic|non[-\s]?acedamic)\b/.test(q)) {
+            const groups = { academic: [], 'non-academic': [], unspecified: [] };
+            (employees || []).forEach((e) => {
+                const c = empCategory(e);
+                if (!groups[c]) groups[c] = [];
+                groups[c].push(e);
+            });
+            const linePeople = (arr) => arr.slice(0, 12).map((e) => {
+                const id = typeof uuEmpId === 'function' ? uuEmpId(e) : (e.id_number || e.id);
+                const name = typeof uuEmpName === 'function' ? uuEmpName(e) : (e.full_name || e.name);
+                const pos = typeof uuEmpPos === 'function' ? uuEmpPos(e) : (e.current_position || e.position || '—');
+                return '  • ' + id + ' | ' + name + ' | ' + pos;
+            }).join(String.fromCharCode(10));
+            const body = [
+                'Staff by employment category (live HR master):',
+                '• Academic: ' + groups.academic.length,
+                '• Non-academic: ' + groups['non-academic'].length,
+                '• Unspecified: ' + groups.unspecified.length,
+                '• Total employees: ' + employees.length,
+                '',
+                'Academic sample:',
+                linePeople(groups.academic) || '  • —',
+                '',
+                'Non-academic sample:',
+                linePeople(groups['non-academic']) || '  • —',
+                '',
+                'Category is read from employment_category when present, else inferred from position (Lecturer→academic, Officer→non-academic).',
+                'Source: HR_EMPLOYEE_CRUD.',
+            ].join(String.fromCharCode(10));
+            return { title: 'Live · Academic vs non-academic (' + groups.academic.length + ' / ' + groups['non-academic'].length + ')', body };
+        }
+
+        // —— Employees (gender / general) ——
+        if (topic === 'employee' || filters.gender || /\b(employee|staff|female|male|women|men|personnel)\b/.test(q)) {
+            const census = typeof uuGenderCensus === 'function' ? uuGenderCensus(employees) : { total: employees.length, female: 0, male: 0, unknown: 0 };
+            const filtered = typeof uuFilterEmployees === 'function' ? uuFilterEmployees(employees, filters) : employees;
+            const filteredCensus = typeof uuGenderCensus === 'function' ? uuGenderCensus(filtered) : { total: filtered.length, female: 0, male: 0, unknown: 0 };
+            const n = filtered.length;
+            let logicNote = filters.gender
+                ? ('Logic check: list length ' + n + ' vs ' + filters.gender + ' in list ' + (filters.gender === 'female' ? filteredCensus.female : filteredCensus.male) + '.')
+                : '';
+            const depts = {};
+            filtered.forEach((e) => {
+                const d = typeof uuEmpDept === 'function' ? uuEmpDept(e) : ((e && e.department) || '—');
+                depts[d] = (depts[d] || 0) + 1;
+            });
+            const deptLines = Object.entries(depts).sort((a, b) => b[1] - a[1]).map(([d, c]) => '• ' + d + ': ' + c).join(String.fromCharCode(10));
+            const lines = filtered.slice(0, 30).map((e) => {
+                const id = typeof uuEmpId === 'function' ? uuEmpId(e) : (e.id_number || '—');
+                const name = typeof uuEmpName === 'function' ? uuEmpName(e) : (e.full_name || '—');
+                const g = typeof uuNormalizeGender === 'function' ? uuNormalizeGender(e.gender) : String(e.gender || '');
+                const pos = typeof uuEmpPos === 'function' ? uuEmpPos(e) : (e.current_position || '—');
+                const dept = typeof uuEmpDept === 'function' ? uuEmpDept(e) : (e.department || '—');
+                return '• ' + id + ' | ' + name + ' | ' + g + ' | ' + pos + ' | ' + dept;
+            });
+            const filterBits = [];
+            if (filters.gender) filterBits.push('gender=' + filters.gender);
+            if (filters.department) filterBits.push('department~' + filters.department);
+            if (filters.location) filterBits.push('location~' + filters.location);
+            // mini category split on filtered set
+            let ac = 0, nac = 0;
+            filtered.forEach((e) => { const c = empCategory(e); if (c === 'academic') ac++; else if (c === 'non-academic') nac++; });
+            let head = 'Employees (live HR data)\n• Matching: ' + n + '\n• Total in master: ' + census.total + '\n• Full split: female ' + census.female + ' · male ' + census.male + ' · unspecified ' + census.unknown + '\n• In this set — academic ' + ac + ' · non-academic ' + nac + '\n';
+            if (n === 0) {
+                return { title: filters.gender ? ('Live · ' + filters.gender + ' employees') : 'Live · HR employees', body: head + '• Filters: ' + (filterBits.join(', ') || 'none') + '\n\nNo rows match.\n' + logicNote + '\nSource: HR_EMPLOYEE_CRUD.' };
+            }
+            return {
+                title: filters.gender ? ('Live · ' + filters.gender + ' employees (' + n + ')') : ('Live · HR employees (' + n + ')'),
+                body: head + '• Active filters: ' + (filterBits.join(', ') || 'none') + '\n\nBy department:\n' + (deptLines || '• —') + '\n\nPeople (' + Math.min(n, 30) + (n > 30 ? ' of ' + n : '') + '):\n' + lines.join(String.fromCharCode(10)) + String.fromCharCode(10,10) + logicNote + '\nGender uses the record field, corrected from first name when the name is a known male/female Ethiopian name.\nSource: HR_EMPLOYEE_CRUD.',
+            };
+        }
+
+        // —— Transactions list ——
+        if (topic === 'tx' || /\b(transaction|journal|list of transaction)\b/.test(q)) {
+            const n = tx.length;
+            if (!n) {
+                return { title: 'Live · Transactions (0)', body: 'No transaction/journal rows in session data.\nPost single transactions, day journals, payroll, or Material GRV so they appear here.\nSources tried: transactions, dayJournals.' };
+            }
+            let sumD = 0, sumC = 0;
+            const byYear = {};
+            tx.forEach((r) => {
+                sumD += txDebit(r);
+                sumC += txCredit(r);
+                const y = txYear(r);
+                byYear[y] = (byYear[y] || 0) + 1;
+            });
+            const yearLines = Object.entries(byYear).sort((a, b) => String(b[0]).localeCompare(String(a[0]))).map(([y, c]) => '• ' + y + ': ' + c + ' line(s)').join(String.fromCharCode(10));
+            const lines = tx.slice(0, 25).map((r, i) => {
+                const d = txDebit(r);
+                const c = txCredit(r);
+                return (i + 1) + '. ' + txDate(r) + ' | ' + txAcc(r) + ' | ' + (txName(r) || '—').slice(0, 40) + ' | Dr ' + money(d) + ' | Cr ' + money(c);
+            });
+            return {
+                title: 'Live · Transactions (' + n + ')',
+                body: [
+                    'Finance transaction / journal lines (live):',
+                    '• Lines: ' + n,
+                    '• Total debit: ' + money(sumD) + ' ETB',
+                    '• Total credit: ' + money(sumC) + ' ETB',
+                    '• Imbalance (Dr − Cr): ' + money(sumD - sumC) + ' ETB',
+                    '',
+                    'By year:',
+                    yearLines || '• —',
+                    '',
+                    'Sample lines (up to 25):',
+                    lines.join(String.fromCharCode(10)),
+                    '',
+                    'Dashboard tip: ask “trial balance” or “what profit did we achieve this year?” for analysed views.',
+                    'Source: transactions / dayJournals.',
+                ].join(String.fromCharCode(10)),
+            };
+        }
+
+        // —— Trial balance ——
+        if (topic === 'tb' || /\b(trial\s*balance|\btb\b)\b/.test(q)) {
+            const rows = buildTb();
+            if (!rows.length) {
+                return { title: 'Live · Trial balance (empty)', body: 'No movement to build TB. Need posted transactions/journals.\nCOA rows available: ' + coa.length + ' (structure only; balances come from transactions).' };
+            }
+            let td = 0, tc = 0;
+            rows.forEach((r) => { td += r.debit; tc += r.credit; });
+            const lines = rows.slice(0, 40).map((r) => {
+                const bal = r.debit - r.credit;
+                const side = bal >= 0 ? ('Dr ' + money(bal)) : ('Cr ' + money(-bal));
+                return '• ' + r.account + ' | ' + String(r.name || '').slice(0, 36) + ' | Dr ' + money(r.debit) + ' | Cr ' + money(r.credit) + ' | Net ' + side;
+            });
+            return {
+                title: 'Live · Trial balance (' + rows.length + ' accounts)',
+                body: [
+                    'Trial balance built from live transactions (not COA seed zeros):',
+                    '• Accounts with movement: ' + rows.length,
+                    '• Total debit: ' + money(td) + ' ETB',
+                    '• Total credit: ' + money(tc) + ' ETB',
+                    '• Difference: ' + money(td - tc) + ' ETB ' + (Math.abs(td - tc) < 0.05 ? '(balanced ✓)' : '(review postings)'),
+                    '',
+                    'Accounts:',
+                    lines.join(String.fromCharCode(10)),
+                    rows.length > 40 ? '\n… +' + (rows.length - 40) + ' more accounts' : '',
+                    '',
+                    'Source: sum of transaction debits/credits by account_code; names enriched from FIN_COA_CRUD when present.',
+                ].join(String.fromCharCode(10)),
+            };
+        }
+
+        // —— Profit / P&L current year ——
+
+        if (topic === 'chairs' || (/\bchairs?\b/.test(q) && /\b(store|inventory|sku|how many|stock|furniture)\b/.test(q)) || topic === 'furniture') {
+            const rows = Array.isArray(items) ? items : [];
+            const matchWord = topic === 'chairs' || /\bchairs?\b/.test(q) ? /chair|stool|seat/i : /chair|desk|table|furniture|sofa|cabinet|stool/i;
+            const hit = rows.filter((r) => matchWord.test(JSON.stringify(r || {})));
+            let qtySum = 0;
+            const lines = hit.slice(0, 20).map((r) => {
+                const sku = (r && (r.sku || r.item_sku || r.item_code || r.code || r.id)) || '—';
+                const name = (r && (r.name || r.item_name || r.description)) || '';
+                const qty = Number(r && (r.quantity != null ? r.quantity : r.qty)) || 0;
+                qtySum += qty;
+                const store = (r && (r.location || r.store || r.warehouse || r.receiving_store)) || '—';
+                return '• ' + sku + (name ? ' — ' + name : '') + ' | qty ' + qty + ' | ' + store;
+            });
+            // If filtering chairs only, recompute qtySum from chair rows only
+            if (/\bchairs?\b/.test(q)) {
+                qtySum = hit.reduce((s, r) => s + (Number(r && (r.quantity != null ? r.quantity : r.qty)) || 0), 0);
+            }
+            const nl = String.fromCharCode(10);
+            const body = [
+                'Inventory interpretation (Material master — not database tables):',
+                '• Matching SKU types: ' + hit.length,
+                '• Total quantity on those SKUs: ' + qtySum,
+                '• All inventory SKU rows: ' + rows.length,
+                '',
+                'Matching items:',
+                lines.join(nl) || '• No matching furniture/chair SKU in MAT_ITEM_CRUD.',
+                '',
+                'Logical note: “how many chairs in store” sums quantity fields on chair-related SKUs.',
+                'Source: MAT_ITEM_CRUD / inventory master.',
+            ].join(nl);
+            return { title: 'Live · Store items (' + hit.length + ' SKU · qty ' + qtySum + ')', body: body, topic: 'chairs', source: 'session' };
+        }
+
+
+        if (topic === 'salary_total' || (/\b(basic salary|total basic|sum of salary|total salary|payroll basic)\b/.test(q)) || (/\bsalary\b/.test(q) && /\b(total|sum|how much|aggregate)\b/.test(q))) {
+            const rows = Array.isArray(employees) ? employees : [];
+            let total = 0;
+            let n = 0;
+            const lines = [];
+            rows.forEach((r) => {
+                const sal = Number(r && (r.current_salary != null ? r.current_salary : (r.basic_salary != null ? r.basic_salary : (r.salary != null ? r.salary : r.basic)))) || 0;
+                if (sal > 0) n += 1;
+                total += sal;
+            });
+            rows.slice(0, 15).forEach((r) => {
+                const who = (r && (r.full_name || r.name || r.employee_name || r.id_no || r.id)) || '—';
+                const sal = Number(r && (r.current_salary != null ? r.current_salary : (r.basic_salary != null ? r.basic_salary : (r.salary != null ? r.salary : r.basic)))) || 0;
+                lines.push('• ' + who + ' · ' + (sal ? sal.toLocaleString('en-ET', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00') + ' ETB');
+            });
+            const nl = String.fromCharCode(10);
+            const money = (v) => {
+                try { return Number(v).toLocaleString('en-ET', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+                catch (e) { return String(v); }
+            };
+            const body = [
+                'Total basic / current salary from HR employee master (live):',
+                '• Employees in master: ' + rows.length,
+                '• Employees with salary > 0: ' + n,
+                '• Sum of current/basic salary: ' + money(total) + ' ETB',
+                '',
+                'Sample (up to 15):',
+                lines.join(nl) || '• No employee rows.',
+                '',
+                'Logical note: this is the HR master total, not necessarily the latest payroll process batch net pay.',
+                'Moral note: salary figures are sensitive — only visible according to your role access in the system.',
+                'Source: HR_EMPLOYEE_CRUD (current_salary / basic_salary / salary).',
+            ].join(nl);
+            return { title: 'Live · Total basic salary (' + money(total) + ' ETB)', body: body, topic: 'salary_total', source: 'session' };
+        }
+
+
+        if (topic === 'profit' || /\b(profit|loss|p&l|pnl|surplus|net income)\b/.test(q)) {
+            const yMatch = q.match(/\b(20\d{2})\b/);
+            const year = yMatch ? parseInt(yMatch[1], 10) : yearNow;
+            let revenue = 0, expense = 0;
+            const revLines = [];
+            const expLines = [];
+            const tb = buildTb();
+            // Prefer year-filtered txs
+            const yearTx = (tx || []).filter((r) => txYear(r) === year);
+            const useRows = yearTx.length ? yearTx : (tx || []);
+            const usedYearFilter = yearTx.length > 0;
+            useRows.forEach((r) => {
+                const code = txAcc(r);
+                const coaRow = (coa || []).find((c) => String(c.account_no || c.account_code || '').replace(/^acc-/i, '') === code);
+                const kind = classifyAcc(code, coaRow && (coaRow.account_type || coaRow.type));
+                const d = txDebit(r);
+                const c = txCredit(r);
+                if (kind === 'revenue') {
+                    // revenue normally credit-balance
+                    const amt = c - d;
+                    revenue += amt;
+                    if (Math.abs(amt) > 0.001) revLines.push({ code, name: txName(r) || (coaRow && coaRow.name) || code, amt });
+                } else if (kind === 'expense') {
+                    const amt = d - c;
+                    expense += amt;
+                    if (Math.abs(amt) > 0.001) expLines.push({ code, name: txName(r) || (coaRow && coaRow.name) || code, amt });
+                }
+            });
+            // Aggregate duplicate accounts in samples
+            const agg = (arr) => {
+                const m = {};
+                arr.forEach((x) => {
+                    const k = x.code;
+                    if (!m[k]) m[k] = { code: k, name: x.name, amt: 0 };
+                    m[k].amt += x.amt;
+                });
+                return Object.values(m).sort((a, b) => Math.abs(b.amt) - Math.abs(a.amt));
+            };
+            const revA = agg(revLines).slice(0, 12);
+            const expA = agg(expLines).slice(0, 12);
+            const profit = revenue - expense;
+            const body = [
+                'Profit / loss analysis (live transactions' + (usedYearFilter ? ', year ' + year : ', all dated lines — few/no rows tagged ' + year) + '):',
+                '• Revenue (Cr − Dr on income accounts): ' + money(revenue) + ' ETB',
+                '• Expense (Dr − Cr on expense accounts): ' + money(expense) + ' ETB',
+                '• Net ' + (profit >= 0 ? 'profit' : 'loss') + ': ' + money(Math.abs(profit)) + ' ETB',
+                '',
+                'Top revenue accounts:',
+                revA.length ? revA.map((r) => '• ' + r.code + ' ' + String(r.name).slice(0, 40) + ' · ' + money(r.amt)).join(String.fromCharCode(10)) : '• — none classified',
+                '',
+                'Top expense accounts:',
+                expA.length ? expA.map((r) => '• ' + r.code + ' ' + String(r.name).slice(0, 40) + ' · ' + money(r.amt)).join(String.fromCharCode(10)) : '• — none classified',
+                '',
+                'Classification uses COA type when available, else account code head (4xxx≈revenue, 5–6xxx≈expense).',
+                'This is an operational snapshot from session postings — not a signed statutory statement.',
+                'Transactions used: ' + useRows.length + ' · TB accounts overall: ' + tb.length,
+            ].join(String.fromCharCode(10));
+            return { title: 'Live · P&L snapshot ' + year + ' (' + (profit >= 0 ? 'profit' : 'loss') + ' ' + money(Math.abs(profit)) + ')', body };
+        }
+
+        // —— SKU / inventory ——
+        
+        // —— 
+
+        
+        // —— Generic store item analysis (question paper, chairs, toner, …) ——
+        if (topic === 'institutional' || /\b(campus|campuses|president|vice[ -]?president|chairman|founder)\b/.test(q)) {
+            // fall through — university facts from knowledge library
+        } else if (
+            topic === 'store_item' || topic === 'chairs' || topic === 'tables' || topic === 'furniture' ||
+            (/\b(in store|in stock|inventory|warehouse)\b/.test(q) && /\b(how many|how much|quantity|qty)\b/.test(q) && !/\b(campus|employee|staff|salary)\b/.test(q))
+        ) {
+            const analyzed = typeof uuAnalyzeStoreSubject === 'function' ? uuAnalyzeStoreSubject(q, items) : null;
+            if (analyzed && analyzed.body) return analyzed;
+        }
+
+
+
+        if (topic === 'tables' || (/\\btable/.test(q) && /\\b(store|sku|inventory|furniture|how many)\\b/.test(q))) {
+            const furniture = (items || []).filter((r) => {
+                const blob = JSON.stringify(r || {}).toLowerCase();
+                return /table|desk|chair|furniture|sofa|cabinet/.test(blob);
+            });
+            const tablesOnly = (items || []).filter((r) => {
+                const blob = JSON.stringify(r || {}).toLowerCase();
+                return /\\btable\\b|desk/.test(blob);
+            });
+            const lines = tablesOnly.slice(0, 15).map((r) => {
+                const sku = (r && (r.sku || r.item_sku || r.item_code || r.code || r.id)) || '—';
+                const name = (r && (r.name || r.item_name || r.description)) || '';
+                const qty = (r && (r.quantity != null ? r.quantity : r.qty));
+                return '• ' + sku + (name ? ' — ' + name : '') + ' | qty ' + (qty ?? '—');
+            });
+            const storeSet = {};
+            (items || []).forEach((r) => {
+                const s = (r && (r.location || r.store || r.warehouse || r.receiving_store)) || 'Main store';
+                storeSet[s] = true;
+            });
+            return {
+                title: 'Live · Tables / furniture in store (' + tablesOnly.length + ' SKU types)',
+                body: [
+                    'Interpreted “tables in store” as furniture inventory (not database tables).',
+                    '• Table/desk SKU types: ' + tablesOnly.length,
+                    '• Broader furniture SKU types (chair/desk/table/cabinet…): ' + furniture.length,
+                    '• Total inventory SKU rows: ' + items.length,
+                    '• Distinct store locations: ' + Object.keys(storeSet).length + ' (' + Object.keys(storeSet).join(', ') + ')',
+                    '',
+                    'Matching table/desk items:',
+                    lines.join(String.fromCharCode(10)) || '• No SKU name contains table/desk — check Material master descriptions.',
+                    '',
+                    'Also try: How many SKUs? · GRV count · inventory by store',
+                    'Source: MAT_ITEM_CRUD.',
+                ].join(String.fromCharCode(10)),
+            };
+        }
+
+        // —— Awards ——
+                if (topic === 'award' || /\b(award|awards|awarded|recognition)\b/.test(q)) {
+            const rows = Array.isArray(awards) ? awards : [];
+            const n = rows.length;
+            const lines = rows.slice(0, 25).map((r, i) => {
+                const who = (r && (r.employee_name || r.full_name || r.name || r.staff_name || r.employee_id || r.id_no)) || '—';
+                const title = (r && (r.award_title || r.title || r.award_type || r.type || r.category)) || 'Award';
+                const when = (r && (r.date || r.award_date || r.created_at || r.year)) || '';
+                return '• ' + (i + 1) + '. ' + who + ' — ' + title + (when ? ' (' + when + ')' : '');
+            });
+            const body = [
+                'Awards / recognition (live HR data):',
+                '• Exact count: ' + n,
+                '• Employees in master (for context): ' + employees.length,
+                '',
+                n ? 'Records:' : 'No award rows in session.',
+                lines.join(String.fromCharCode(10)) || '• Seed HR_AWARD_CRUD or add awards under HR → Awards.',
+                '',
+                'Source: HR_AWARD_CRUD.',
+            ].join(String.fromCharCode(10));
+            return { title: 'Live · Awards (' + n + ')', body: body, topic: 'award', source: 'session' };
+        }
+
+        if (topic === 'penalty' || /\\bpenalt/.test(q)) {
+            return { title: 'Live · Penalties (' + penalties.length + ')', body: 'Penalty records: ' + penalties.length + '.\\nSource: HR_PENALTY_CRUD.' };
+        }
+        if (topic === 'training' || /\\btraining\\b/.test(q)) {
+            return { title: 'Live · Training (' + training.length + ')', body: 'Training records: ' + training.length + '.\\nSource: HR_TRAINING_CRUD.' };
+        }
+        if (topic === 'appraisal' || /\\bappraisal\\b/.test(q)) {
+            return { title: 'Live · Appraisals (' + appraisals.length + ')', body: 'Appraisal records: ' + appraisals.length + '.\\nSource: HR_APPRAISAL_CRUD.' };
+        }
+
+if (topic === 'sku' || /\b(sku|skus|inventory|stock|tables?)\b/.test(q)) {
+            const n = items.length;
+            const lines = items.slice(0, 15).map((r) => {
+                const sku = (r && (r.sku || r.item_sku || r.item_code || r.code || r.id)) || '—';
+                const name = (r && (r.name || r.item_name || r.description)) || '';
+                return '• ' + sku + (name ? ' — ' + name : '') + ' | qty ' + ((r && (r.quantity != null ? r.quantity : r.qty)) ?? '—');
+            });
+            const stores = {};
+            let qtySum = 0;
+            items.forEach((r) => {
+                const s = (r && (r.location || r.store || r.warehouse || r.receiving_store)) || 'Main store';
+                stores[s] = (stores[s] || 0) + 1;
+                qtySum += Number(r && (r.quantity != null ? r.quantity : r.qty)) || 0;
+            });
+            const storeLines = Object.entries(stores).sort((a, b) => b[1] - a[1]).map(([s, c]) => '• ' + s + ': ' + c + ' item row(s)').join(String.fromCharCode(10));
+            return {
+                title: 'Live · Store / SKUs (' + n + ')',
+                body: n
+                    ? ('Inventory dashboard:\n• SKU rows: ' + n + '\n• Qty sum (numeric fields): ' + qtySum + '\n• GRV docs: ' + grv.length + ' · GIV docs: ' + giv.length + '\n\nBy store:\n' + (storeLines || '• —') + '\n\nSample SKUs:\n' + lines.join(String.fromCharCode(10)) + '\nSource: MAT_ITEM_CRUD.')
+                    : 'No inventory rows in session.',
+            };
+        }
+
+        if (topic === 'grv' || /\bgrv\b/.test(q)) {
+            const n = grv.length;
+            let value = 0;
+            const lines = grv.slice(0, 12).map((r) => {
+                const v = Number(r.line_value || r.total || r.amount || ((r.qty_received || r.qty || 0) * (r.unit_cost || 0))) || 0;
+                value += v;
+                return '• ' + (r.grv_number || r.grv_no || r.id || '—') + ' | ' + String(r.item_name || r.item || r.description || '').slice(0, 32) + ' | ' + money(v) + ' | ' + (r.status || '—');
+            });
+            // if value still 0 recount
+            if (value === 0) grv.forEach((r) => { value += Number(r.line_value || r.total || r.amount || 0) || 0; });
+            return {
+                title: 'Live · GRV (' + n + ')',
+                body: 'Goods received dashboard:\n• Documents: ' + n + '\n• Approx line value sum: ' + money(value) + ' ETB\n• Linked inventory SKUs: ' + items.length + '\n\nSample:\n' + (lines.join(String.fromCharCode(10)) || '• —') + '\nSource: MAT_GRV_CRUD.',
+            };
+        }
+        if (topic === 'giv' || /\bgiv\b/.test(q)) {
+            return { title: 'Live · GIV (' + giv.length + ')', body: 'Goods issued documents: ' + giv.length + '.\nInventory SKUs: ' + items.length + '.\nSource: MAT_GIV_CRUD.' };
+        }
+                if (topic === 'leave' || (/\bleave\b/.test(q) && !/\b(employee master|staff master)\b/.test(q))) {
+            const rows = Array.isArray(leave) ? leave : [];
+            const activeStatuses = /approved|active|ongoing|on\s*leave|taken|current/i;
+            const active = rows.filter((r) => {
+                const st = String((r && (r.status || r.leave_status || r.state)) || '');
+                if (activeStatuses.test(st)) return true;
+                // date window: start <= today <= end when dates exist
+                try {
+                    const a = r.start_date || r.from_date || r.leave_from;
+                    const b = r.end_date || r.to_date || r.leave_to;
+                    if (a && b) {
+                        const t0 = new Date(a).getTime();
+                        const t1 = new Date(b).getTime();
+                        const now = Date.now();
+                        if (!isNaN(t0) && !isNaN(t1) && t0 <= now && now <= t1) return true;
+                    }
+                } catch (e) {}
+                return false;
+            });
+            const lines = (active.length ? active : rows).slice(0, 20).map((r) => {
+                const who = (r && (r.employee_name || r.full_name || r.name || r.staff_name || r.employee_id || r.id_no)) || '—';
+                const typ = (r && (r.leave_type || r.type || r.category)) || 'Leave';
+                const st = (r && (r.status || r.leave_status)) || '—';
+                const days = (r && (r.days != null ? r.days : r.no_of_days));
+                return '• ' + who + ' · ' + typ + ' · ' + st + (days != null ? ' · ' + days + ' day(s)' : '');
+            });
+            const body = [
+                'Leave records in HR (live session / DB bootstrap):',
+                '• Total leave rows: ' + rows.length,
+                '• Currently on leave / approved-active: ' + active.length,
+                '• Employees in master: ' + employees.length,
+                '',
+                active.length ? 'Active / on-leave sample:' : 'All leave rows (none marked active by status/dates):',
+                lines.join(String.fromCharCode(10)) || '• No leave rows — open HR → Leave or seed HR_LEAVE_CRUD.',
+                '',
+                'Source: HR_LEAVE_CRUD (and status/date fields when present).',
+            ].join(String.fromCharCode(10));
+            return { title: 'Live · Leave (' + rows.length + ' rows · ' + active.length + ' active)', body: body, topic: 'leave', source: 'session' };
+        }
+
+                if (topic === 'appraisal' || /\b(appraisals?|performance review|competence)\b/.test(q)) {
+            const rows = Array.isArray(appraisals) ? appraisals : [];
+            const n = rows.length;
+            const lines = rows.slice(0, 20).map((r, i) => {
+                const who = (r && (r.employee_name || r.full_name || r.name || r.employee_id || r.id_no)) || '—';
+                const score = (r && (r.score != null ? r.score : (r.total_score != null ? r.total_score : r.rating)));
+                const period = (r && (r.period || r.appraisal_period || r.year || r.cycle)) || '';
+                const st = (r && (r.status || r.state)) || '';
+                return '• ' + (i + 1) + '. ' + who + (score != null ? ' · score ' + score : '') + (period ? ' · ' + period : '') + (st ? ' · ' + st : '');
+            });
+            const body = [
+                'Appraisal / performance records (live HR data):',
+                '• Exact count: ' + n,
+                '• Employees in master: ' + (Array.isArray(employees) ? employees.length : 0),
+                '',
+                n ? 'Records:' : 'No appraisal rows in session.',
+                lines.join(String.fromCharCode(10)) || '• Open HR → Appraisal / Competence or seed HR_APPRAISAL_CRUD.',
+                '',
+                'Source: HR_APPRAISAL_CRUD.',
+            ].join(String.fromCharCode(10));
+            return { title: 'Live · Appraisals (' + n + ')', body: body, topic: 'appraisal', source: 'session' };
+        }
+
+        if (topic === 'capital' || (/\bcapital\b/.test(q) && /\b(how much|total|current|now|balance|share)\b/.test(q))) {
+            const coa = (uuPull(allData, getCollection, 'FIN_COA_CRUD') || []).length
+                ? uuPull(allData, getCollection, 'FIN_COA_CRUD')
+                : (uuPull(allData, getCollection, 'chartsOfAccounts') || []);
+            const txs = [].concat(
+                uuPull(allData, getCollection, 'transactions') || [],
+                uuPull(allData, getCollection, 'dayJournals') || [],
+                uuPull(allData, getCollection, 'FIN_TRANSACTIONS_CRUD') || []
+            );
+            const ledger = {};
+            const clean = (id) => (id == null ? '' : String(id).replace(/^acc-/i, '').trim());
+            (Array.isArray(coa) ? coa : []).forEach((acc) => {
+                const no = clean(acc.account_no || acc.account_code || acc.code || acc.id);
+                if (!no) return;
+                const typ = String(acc.account_type || acc.type || acc.category || '').toLowerCase();
+                const isEq = /equity|capital|share/.test(typ) || /^3/.test(no);
+                if (!isEq) return;
+                ledger[no] = { no: no, name: acc.name || acc.desc || acc.description || no, credit: 0, debit: 0 };
+            });
+            (Array.isArray(txs) ? txs : []).forEach((tx) => {
+                const no = clean(tx.account_code || tx.account_no || tx.account_id || tx.accountId);
+                if (!no) return;
+                if (!ledger[no] && /^3/.test(no)) {
+                    ledger[no] = { no: no, name: tx.account_name || no, credit: 0, debit: 0 };
+                }
+                if (!ledger[no]) return;
+                const d = Number(tx.debit != null ? tx.debit : (tx.type === 'Debit' ? tx.amount : 0)) || 0;
+                const c = Number(tx.credit != null ? tx.credit : (tx.type === 'Credit' ? tx.amount : 0)) || 0;
+                ledger[no].debit += d;
+                ledger[no].credit += c;
+            });
+            const rows = Object.values(ledger).map((r) => Object.assign({}, r, { balance: (r.credit || 0) - (r.debit || 0) }));
+            rows.sort((a, b) => String(a.no).localeCompare(String(b.no)));
+            const total = rows.reduce((s, r) => s + (Number(r.balance) || 0), 0);
+            const money = (n) => {
+                const v = Number(n) || 0;
+                try { return v.toLocaleString('en-ET', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+                catch (e) { return String(Math.round(v * 100) / 100); }
+            };
+            const lines = rows.filter((r) => Math.abs(r.balance) > 0.001).slice(0, 20).map((r) => '• ' + r.no + ' · ' + r.name + ' · ' + money(r.balance) + ' ETB');
+            const body = [
+                'Capital / equity snapshot (live COA + transactions):',
+                '• Total equity / capital (credit − debit on equity accounts): ' + money(total) + ' ETB',
+                '• Equity accounts touched: ' + rows.length,
+                '• Transaction lines scanned: ' + txs.length,
+                '',
+                'By equity account:',
+                lines.join(String.fromCharCode(10)) || '• No equity balances — post capital journals or seed opening balances.',
+                '',
+                'Source: FIN_COA_CRUD + transactions / dayJournals.',
+            ].join(String.fromCharCode(10));
+            return { title: 'Live · Capital / equity (' + money(total) + ' ETB)', body: body, topic: 'capital', source: 'session' };
+        }
+
+if (topic === 'partner' || /\b(partner|supplier|customer)\b/.test(q)) {
+            const types = {};
+            partners.forEach((p) => {
+                const t = String((p && (p.type || p.partner_type || p.category)) || 'Other');
+                types[t] = (types[t] || 0) + 1;
+            });
+            const typeLines = Object.entries(types).map(([k, v]) => '• ' + k + ': ' + v).join(String.fromCharCode(10));
+            const sample = partners.slice(0, 10).map((p) => '• ' + (p.name || p.partner_name || p.company || p.id) + ' | ' + (p.type || '—')).join(String.fromCharCode(10));
+            return { title: 'Live · Partners (' + partners.length + ')', body: 'Partner directory:\n• Count: ' + partners.length + '\nBy type:\n' + (typeLines || '• —') + '\n\nSample:\n' + (sample || '• —') + '\nSource: FIN_PARTNERS_CRUD.' };
+        }
+        if (topic === 'coa' || /\bcoa\b/.test(q) || /chart of account/.test(q)) {
+            const types = {};
+            coa.forEach((c) => {
+                const t = String((c && (c.account_type || c.type || c.category)) || 'General');
+                types[t] = (types[t] || 0) + 1;
+            });
+            const typeLines = Object.entries(types).sort((a, b) => b[1] - a[1]).map(([k, v]) => '• ' + k + ': ' + v).join(String.fromCharCode(10));
+            return { title: 'Live · COA (' + coa.length + ')', body: 'Chart of accounts:\n• Rows: ' + coa.length + '\nBy type:\n' + (typeLines || '• —') + '\n\nTB accounts with movement: ' + buildTb().length + '.\nSource: FIN_COA_CRUD.' };
+        }
+        if (topic === 'payroll' || /\bpayroll\b/.test(q)) {
+            let gross = 0, net = 0;
+            process.forEach((r) => {
+                gross += Number(r.gross || r.gross_amount || r.total_basic || r.basic_salary || 0) || 0;
+                net += Number(r.net || r.net_pay || r.net_salary || 0) || 0;
+            });
+            return {
+                title: 'Live · Payroll process (' + process.length + ')',
+                body: 'Payroll process dashboard:\n• Rows: ' + process.length + '\n• Approx gross sum: ' + money(gross) + ' ETB\n• Approx net sum: ' + money(net) + ' ETB\n• HR employees available: ' + employees.length + '\nSource: PAY_PROCESS_CRUD.',
+            };
+        }
+
+        return null;
+    } catch (err) {
+        return null;
+    }
+};
+
+const unityUniversityAnswer = (question, allData, getCollection, priorTopic, priorQuestion) => {
+    try {
+        const raw = String(question || '').trim();
+        const resolved = uuResolveQuery(raw, priorTopic, priorQuestion);
+        // Institutional questions (campuses, president, VP) → knowledge, not store
+        const instForce = /\b(campus|campuses|president|vice[ -]?president|\bvp\b|chairman|founder|who (is|was) the|leadership)\b/i.test(resolved.query || raw);
+        if (instForce) {
+            resolved.topic = resolved.topic || 'institutional';
+        }
+
+        // Dictionary / term definitions first when asked
+        try {
+            const dictHit = typeof uuDictionaryAnswer === 'function' ? uuDictionaryAnswer(resolved.query || raw) : null;
+            if (dictHit && dictHit.body && /\b(what is|what\'s|define|meaning|explain)\b/i.test(resolved.query || raw)) {
+                return dictHit;
+            }
+        } catch (eDict) {}
+        // Quantitative / inventory questions: never answer with generic module essays
+        const quantQ = (/\b(how many|how much|total|sum|count|number of|quantity)\b/i.test(resolved.query || raw)
+            || /\b(chairs?|tables?|sku|grv|giv|award|appraisal|leave|salary|capital|profit|transaction|paper|toner)\b/i.test(resolved.query || raw))
+            && !/\b(campus|campuses|president|vice[ -]?president|chairman|founder)\b/i.test(resolved.query || raw);
+
+        if (!raw) {
+            return { title: 'unityUniversity AI', body: 'Ask about Unity University or live SIS data:\n• What is Unity University? · campuses · programs · history\n• Finance / HR / Material modules\n• how many female employees · how many SKUs · GRV count', topic: '' };
+        }
+        const instQ = /\b(unity university|history of|who founded|founder|president|chairman|campus|campuses|gerji|adama|dessie|burayu|program|faculty|mba|admission|registrar|motto|vision|mission|accreditation|uu\.edu|sis\.uu|when was|when were|established|founded|constructed|construction|built|private university)\b/i.test(resolved.query);
+        const live = (!instQ || resolved.topic) ? unityUniversityLiveAnswer(resolved.query, allData, getCollection, resolved.topic, resolved.filters) : null;
+        if (live && live.body && !(typeof instForce !== 'undefined' && instForce) && String(live.topic || '') !== 'institutional' && String(live.title || '').indexOf('Store analysis') < 0) return Object.assign({}, live, { topic: live.topic || resolved.topic || priorTopic || '', source: live.source || 'session' });
+        if (typeof quantQ !== 'undefined' && quantQ && !(live && live.body)) {
+            return {
+                title: 'Live data · no matching rows',
+                body: 'I treated this as a live count/amount question, but no matching session rows were found for: ' + (resolved.query || raw) + String.fromCharCode(10) +
+                    'Check that HR/Material/Finance collections are loaded (bootstrap/API) and field names contain the item (e.g. chair in SKU description).' + String.fromCharCode(10) +
+                    'I will not invent numbers. Moral rule: only report data present in collections you can access.',
+                topic: resolved.topic || '',
+                source: 'session',
+            };
+        }
+
+        const q = String(resolved.query || '').toLowerCase();
+        const words = q.split(/[^a-z0-9]+/).filter((w) => w.length > 2);
+        const knowledge = Array.isArray(UU_AI_KNOWLEDGE) ? UU_AI_KNOWLEDGE : [];
+        const scored = [];
+        for (let i = 0; i < knowledge.length; i++) {
+            const item = knowledge[i];
+            if (!item) continue;
+            let score = 0;
+            const titleL = String(item.title || '').toLowerCase();
+            const bodyL = String(item.body || '').toLowerCase();
+            if (q.indexOf(titleL) >= 0) score += 8;
+            const tags = Array.isArray(item.tags) ? item.tags : [];
+            for (let ti = 0; ti < tags.length; ti++) {
+                const tag = String(tags[ti] || '').toLowerCase();
+                if (!tag) continue;
+                if (q.indexOf(tag) >= 0) score += 5;
+                for (let w = 0; w < words.length; w++) {
+                    const word = words[w];
+                    if (tag === word) score += 4;
+                    else if (tag.indexOf(word) >= 0 || word.indexOf(tag) >= 0) score += 1.5;
+                }
+            }
+            for (let w = 0; w < words.length; w++) {
+                const word = words[w];
+                if (titleL.indexOf(word) >= 0) score += 2.5;
+                if (bodyL.indexOf(word) >= 0) score += 0.35;
+            }
+            if (/unity|university|campus|gerji|adama|dessie|burayu|program|faculty|mba|admission|registrar|history|founder|president/.test(q)) {
+                if (String(item.id || '').indexOf('uu_') === 0 || String(item.id || '').indexOf('sis_') === 0) score += 1.5;
+            }
+            if (score >= 1.2) scored.push({ item: item, score: score });
+        }
+        scored.sort(function(a, b) { return b.score - a.score; });
+        if (scored.length && scored[0].score >= 1.5) {
+            const top = [];
+            for (let i = 0; i < scored.length && i < 3; i++) {
+                if (i === 0 || scored[i].score >= Math.max(2, scored[0].score * 0.45)) top.push(scored[i]);
+            }
+            if (top.length === 1) {
+                return { title: top[0].item.title, body: top[0].item.body, topic: resolved.topic || top[0].item.id };
+            }
+            const body = top.map(function(s, idx) {
+                return (idx + 1) + ') ' + s.item.title + String.fromCharCode(10) + s.item.body;
+            }).join(String.fromCharCode(10,10)+'——'+String.fromCharCode(10,10));
+            return {
+                title: 'unityUniversity AI · ' + top.map(function(s) { return s.item.title; }).join(' · '),
+                body: body,
+                topic: resolved.topic || top[0].item.id,
+            };
+        }
+        return {
+            title: 'unityUniversity AI',
+            body: 'No strong match in the library or live data.\nTry:\n• About Unity University / history / campuses / programs\n• Finance module · HR module · Material GRV\n• how many female employees · how many SKUs\n• contacts / registrar / sis.uu.edu.et',
+            topic: resolved.topic || priorTopic || '',
+        };
+    } catch (err) {
+        return { title: 'unityUniversity AI', body: 'Answer error: ' + String(err && err.message ? err.message : err), topic: priorTopic || '' };
+    }
+};
+
+const uuFetchLiveUniversityFacts = async (question) => {
+    try {
+        const q = String(question || '').toLowerCase();
+        const wantsWeb = /unity|university|campus|founded|establish|construct|built|history|president|program|gerji|adama|dessie|when|who|where|motto|accreditation/.test(q);
+        if (!wantsWeb) return null;
+        const url = 'https://en.wikipedia.org/api/rest_v1/page/summary/Unity_University';
+        const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        const timer = ctrl ? setTimeout(() => { try { ctrl.abort(); } catch (e) {} }, 4500) : null;
+        const res = await fetch(url, { method: 'GET', headers: { Accept: 'application/json' }, signal: ctrl ? ctrl.signal : undefined });
+        if (timer) clearTimeout(timer);
+        if (!res || !res.ok) return null;
+        const data = await res.json();
+        const extract = String((data && (data.extract || data.description)) || '').trim();
+        if (!extract) return null;
+        const title = String((data && data.title) || 'Unity University');
+        const page = (data && data.content_urls && data.content_urls.desktop && data.content_urls.desktop.page) || 'https://en.wikipedia.org/wiki/Unity_University';
+        return {
+            title: 'Live web · ' + title,
+            body: extract + '\n\nSource: Wikipedia summary (refresh each ask). Official site: https://www.uu.edu.et · ' + page + '\nNote: For admissions/fees/current programs prefer uu.edu.et.',
+            topic: 'uu_profile',
+            source: 'web',
+        };
+    } catch (e) {
+        return null;
+    }
+};
+
+const uuFormatAiBody = (s) => {
+    let t = String(s == null ? '' : s);
+    // Turn literal backslash-n / backslash-t into real control chars if present
+    t = t.replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n').replace(/\\t/g, '  ');
+    t = t.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    t = t.replace(/\n{3,}/g, '\n\n');
+    return t;
+};
+
+const UnityUniversityAI = ({ glassClass = '', dockMode = false }) => {
+    let allData = {};
+    let getCollection = null;
+    try {
+        const dataApi = useData();
+        allData = (dataApi && dataApi.allData) || {};
+        getCollection = dataApi && dataApi.getCollection;
+    } catch (e) { allData = {}; }
+    try {
+        if ((!allData || !Object.keys(allData).length) && typeof window !== 'undefined' && window.__UU_ALL_DATA__) allData = window.__UU_ALL_DATA__;
+    } catch (e) {}
+
+    const [question, setQuestion] = useState('');
+    const [messages, setMessages] = useState([]);
+    const [priorTopic, setPriorTopic] = useState('');
+    const [priorQuestion, setPriorQuestion] = useState('');
+    const [busy, setBusy] = useState(false);
+    const threadRef = useRef(null);
+    const bottomRef = useRef(null);
+    const inputRef = useRef(null);
+    const askSeq = useRef(0);
+
+    const scrollChat = () => {
+        window.setTimeout(() => {
+            try {
+                if (bottomRef.current && bottomRef.current.scrollIntoView) {
+                    bottomRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
+                } else if (threadRef.current) {
+                    threadRef.current.scrollTop = threadRef.current.scrollHeight;
+                }
+            } catch (e) {}
+        }, 40);
+    };
+
+    const ask = async (q) => {
+        const query = String(q != null && String(q).length ? q : question).trim();
+        if (!query || busy) return;
+        const seq = ++askSeq.current;
+        const at = new Date().toISOString();
+        const userMsg = { id: 'u-' + seq + '-' + at, role: 'user', text: query, at: at };
+
+        setBusy(true);
+        setMessages((prev) => [...(Array.isArray(prev) ? prev : []), userMsg]);
+        setQuestion('');
+        scrollChat();
+
+        let ad = allData;
+        let gc = getCollection;
+        try { if (typeof window !== 'undefined' && window.__UU_ALL_DATA__) ad = window.__UU_ALL_DATA__; } catch (e) {}
+
+        try {
+            let res = unityUniversityAnswer(query, ad, gc, priorTopic, priorQuestion);
+            try {
+                const liveWeb = await uuFetchLiveUniversityFacts(query);
+                if (liveWeb && liveWeb.body) {
+                    if (res && res.body && String(res.title || '').indexOf('Live') !== 0) {
+                        res = {
+                            title: (res.title || 'unityUniversity AI') + ' · Live web note',
+                            body: uuFormatAiBody(String(res.body || '') + '\n\n——\nLive web (Wikipedia summary, may lag official site):\n' + liveWeb.body),
+                            topic: res.topic || liveWeb.topic || '',
+                            source: 'library+web',
+                        };
+                    } else if (!res || !res.body) {
+                        res = Object.assign({}, liveWeb, { body: uuFormatAiBody(liveWeb.body) });
+                    }
+                }
+            } catch (webErr) { /* ignore */ }
+
+            if (seq !== askSeq.current) return;
+
+            const safe = (res && res.body)
+                ? Object.assign({}, res, { body: uuFormatAiBody(res.body) })
+                : { title: 'unityUniversity AI', body: 'No answer for: ' + query + '\nTry: how many employees · trial balance · how many SKUs · campuses', topic: '', source: 'none' };
+
+            const botMsg = {
+                id: 'a-' + seq + '-' + Date.now(),
+                role: 'assistant',
+                text: uuFormatAiBody(safe.body),
+                title: String(safe.title || 'unityUniversity AI'),
+                source: safe.source || 'session',
+                topic: safe.topic || '',
+                at: new Date().toISOString(),
+            };
+            setMessages((prev) => [...(Array.isArray(prev) ? prev : []), botMsg]);
+            if (safe.topic) setPriorTopic(safe.topic);
+            else setPriorTopic('');
+            setPriorQuestion(query);
+            scrollChat();
+        } catch (err) {
+            if (seq !== askSeq.current) return;
+            setMessages((prev) => [...(Array.isArray(prev) ? prev : []), {
+                id: 'e-' + seq,
+                role: 'assistant',
+                title: 'unityUniversity AI',
+                text: 'Could not answer: ' + query + ' — ' + String(err && err.message ? err.message : err),
+                source: 'error',
+                at: new Date().toISOString(),
+            }]);
+            scrollChat();
+        } finally {
+            if (seq === askSeq.current) setBusy(false);
+            try { inputRef.current && inputRef.current.focus && inputRef.current.focus(); } catch (e) {}
+        }
+    };
+
+    const quick = [
+        'How many employees?',
+        'How many female employees?',
+        'Academic vs non-academic staff?',
+        'List of transactions',
+        'Trial balance',
+        'What profit this year?',
+        'How many SKUs?',
+        'How many GRV?',
+        'Who was awarded?',
+        'Tables in store?',
+        'What is Unity University?',
+        'Finance module',
+        'HR module',
+        'Material module',
+    ];
+
+    const timeAgo = (iso) => {
+        try {
+            const ms = Date.now() - new Date(iso).getTime();
+            if (ms < 60000) return 'just now';
+            if (ms < 3600000) return Math.floor(ms / 60000) + ' min ago';
+            if (ms < 86400000) return Math.floor(ms / 3600000) + ' h ago';
+            return new Date(iso).toLocaleString();
+        } catch (e) { return ''; }
+    };
+
+    const renderBody = (text) => {
+        const lines = uuFormatAiBody(text).split('\n');
+        return (
+            <div className="text-[13px] text-gray-50 leading-relaxed space-y-1 break-words">
+                {lines.map((line, idx) => (
+                    <div key={idx} className={line.trim() ? '' : 'h-2'}>{line || '\u00a0'}</div>
+                ))}
+            </div>
+        );
+    };
+
+    const shellClass = dockMode
+        ? 'flex flex-col h-full min-h-0 max-h-full rounded-none border-0 bg-transparent'
+        : 'mt-6 rounded-[1.75rem] border border-cyan-500/30 bg-gradient-to-br from-cyan-950/50 to-slate-950/80 ' + (glassClass || '') + ' flex flex-col relative z-[80] min-h-[28rem]';
+
+    return (
+        <div className={shellClass} style={{ isolation: 'isolate' }}>
+            <div className="px-4 sm:px-5 py-3 border-b border-cyan-500/20 flex flex-wrap items-center justify-between gap-2 shrink-0 bg-slate-950/80 backdrop-blur-md">
+                <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-9 h-9 rounded-2xl bg-cyan-500/20 border border-cyan-400/40 flex items-center justify-center text-cyan-300 text-sm font-black shrink-0">AI</div>
+                    <div className="min-w-0">
+                        <h3 className="text-sm font-black uppercase tracking-widest text-cyan-300 truncate">unityUniversity AI</h3>
+                        <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider truncate">
+                            Chat · live data · library{priorTopic ? ' · ' + priorTopic : ''}
+                        </p>
+                    </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                    {messages.length ? (
+                        <button type="button" onClick={() => { setMessages([]); setPriorTopic(''); setPriorQuestion(''); }}
+                            className="text-[9px] font-black uppercase px-2 py-1 rounded-lg bg-white/5 text-gray-400 border border-white/10 hover:text-white">
+                            Clear
+                        </button>
+                    ) : null}
+                    <span className="text-[9px] font-black uppercase px-2 py-1 rounded-lg bg-cyan-500/10 text-cyan-200/90 border border-cyan-500/20">
+                        {busy ? 'Thinking…' : 'Ready'}
+                    </span>
+                </div>
+            </div>
+
+            <div
+                ref={threadRef}
+                className="p-3 sm:p-4 space-y-3 flex-1 min-h-0 overflow-y-auto overscroll-contain bg-black/25"
+                style={{ maxHeight: dockMode ? undefined : 'min(42vh, 420px)' }}
+            >
+                {!messages.length ? (
+                    <div className="rounded-2xl border border-white/10 bg-black/40 p-4 text-[13px] text-gray-300 leading-relaxed">
+                        Ask anything about Unity University or this SIS. Each question gets its own answer in this chat.
+                        <div className="mt-2 text-gray-400 text-[12px]">Examples: how many female employees · trial balance · how many SKUs · campuses</div>
+                    </div>
+                ) : null}
+                {messages.map((m) => (
+                    <div
+                        key={m.id}
+                        className={
+                            m.role === 'user'
+                                ? 'ml-4 sm:ml-10 rounded-2xl border border-amber-400/30 bg-amber-500/10 px-3 py-2.5 shadow-lg shadow-black/20'
+                                : 'mr-2 sm:mr-8 rounded-2xl border border-cyan-400/35 bg-slate-950/90 px-3 py-3 shadow-xl shadow-cyan-950/30'
+                        }
+                    >
+                        <div className="flex items-center justify-between gap-2 mb-1.5">
+                            <span className={'text-[9px] font-black uppercase tracking-widest ' + (m.role === 'user' ? 'text-amber-300' : 'text-cyan-300')}>
+                                {m.role === 'user' ? 'You' : (m.title || 'unityUniversity AI')}
+                            </span>
+                            <span className="text-[9px] text-gray-500 font-bold whitespace-nowrap">{timeAgo(m.at)}{m.source ? ' · ' + m.source : ''}</span>
+                        </div>
+                        {m.role === 'user' ? (
+                            <p className="text-[13px] text-gray-50 leading-relaxed break-words">{m.text}</p>
+                        ) : (
+                            renderBody(m.text)
+                        )}
+                    </div>
+                ))}
+                {busy ? (
+                    <div className="mr-8 rounded-2xl border border-cyan-400/20 bg-cyan-500/5 px-3 py-2 text-[12px] text-cyan-200/90 font-bold animate-pulse">
+                        Thinking…
+                    </div>
+                ) : null}
+                <div ref={bottomRef} />
+            </div>
+
+            <div
+                className="p-3 sm:p-4 space-y-2 border-t border-cyan-500/30 shrink-0 bg-slate-950"
+                style={{ zIndex: 200, position: 'relative', paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}
+            >
+                <div className="flex flex-wrap gap-1.5 max-h-16 overflow-y-auto">
+                    {quick.map((label) => (
+                        <button
+                            key={label}
+                            type="button"
+                            disabled={busy}
+                            onClick={() => ask(label)}
+                            className="px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wide bg-white/5 border border-white/10 text-cyan-100/90 hover:bg-cyan-500/20 hover:border-cyan-400/40 disabled:opacity-40"
+                        >
+                            {label}
+                        </button>
+                    ))}
+                </div>
+                <div className="flex gap-2 items-end" style={{ zIndex: 210, position: 'relative' }}>
+                    <textarea
+                        ref={inputRef}
+                        rows={2}
+                        value={question}
+                        onChange={(e) => setQuestion(e.target.value)}
+                        onKeyDown={(e) => {
+                            if (e.key === 'Enter' && !e.shiftKey) {
+                                e.preventDefault();
+                                ask(question);
+                            }
+                        }}
+                        placeholder="Type a question… (Enter to send)"
+                        className="flex-1 min-w-0 rounded-xl bg-black border border-cyan-400/40 px-3 py-2.5 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:border-cyan-300 focus:ring-2 focus:ring-cyan-500/30 resize-none min-h-[3rem]"
+                        style={{ zIndex: 220, position: 'relative' }}
+                        disabled={busy}
+                    />
+                    <button
+                        type="button"
+                        onClick={() => ask(question)}
+                        disabled={busy || !String(question || '').trim()}
+                        className="h-12 px-5 rounded-xl text-xs font-black uppercase tracking-widest bg-cyan-600 hover:bg-cyan-500 text-white disabled:opacity-40 shrink-0"
+                        style={{ zIndex: 220, position: 'relative' }}
+                    >
+                        {busy ? '…' : 'Ask'}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+
+const UnityUniversityAIDock = ({ glassClass = '' }) => {
+    const ui = React.useContext(UIContext) || {};
+    const enabled = !!(ui.aiDockEnabled || (ui.uiSettings && ui.uiSettings.aiDockEnabled));
+    const [open, setOpen] = React.useState(false);
+    if (!enabled) return null;
+    return (
+        <>
+            <button
+                type="button"
+                onClick={() => setOpen((v) => !v)}
+                className="fixed bottom-5 right-5 w-14 h-14 rounded-2xl bg-cyan-600 hover:bg-cyan-500 text-white font-black shadow-2xl shadow-cyan-900/50 border border-cyan-300/50 flex items-center justify-center text-sm"
+                title="unityUniversity AI"
+                style={{ zIndex: 99950 }}
+            >
+                AI
+            </button>
+            {open ? (
+                <div
+                    className="fixed bottom-24 right-3 sm:right-5 w-[min(440px,calc(100vw-1.25rem))] h-[min(78vh,720px)] flex flex-col overflow-hidden rounded-2xl shadow-2xl border border-cyan-500/40 bg-slate-950"
+                    style={{ zIndex: 99960 }}
+                >
+                    <div className="flex items-center justify-between px-3 py-2 border-b border-white/10 bg-slate-950 shrink-0" style={{ zIndex: 99970 }}>
+                        <span className="text-[10px] font-black uppercase tracking-widest text-cyan-300">unityUniversity AI · dock</span>
+                        <button type="button" onClick={() => setOpen(false)} className="text-gray-400 hover:text-white text-xs font-bold px-2 py-1">Close</button>
+                    </div>
+                    <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+                        <UnityUniversityAI glassClass={glassClass || ''} dockMode />
+                    </div>
+                </div>
+            ) : null}
+        </>
+    );
+};
+
+
+/* ---- Ethiopian (Geez) ↔ Gregorian calendar helpers (Power Geez) ---- */
+const ETH_MONTHS = ['Meskerem','Tikimt','Hidar','Tahsas','Tir','Yekatit','Megabit','Miazia','Genbot','Sene','Hamle','Nehasse','Pagumen'];
+const ethiopianMonthNames = ETH_MONTHS;
+const isEthiopianLeap = (y) => (y % 4) === 3;
+const ethMonthLength = (y, m) => {
+    if (m < 1 || m > 13) return 0;
+    if (m === 13) return isEthiopianLeap(y) ? 6 : 5;
+    return 30;
+};
+const gregorianToJdn = (y, m, d) => {
+    const a = Math.floor((14 - m) / 12);
+    const yy = y + 4800 - a;
+    const mm = m + 12 * a - 3;
+    return d + Math.floor((153 * mm + 2) / 5) + 365 * yy + Math.floor(yy / 4) - Math.floor(yy / 100) + Math.floor(yy / 400) - 32045;
+};
 const jdnToGregorian = (jdn) => {
     const a = jdn + 32044;
     const b = Math.floor((4 * a + 3) / 146097);
@@ -20013,24 +20914,36 @@ const jdnToGregorian = (jdn) => {
     const year = 100 * b + d - 4800 + Math.floor(m / 10);
     return { year, month, day };
 };
-
-const ethiopianToJDNCore = (year, month, day) => {
-    // Standard: JDN = 1723856 + 365*(y-1) + floor(y/4) + 30*(m-1) + d
-    return 1723856 + 365 * (year - 1) + Math.floor(year / 4) + 30 * (month - 1) + day;
+const ethiopianToJdn = (y, m, d) => {
+    // Ethiopian epoch: Meskerem 1, 1 = Aug 29, 8 CE (JDN 1724220.5 ≈ 1724221 civil)
+    return (Math.floor(y / 4) * 1461) + ((y % 4) * 365) + ((m - 1) * 30) + d + 1723855;
 };
-
 const jdnToEthiopian = (jdn) => {
-    const r = jdn - 1723855;
-    const year = Math.floor((4 * r - 1) / 1461);
-    const t = Math.floor((4 * r - 1) % 1461);
-    const n = Math.floor(t / 4);
-    const month = Math.floor(n / 30) + 1;
-    const day = (n % 30) + 1;
-    return { year, month, day };
+    const r = jdn - 1723856;
+    const n = Math.floor(r / 1461);
+    const a = r % 1461;
+    const y = n * 4 + Math.floor(a / 365) - (a === 1460 ? 1 : 0);
+    const dayOfYear = a === 1460 ? 365 : a % 365;
+    const m = Math.floor(dayOfYear / 30) + 1;
+    const d = (dayOfYear % 30) + 1;
+    return { year: y + 1, month: m, day: d };
 };
-
-const gregorianToEthiopian = (y, m, d) => jdnToEthiopian(gregorianToJDN(y, m, d));
-const ethiopianToGregorian = (y, m, d) => jdnToGregorian(ethiopianToJDNCore(y, m, d));
+const gregorianToEthiopian = (y, m, d) => {
+    try {
+        const jdn = gregorianToJdn(Number(y), Number(m), Number(d));
+        return jdnToEthiopian(jdn);
+    } catch (e) {
+        return { year: 0, month: 1, day: 1 };
+    }
+};
+const ethiopianToGregorian = (y, m, d) => {
+    try {
+        const jdn = ethiopianToJdn(Number(y), Number(m), Number(d));
+        return jdnToGregorian(jdn);
+    } catch (e) {
+        return { year: 1970, month: 1, day: 1 };
+    }
+};
 
 const EthiopianCalendarPanel = ({ glassClass }) => {
     const now = new Date();
@@ -20063,8 +20976,8 @@ const EthiopianCalendarPanel = ({ glassClass }) => {
                     <Icons.Calendar className="w-6 h-6 text-amber-400" />
                 </div>
                 <div>
-                    <h2 className="text-xl font-black uppercase italic tracking-tighter text-white">Geez ↔ Gregorian</h2>
-                    <p className="text-[10px] text-amber-400/80 font-black uppercase tracking-[0.25em]">Ethiopian calendar converter</p>
+                    <h2 className="text-xl font-black uppercase italic tracking-tighter text-white">Power Geez · Geez ↔ Gregorian</h2>
+                    <p className="text-[10px] text-amber-400/80 font-black uppercase tracking-[0.25em]">Power Geez · Ethiopian calendar converter</p>
                 </div>
             </div>
 
@@ -20159,6 +21072,7 @@ const EthiopianCalendarPanel = ({ glassClass }) => {
     );
 };
 
+
 const UICustomization = ({ glassClass }) => {
     const { uiSettings, updateUISettings, resetToDefault } = useContext(UIContext);
     const [qrText, setQrText] = useState('');
@@ -20187,7 +21101,7 @@ const UICustomization = ({ glassClass }) => {
     const exportCSV = (slug) => {
         const data = allData[slug] || [];
         if (!data.length) return;
-        const csv = [Object.keys(data[0]).join(','), ...data.map(r => Object.values(r).join(','))].join('\n');
+        const csv = [Object.keys(data[0]).join(','), ...data.map(r => Object.values(r).join(','))].join(String.fromCharCode(10));
         const blob = new Blob([csv], { type: 'text/csv' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a'); a.href = url; a.download = `${slug}.csv`; a.click();
@@ -20195,8 +21109,25 @@ const UICustomization = ({ glassClass }) => {
 
     return (
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700">
-            <FieldIntelligenceSettings glassClass={glassClass} />
             <EthiopianCalendarPanel glassClass={glassClass} />
+
+            <UnityUniversityAI glassClass={glassClass} />
+            <div className={`p-5 rounded-[1.75rem] border border-cyan-500/25 ${glassClass} shadow-xl`}>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                        <h3 className="text-sm font-black uppercase tracking-widest text-cyan-300">AI access on all screens</h3>
+                        <p className="text-[11px] text-gray-400 mt-1">When enabled, a floating AI button appears on every page of this module (not only UI Customization).</p>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => updateUISettings({ aiDockEnabled: !uiSettings.aiDockEnabled })}
+                        className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest border transition ${uiSettings.aiDockEnabled ? 'bg-cyan-600 border-cyan-400 text-white' : 'bg-white/5 border-white/15 text-gray-300'}`}
+                    >
+                        {uiSettings.aiDockEnabled ? 'AI dock ON' : 'AI dock OFF'}
+                    </button>
+                </div>
+            </div>
+
             {/* 1. THE ATMOSPHERIC ENGINE (Scale & Transparency Fixes) */}
             <div className={`p-6 rounded-[2.5rem] border border-white/10 ${glassClass} shadow-2xl`}>
                 <div className="flex items-center gap-4 mb-8">
@@ -20397,7 +21328,7 @@ const StaffChangePassword = ({ glassClass }) => {
     const exportCSV = (slug) => {
         const data = allData[slug] || [];
         if (!data.length) return;
-        const csv = [Object.keys(data[0]).join(','), ...data.map(r => Object.values(r).join(','))].join('\n');
+        const csv = [Object.keys(data[0]).join(','), ...data.map(r => Object.values(r).join(','))].join(String.fromCharCode(10));
         const blob = new Blob([csv], { type: 'text/csv' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a'); a.href = url; a.download = `${slug}.csv`; a.click();
@@ -20483,7 +21414,7 @@ const StaffUpdateProfile = ({ glassClass }) => {
     const exportCSV = (slug) => {
         const data = allData[slug] || [];
         if (!data.length) return;
-        const csv = [Object.keys(data[0]).join(','), ...data.map(r => Object.values(r).join(','))].join('\n');
+        const csv = [Object.keys(data[0]).join(','), ...data.map(r => Object.values(r).join(','))].join(String.fromCharCode(10));
         const blob = new Blob([csv], { type: 'text/csv' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a'); a.href = url; a.download = `${slug}.csv`; a.click();
@@ -20504,7 +21435,7 @@ const StaffUpdateProfile = ({ glassClass }) => {
     const exportCSV = (slug) => {
         const data = allData[slug] || [];
         if (!data.length) return;
-        const csv = [Object.keys(data[0]).join(','), ...data.map(r => Object.values(r).join(','))].join('\n');
+        const csv = [Object.keys(data[0]).join(','), ...data.map(r => Object.values(r).join(','))].join(String.fromCharCode(10));
         const blob = new Blob([csv], { type: 'text/csv' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a'); a.href = url; a.download = `${slug}.csv`; a.click();
@@ -20572,7 +21503,7 @@ const StaffSignup = ({ glassClass }) => {
     const exportCSV = (slug) => {
         const data = allData[slug] || [];
         if (!data.length) return;
-        const csv = [Object.keys(data[0]).join(','), ...data.map(r => Object.values(r).join(','))].join('\n');
+        const csv = [Object.keys(data[0]).join(','), ...data.map(r => Object.values(r).join(','))].join(String.fromCharCode(10));
         const blob = new Blob([csv], { type: 'text/csv' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a'); a.href = url; a.download = `${slug}.csv`; a.click();
@@ -20621,274 +21552,182 @@ const AccessDenied = ({ glassClass }) => (
    10. MAIN APP & NAVIGATION (Standard)
    ---------------------------------------------------------------------- */
 const RoleAssignmentManager = ({ glassClass }) => {
-    const { getCollection, updateRecord, addRecord } = useData();
-    const roles = getCollection('ROLE_CRUD') || [];
-    const [userTick, setUserTick] = useState(0);
-
-    // Re-read shared users when tick changes (after assign) or catalog event fires
-    useEffect(() => {
-        const onUpd = () => setUserTick((t) => t + 1);
-        window.addEventListener('uu-shared-users-updated', onUpd);
-        return () => window.removeEventListener('uu-shared-users-updated', onUpd);
-    }, []);
-
-    // System login users (created accounts) — NOT HR staff display names
-    const users = useMemo(() => {
-        const fromShared = (typeof getSharedUsers === 'function' ? getSharedUsers() : []) || [];
-        const fromSys = getCollection('SYS_USERS_CRUD') || getCollection('USERS_CRUD') || [];
-        const byUser = new Map();
-        fromShared.forEach((u) => {
-            if (!u || !u.username) return;
-            byUser.set(String(u.username).toLowerCase(), {
-                id: u.id || `user-${u.username}`,
-                username: String(u.username).trim(),
-                name: u.name || u.display_name || u.username,
-                role: u.role || u.system_role || 'employee',
-                modules: u.modules || null,
-                password: u.password,
-                source: 'shared',
-            });
-        });
-        (Array.isArray(fromSys) ? fromSys : []).forEach((u) => {
-            const username = String(u.username || u.user_name || '').trim();
-            if (!username) return;
-            const prev = byUser.get(username.toLowerCase()) || {};
-            // Shared catalog role wins over stale collection role
-            byUser.set(username.toLowerCase(), {
-                ...prev,
-                id: u.id || prev.id || `user-${username}`,
-                username,
-                name: u.name || u.full_name || prev.name || username,
-                role: prev.role || u.role || u.system_role || 'employee',
-                modules: u.modules || u.allowed_modules || prev.modules,
-                password: u.password != null ? u.password : prev.password,
-                source: 'collection',
-                _raw: u,
-            });
-        });
-        return Array.from(byUser.values()).sort((a, b) =>
-            String(a.username).localeCompare(String(b.username))
-        );
-    }, [getCollection, userTick]);
-
-    const [selectedUsername, setSelectedUsername] = useState('');
+    const { getCollection, updateRecord } = useData();
+    
+    // Use getCollection directly to ensure we get the latest database state
+    const employees = getCollection('HR_EMPLOYEE_CRUD') || [];
+    const roles = getCollection('ROLE_CRUD') || []; 
+    
+    const [selectedEmployeeId, setSelectedEmployeeId] = useState('');
     const [selectedRoleId, setSelectedRoleId] = useState('');
 
-    const selectedUser = users.find(
-        (u) => String(u.username).toLowerCase() === String(selectedUsername).toLowerCase()
-    );
+    const selectStyle = {
+        backgroundColor: '#000000',
+        color: '#ffffff',         
+        appearance: 'none', 
+        WebkitAppearance: 'none'
+    };
 
     const handleAssignment = async () => {
-        if (!selectedUsername || !selectedRoleId) {
-            return alert('Please select both a system user and a role.');
+        if (!selectedEmployeeId || !selectedRoleId) {
+            return alert("Please select both an employee and a role.");
         }
-        const user = users.find(
-            (u) => String(u.username).toLowerCase() === String(selectedUsername).toLowerCase()
-        );
-        const role = roles.find((r) => String(r.id) === String(selectedRoleId));
-        if (!user) {
-            alert('Selected user not found.');
+
+        const employee = employees.find(e => e.id === selectedEmployeeId);
+        const role = roles.find(r => r.id === selectedRoleId);
+
+        if (!employee) {
+            alert("Selected employee not found. Please try again.");
             return;
         }
         if (!role) {
-            alert('Selected role not found.');
+            alert("Selected role not found. Please try again.");
             return;
         }
-        const roleKey = role.roleName || role.name || role.id;
-        // Prefer ROLE_CRUD id so checkPermission finds permissions; keep name for display
-        const roleNorm = String(role.id != null ? role.id : roleKey).trim();
-        const roleSlug = String(roleKey).trim().toLowerCase().replace(/\s+/g, '_');
+
         try {
-            // Always write shared catalog first (login source of truth)
-            if (typeof upsertSharedUser === 'function') {
-                upsertSharedUser({
-                    username: user.username,
-                    password: user.password || '',
-                    name: user.name,
-                    role: roleNorm,
-                    system_role: roleNorm,
-                    role_id: role.id,
-                    role_name: roleKey,
-                    role_slug: roleSlug,
-                    modules: user.modules,
-                    id: user.id,
-                    _forceRole: true,
-                });
-            }
-            // Verify write
-            const verify = (typeof getSharedUsers === 'function' ? getSharedUsers() : []).find(
-                (x) => String(x.username).toLowerCase() === String(user.username).toLowerCase()
-            );
-            if (!verify || String(verify.role).toLowerCase() !== roleNorm) {
-                // Force raw localStorage rewrite
-                try {
-                    const key = 'uu_shared_users_v1';
-                    const raw = JSON.parse(localStorage.getItem(key) || '[]');
-                    const list = Array.isArray(raw) ? raw : [];
-                    const idx = list.findIndex((x) => String(x.username || '').toLowerCase() === String(user.username).toLowerCase());
-                    const row = {
-                        ...(idx >= 0 ? list[idx] : {}),
-                        username: user.username,
-                        password: user.password || (idx >= 0 ? list[idx].password : '') || '',
-                        name: user.name || user.username,
-                        role: roleNorm,
-                        system_role: roleNorm,
-                        role_id: role.id,
-                        role_name: roleKey,
-                        modules: user.modules,
-                        id: user.id,
-                    };
-                    if (idx >= 0) list[idx] = row;
-                    else list.push(row);
-                    localStorage.setItem(key, JSON.stringify(list));
-                    window.dispatchEvent(new CustomEvent('uu-shared-users-updated', { detail: { users: list } }));
-                } catch (e) {
-                    console.error(e);
-                }
-            }
-
-            const collName =
-                (getCollection('SYS_USERS_CRUD') || []).length
-                    ? 'SYS_USERS_CRUD'
-                    : (getCollection('USERS_CRUD') || []).length
-                      ? 'USERS_CRUD'
-                      : null;
-            if (collName && user.id && !String(user.id).startsWith('user-')) {
-                const raw = user._raw || user;
-                await updateRecord(collName, user.id, {
-                    ...raw,
-                    username: user.username,
-                    role: roleNorm,
-                    system_role: roleNorm,
-                    role_id: role.id,
-                    role_name: roleKey,
-                });
-            }
-
-            // Sync active sessions
-            try {
-                const sessKey = 'uu_shared_session_v1';
-                const sess = JSON.parse(localStorage.getItem(sessKey) || 'null');
-                if (sess && String(sess.username).toLowerCase() === String(user.username).toLowerCase()) {
-                    localStorage.setItem(sessKey, JSON.stringify({ ...sess, role: roleNorm, system_role: roleNorm }));
-                }
-                const authKey = 'uu_auth_session_v1';
-                const authSess = JSON.parse(localStorage.getItem(authKey) || 'null');
-                if (authSess && String(authSess.username).toLowerCase() === String(user.username).toLowerCase()) {
-                    localStorage.setItem(authKey, JSON.stringify({ ...authSess, role: roleNorm, system_role: roleNorm }));
-                }
-            } catch (e) {}
-
-            setUserTick((t) => t + 1);
-            alert(`Role "${roleKey}" assigned to user "${user.username}".
-New role: ${roleNorm}
-Log out and log in again if the menu does not update immediately.`);
+            await updateRecord('HR_EMPLOYEE_CRUD', selectedEmployeeId, {
+                ...employee, 
+                role: selectedRoleId, 
+                system_role: role.roleName || role.name 
+            });
+            alert(`Role "${role.roleName || role.name}" assigned to ${employee.name}`);
+            setSelectedEmployeeId('');
             setSelectedRoleId('');
-            // keep username selected so Current role line updates
-            setSelectedUsername(user.username);
         } catch (error) {
-            console.error('Role assignment failed:', error);
-            alert('Role assignment failed. See console for details.');
+            console.error("Role assignment failed:", error);
+            alert("Role assignment failed. Please check the console for errors.");
         }
     };
 
+    const exportCSV = (slug) => {
+        const data = allData[slug] || [];
+        if (!data.length) return;
+        const csv = [Object.keys(data[0]).join(','), ...data.map(r => Object.values(r).join(','))].join(String.fromCharCode(10));
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a'); a.href = url; a.download = `${slug}.csv`; a.click();
+    };
+
     return (
-        <div className="space-y-6 pb-40">
+        <div className="space-y-6 pb-40"> 
             <ContainerCard glassClass={glassClass}>
                 <div className="p-6 space-y-6">
-                    <div>
-                        <h2 className="text-xl font-black text-white italic uppercase tracking-tight">Role Assignment</h2>
-                        <p className="text-[11px] text-cyan-300/80 font-bold uppercase tracking-widest mt-1">
-                            Assign roles to <span className="text-white">system users</span> (login accounts) — not HR staff names
-                        </p>
-                    </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div className="relative min-w-0">
+                        
+                        {/* EMPLOYEE SELECT */}
+                        <div className="relative">
                             <label className="text-cyan-400 text-[10px] font-bold mb-2 block uppercase tracking-widest">
-                                1. Select system user ({users.length} accounts)
+                                1. Select Staff Member ({employees.length} users found)
                             </label>
-                            <select
-                                className="w-full bg-black border border-white/20 rounded-xl p-4 text-white focus:border-cyan-500 outline-none cursor-pointer shadow-2xl [color-scheme:dark]"
-                                value={selectedUsername}
-                                onChange={(e) => setSelectedUsername(e.target.value)}
+                            <select 
+                                style={selectStyle} 
+                                className="w-full bg-black border border-white/20 rounded-xl p-4 text-white focus:border-cyan-500 outline-none cursor-pointer shadow-2xl"
+                                value={selectedEmployeeId}
+                                onChange={(e) => setSelectedEmployeeId(e.target.value)}
                             >
-                                <option value="">-- Select username --</option>
-                                {users.map((u) => (
-                                    <option key={u.username} value={u.username}>
-                                        {u.username}
-                                        {u.name && u.name !== u.username ? ` — ${u.name}` : ''}
-                                        {u.role ? ` [role: ${u.role}]` : ''}
+                                <option value="">-- Click to view list --</option> 
+                                {employees.map(emp => (
+                                    <option key={emp.id} value={emp.id}>
+                                        {/* FIXED THE CHARACTER ENCODING BELOW */}
+                                        {emp.name} - {emp.email || 'No Email'}
                                     </option>
                                 ))}
                             </select>
-                            {selectedUser && (
-                                <p className="mt-2 text-[10px] text-gray-400 font-mono">
-                                    Current role: <span className="text-cyan-300">{selectedUser.role || '—'}</span>
-                                </p>
-                            )}
                         </div>
-                        <div className="relative min-w-0">
+
+                        {/* ROLE SELECT */}
+                        <div className="relative">
                             <label className="text-cyan-400 text-[10px] font-bold mb-2 block uppercase tracking-widest">
-                                2. Choose permissions role
+                                2. Choose New Permissions Role
                             </label>
-                            <select
-                                className="w-full bg-black border border-white/20 rounded-xl p-4 text-white focus:border-cyan-500 outline-none cursor-pointer shadow-2xl [color-scheme:dark]"
+                            <select 
+                                style={selectStyle} 
+                                className="w-full bg-black border border-white/20 rounded-xl p-4 text-white focus:border-cyan-500 outline-none cursor-pointer shadow-2xl"
                                 value={selectedRoleId}
                                 onChange={(e) => setSelectedRoleId(e.target.value)}
                             >
-                                <option value="">-- Select role --</option>
-                                {roles.map((r) => (
-                                    <option key={r.id} value={r.id}>
-                                        {r.roleName || r.name || r.id}
+                                <option value="">-- Click to view roles --</option> 
+                                {roles.map(role => (
+                                    <option key={role.id} value={role.id}>
+                                        {role.roleName || role.name}
                                     </option>
                                 ))}
                             </select>
                         </div>
                     </div>
-                    <div className="flex flex-wrap gap-3">
-                        <button
-                            type="button"
-                            onClick={handleAssignment}
-                            className="px-6 py-3 rounded-xl text-xs font-black uppercase bg-cyan-600 text-white hover:bg-cyan-500 shadow-lg shadow-cyan-900/40"
-                        >
-                            Assign role to user
-                        </button>
-                    </div>
-                    <div className="overflow-x-auto rounded-xl border border-white/10">
-                        <table className="w-full text-left text-sm min-w-[480px]">
-                            <thead className="bg-slate-950 text-[10px] uppercase font-black tracking-widest text-cyan-400">
-                                <tr>
-                                    <th className="p-3">Username</th>
-                                    <th className="p-3">Display name</th>
-                                    <th className="p-3">Current role</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-white/5">
-                                {users.map((u) => (
-                                    <tr key={u.username} className="hover:bg-white/[0.03]">
-                                        <td className="p-3 font-mono text-cyan-300">{u.username}</td>
-                                        <td className="p-3 text-gray-200">{u.name || '—'}</td>
-                                        <td className="p-3 text-gray-300">{u.role || '—'}</td>
-                                    </tr>
-                                ))}
-                                {!users.length && (
-                                    <tr>
-                                        <td colSpan={3} className="p-6 text-center text-gray-500 text-xs uppercase">
-                                            No system users found. Create users first, then assign roles here.
+
+                    <button 
+                        onClick={handleAssignment}
+                        className="w-full bg-cyan-600 hover:bg-cyan-500 py-4 rounded-xl font-black text-white transition-all shadow-lg flex items-center justify-center gap-2 uppercase tracking-tighter"
+                    >
+                        <Icons.UserCheck className="w-5 h-5" /> Confirm Role Assignment
+                    </button>
+                </div>
+            </ContainerCard>
+
+            <ContainerCard glassClass={glassClass}>
+                <div className="p-4">
+                    <table className="w-full text-left">
+                        <thead>
+                            <tr className="text-gray-500 text-[10px] uppercase border-b border-white/10">
+                                <th className="p-3">Staff</th>
+                                <th className="p-3">Current Role</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/5">
+                            {employees.length === 0 ? (
+                                <tr><td colSpan="2" className="p-4 text-center text-gray-500">No users in database.</td></tr>
+                            ) : (
+                                employees.map(emp => (
+                                    <tr key={emp.id} className="hover:bg-white/5 transition-colors">
+                                        <td className="p-3 text-white font-medium">{emp.name}</td>
+                                        <td className="p-3">
+                                            <span className="bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 px-2 py-1 rounded text-xs">
+                                                {emp.system_role || emp.role || 'N/A'}
+                                            </span>
                                         </td>
                                     </tr>
-                                )}
-                            </tbody>
-                        </table>
-                    </div>
+                                ))
+                            )}
+                        </tbody>
+                    </table>
                 </div>
             </ContainerCard>
         </div>
     );
 };
+// 1. STANDALONE HELPER FUNCTION (Fixes the ReferenceError)
+const findMenuItemTitle = (items, currentId) => {
+    if (!items || !Array.isArray(items)) return null;
+    for (const item of items) {
+        if (item.id === currentId) return item.label || item.title;
+        if (item.children) {
+            const childTitle = findMenuItemTitle(item.children, currentId);
+            if (childTitle) return childTitle;
+        }
+    }
+    return null;
+};
 
+// 2. MODIFIED RENDERVIEW - FIXED ACCESS DENIED & MODULE ROUTING
+const cleanAccNo = (id) => (id ? id.toString().replace(/^acc-/i, '') : '');
 
+export const getDefaultCOA = () => [
+    { id: '1010', desc: 'Cash and Cash Equivalents', type: 'Asset', group: 'Current Assets' },
+    { id: '1020', desc: 'Accounts Receivable', type: 'Asset', group: 'Current Assets' },
+    { id: '1500', desc: 'Equipment & Machinery', type: 'Asset', group: 'Non-Current Assets' },
+    { id: '2010', desc: 'Accounts Payable', type: 'Liability', group: 'Current Liabilities' },
+    { id: '2500', desc: 'Long-term Bank Loans', type: 'Liability', group: 'Non-Current Liabilities' },
+    { id: '3010', desc: 'Common Stock / Equity', type: 'Equity', group: 'Equity' },
+    { id: '4010', desc: 'Operating Revenue & Sales', type: 'Revenue', group: 'Revenue' },
+    { id: '5010', desc: 'General & Administrative Expenses', type: 'Expense', group: 'Operating Expenses' }
+];
 
+export const getTypicalMockTransactions = () => {
+    // BACKEND-ONLY: no offline demo ledger. Books come from Postgres via API bootstrap.
+    return [];
+};
 
 
 const isDebitNormalType = (typeStr) => {
@@ -20919,7 +21758,6 @@ export const FIN_TB_DISPLAY = ({ data, coaData, glassClass }) => {
     const [startDate, setStartDate] = useState('');
     const [endDate, setEndDate] = useState('');
     const [typeFilter, setTypeFilter] = useState('All');
-    const typeOptions = useMemo(() => ['All', 'Asset', 'Liability', 'Equity', 'Revenue', 'Expense'], []);
     // default false so material postings are visible even if still investigating balances
     const [onlyNonZero, setOnlyNonZero] = useState(true); // TB: only accounts with Single TX / Journal amounts
     /** net = one side per account (standard TB); gross = show both period Dr and Cr columns */
@@ -21093,110 +21931,34 @@ export const FIN_TB_DISPLAY = ({ data, coaData, glassClass }) => {
                 </div>
             </div>
 
-            <div className={`rounded-[1.75rem] ${glassClass} border border-white/10 bg-slate-950/95 overflow-visible`}>
-                <div className="p-4 sm:p-6 space-y-4">
-                    <p className="text-[10px] font-black uppercase tracking-widest text-cyan-400/90">Filters · Trial Balance</p>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div className="min-w-0 space-y-1.5">
-                            <label className="block text-[10px] font-black uppercase tracking-wider text-gray-400">Search accounts</label>
-                            <div className="relative">
-                                <Icons.Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-cyan-400/70 pointer-events-none" />
-                                <input
-                                    type="text"
-                                    placeholder="Code or designation…"
-                                    className="w-full max-w-full box-border pl-10 pr-3 py-2.5 rounded-xl bg-black/70 border border-cyan-500/30 text-white text-sm outline-none focus:ring-2 focus:ring-cyan-500/40 min-h-[44px]"
-                                    value={q}
-                                    onChange={e => setQ(e.target.value)}
-                                />
-                            </div>
-                        </div>
-                        <div className="min-w-0 space-y-1.5">
-                            <label className="block text-[10px] font-black uppercase tracking-wider text-gray-400">Account type</label>
-                            <UUSelect
-                                value={typeFilter}
-                                onChange={setTypeFilter}
-                                options={typeOptions}
-                                allLabel="All account types"
-                                className="w-full max-w-full block"
-                            />
-                        </div>
-                        <div className="min-w-0 space-y-1.5">
-                            <label className="block text-[10px] font-black uppercase tracking-wider text-gray-400">Balance mode</label>
-                            <UUSelect
-                                value={tbMode}
-                                onChange={setTbMode}
-                                options={[
-                                    { value: 'net', label: 'Net (standard TB)' },
-                                    { value: 'gross', label: 'Gross (Dr + Cr columns)' },
-                                ]}
-                                allLabel="Net (standard TB)"
-                                className="w-full max-w-full block"
-                            />
-                        </div>
-                        <div className="min-w-0 space-y-1.5 flex flex-col justify-end">
-                            <label className="flex items-center gap-2 py-2.5 px-3 rounded-xl bg-black/50 border border-white/15 text-[11px] text-gray-200 font-bold uppercase cursor-pointer min-h-[44px]">
-                                <input type="checkbox" checked={onlyNonZero} onChange={e => setOnlyNonZero(e.target.checked)} className="accent-cyan-500 w-4 h-4 shrink-0" />
-                                Non-zero only
-                            </label>
-                        </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pt-1 border-t border-white/10">
-                        <div className="min-w-0 space-y-1.5">
-                            <label className="block text-[10px] font-black uppercase tracking-wider text-gray-400">Period from</label>
-                            <input
-                                type="date"
-                                value={startDate}
-                                onChange={e => setStartDate(e.target.value)}
-                                className="w-full max-w-full box-border py-2.5 px-3 rounded-xl bg-black/70 border border-white/20 text-white text-sm min-h-[44px] outline-none focus:ring-2 focus:ring-cyan-500/30 [color-scheme:dark]"
-                            />
-                        </div>
-                        <div className="min-w-0 space-y-1.5">
-                            <label className="block text-[10px] font-black uppercase tracking-wider text-gray-400">Period to</label>
-                            <input
-                                type="date"
-                                value={endDate}
-                                onChange={e => setEndDate(e.target.value)}
-                                className="w-full max-w-full box-border py-2.5 px-3 rounded-xl bg-black/70 border border-white/20 text-white text-sm min-h-[44px] outline-none focus:ring-2 focus:ring-cyan-500/30 [color-scheme:dark]"
-                            />
-                        </div>
-                        <div className="min-w-0 flex items-end">
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    const now = new Date();
-                                    const y = now.getFullYear();
-                                    const m = String(now.getMonth() + 1).padStart(2, '0');
-                                    setStartDate(`${y}-${m}-01`);
-                                    setEndDate(`${y}-${m}-${String(new Date(y, now.getMonth() + 1, 0).getDate()).padStart(2, '0')}`);
-                                }}
-                                className="w-full py-2.5 rounded-xl text-[10px] font-black uppercase bg-cyan-500/15 text-cyan-300 border border-cyan-500/25 min-h-[44px] hover:bg-cyan-500/25"
-                            >
-                                This month
-                            </button>
-                        </div>
-                        <div className="min-w-0 flex items-end">
-                            {(q || typeFilter !== 'All' || startDate || endDate || !onlyNonZero || tbMode !== 'net') ? (
-                                <button
-                                    type="button"
-                                    onClick={() => { setQ(''); setTypeFilter('All'); setStartDate(''); setEndDate(''); setOnlyNonZero(true); setTbMode('net'); }}
-                                    className="w-full py-2.5 rounded-xl text-[10px] font-black uppercase bg-rose-500/15 text-rose-300 border border-rose-500/25 min-h-[44px] hover:bg-rose-500/25"
-                                >
-                                    Clear filters
-                                </button>
-                            ) : (
-                                <div className="w-full min-h-[44px]" />
-                            )}
-                        </div>
-                    </div>
-
-                    {(startDate || endDate) && (
-                        <p className="text-[10px] text-cyan-300/70 font-bold m-0">
-                            Period: {startDate || '…'} → {endDate || '…'} · Single TX + Journal in range
-                        </p>
-                    )}
+            <div className={`p-5 rounded-[1.75rem] ${glassClass} border border-white/10 bg-black/40 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-12 gap-3`}>
+                <div className="xl:col-span-4 relative">
+                    <Icons.Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-cyan-400/70" />
+                    <input
+                        type="text"
+                        placeholder="Search account code or designation..."
+                        className="w-full pl-10 pr-4 py-3 rounded-xl bg-black/60 border border-cyan-500/30 text-white text-sm outline-none focus:ring-2 focus:ring-cyan-500/40"
+                        value={q}
+                        onChange={e => setQ(e.target.value)}
+                    />
                 </div>
+                <select value={typeFilter} onChange={e => setTypeFilter(e.target.value)} className="xl:col-span-2 py-3 px-3 rounded-xl bg-black/60 border border-white/15 text-white text-xs outline-none">
+                    {types.map(t => <option key={t} value={t}>{t === 'All' ? 'All Types' : t}</option>)}
+                </select>
+                <div className="xl:col-span-3 flex items-center gap-2">
+                    <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="flex-1 py-3 px-2 rounded-xl bg-black/60 border border-white/15 text-white text-[11px]" />
+                    <span className="text-gray-600 text-xs">→</span>
+                    <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="flex-1 py-3 px-2 rounded-xl bg-black/60 border border-white/15 text-white text-[11px]" />
+                </div>
+                <label className="xl:col-span-2 flex items-center gap-2 py-3 px-3 rounded-xl bg-black/40 border border-white/10 text-[10px] text-gray-300 font-bold uppercase cursor-pointer">
+                    <input type="checkbox" checked={onlyNonZero} onChange={e => setOnlyNonZero(e.target.checked)} className="accent-cyan-500" />
+                    Non-zero only
+                </label>
+                {(q || typeFilter !== 'All' || startDate || endDate || onlyNonZero) && (
+                    <button type="button" onClick={() => { setQ(''); setTypeFilter('All'); setStartDate(''); setEndDate(''); setOnlyNonZero(false); }} className="xl:col-span-1 py-3 rounded-xl text-[10px] font-black uppercase bg-rose-500/15 text-rose-400 border border-rose-500/20">
+                        Clear
+                    </button>
+                )}
             </div>
 
             <div className="overflow-hidden rounded-[1.75rem] border border-white/10 bg-black/50 shadow-2xl">
@@ -21257,60 +22019,11 @@ export const FIN_GL_DISPLAY = ({ data, coaData, glassClass }) => {
     const [searchTerm, setSearchTerm] = useState('');
     const [accountQuery, setAccountQuery] = useState('');
     const [accountPickerOpen, setAccountPickerOpen] = useState(false);
-    const [accountMenuBox, setAccountMenuBox] = useState(null);
-    const accountBtnRef = useRef(null);
-    const accountPickerRef = useRef(null);
     const [startDate, setStartDate] = useState('');
     const [endDate, setEndDate] = useState('');
     const [typeFilter, setTypeFilter] = useState('All');
     const [expandedAccounts, setExpandedAccounts] = useState({});
     const [sortMode, setSortMode] = useState('code'); // code | name | balance
-    const typeOptions = useMemo(() => ['All', 'Asset', 'Liability', 'Equity', 'Revenue', 'Expense'], []);
-    const sortOptions = useMemo(() => [
-        { value: 'code', label: 'Sort by account code' },
-        { value: 'name', label: 'Sort by account name' },
-        { value: 'balance', label: 'Sort by balance' },
-    ], []);
-
-    useEffect(() => {
-        if (!accountPickerOpen) {
-            setAccountMenuBox(null);
-            return undefined;
-        }
-        const place = () => {
-            const el = accountBtnRef.current;
-            if (!el) return;
-            const r = el.getBoundingClientRect();
-            const gap = 4;
-            const maxH = 360;
-            const spaceBelow = window.innerHeight - r.bottom - gap;
-            const spaceAbove = r.top - gap;
-            const openUp = spaceBelow < 180 && spaceAbove > spaceBelow;
-            const height = Math.min(maxH, Math.max(160, openUp ? spaceAbove : spaceBelow));
-            const width = Math.min(Math.max(r.width, 280), Math.min(window.innerWidth - 16, 560));
-            let left = r.left;
-            if (left + width > window.innerWidth - 8) left = Math.max(8, window.innerWidth - width - 8);
-            if (left < 8) left = 8;
-            const top = openUp ? Math.max(8, r.top - gap - height) : r.bottom + gap;
-            setAccountMenuBox({ top, left, width, maxHeight: height });
-        };
-        place();
-        const onDoc = (e) => {
-            if (accountBtnRef.current && accountBtnRef.current.contains(e.target)) return;
-            if (e.target && e.target.closest && e.target.closest('[data-uu-gl-account-menu]')) return;
-            setAccountPickerOpen(false);
-        };
-        document.addEventListener('mousedown', onDoc);
-        document.addEventListener('touchstart', onDoc);
-        window.addEventListener('resize', place);
-        window.addEventListener('scroll', place, true);
-        return () => {
-            document.removeEventListener('mousedown', onDoc);
-            document.removeEventListener('touchstart', onDoc);
-            window.removeEventListener('resize', place);
-            window.removeEventListener('scroll', place, true);
-        };
-    }, [accountPickerOpen]);
 
     const isValidCode = (code) => /^\d{4}-\d{2}-\d{2}$/.test(String(code || '').trim());
     const cleanCode = (id) => String(id || '').replace(/^acc-/i, '').trim();
@@ -21594,96 +22307,57 @@ export const FIN_GL_DISPLAY = ({ data, coaData, glassClass }) => {
                 </div>
             </div>
 
-            {/* Filters — contained inside card, no overflow outside */}
-            <div className={`rounded-[1.75rem] ${glassClass} border border-white/10 bg-slate-950/95 overflow-visible`}>
-                <div className="p-4 sm:p-6 space-y-4">
-                    <p className="text-[10px] font-black uppercase tracking-widest text-cyan-400/90">Filters · General Ledger</p>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                        <div className="min-w-0 space-y-1.5 sm:col-span-2 lg:col-span-1">
-                            <label className="block text-[10px] font-black uppercase tracking-wider text-gray-400">Search ledger</label>
-                            <div className="relative">
-                                <Icons.Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-cyan-400/70 pointer-events-none" />
-                                <input
-                                    type="text"
-                                    placeholder="Code, account, narration, partner…"
-                                    value={searchTerm}
-                                    onChange={(e) => setSearchTerm(e.target.value)}
-                                    className="w-full max-w-full box-border pl-10 pr-3 py-2.5 rounded-xl bg-black/70 border border-cyan-500/30 text-white text-sm outline-none focus:ring-2 focus:ring-cyan-500/40 min-h-[44px]"
-                                />
-                            </div>
-                        </div>
-                        <div className="min-w-0 space-y-1.5">
-                            <label className="block text-[10px] font-black uppercase tracking-wider text-gray-400">Account type</label>
-                            <UUSelect
-                                value={typeFilter}
-                                onChange={setTypeFilter}
-                                options={(typeof typeOptions !== 'undefined' && typeOptions?.length) ? typeOptions : ['All', 'Asset', 'Liability', 'Equity', 'Revenue', 'Expense']}
-                                allLabel="All account types"
-                                className="w-full max-w-full block"
-                            />
-                        </div>
-                        <div className="min-w-0 space-y-1.5">
-                            <label className="block text-[10px] font-black uppercase tracking-wider text-gray-400">Sort</label>
-                            <UUSelect
-                                value={sortMode}
-                                onChange={setSortMode}
-                                options={sortOptions}
-                                allLabel="Sort mode"
-                                className="w-full max-w-full block"
-                            />
-                        </div>
+            {/* Filters — search + searchable account picker */}
+            <div className={`p-5 rounded-[1.75rem] ${glassClass} border border-white/10 bg-black/40 space-y-3`}>
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-12 gap-3">
+                    <div className="xl:col-span-4 relative">
+                        <Icons.Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-cyan-400/70 pointer-events-none" />
+                        <input
+                            type="text"
+                            placeholder="Search code, account, narration, partner, ref..."
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                            className="w-full pl-10 pr-4 py-3 rounded-xl bg-black/60 border border-cyan-500/30 text-white text-sm outline-none focus:ring-2 focus:ring-cyan-500/40 shadow-inner"
+                        />
                     </div>
 
-                    <div className="min-w-0 space-y-1.5 relative" ref={accountPickerRef}>
-                        <label className="block text-[10px] font-black uppercase tracking-wider text-gray-400">Account</label>
+                    {/* Searchable account selector (not a 700-item native select) */}
+                    <div className="xl:col-span-4 relative">
                         <button
                             type="button"
-                            ref={accountBtnRef}
-                            onClick={() => setAccountPickerOpen((o) => !o)}
-                            className="w-full max-w-full box-border py-2.5 px-3 rounded-xl bg-black/70 border border-white/20 text-white text-sm outline-none flex items-center justify-between gap-2 hover:border-cyan-500/40 min-h-[44px]"
+                            onClick={() => setAccountPickerOpen(o => !o)}
+                            className="w-full py-3 px-3 rounded-xl bg-black/60 border border-white/15 text-white text-xs outline-none flex items-center justify-between gap-2 hover:border-cyan-500/40"
                         >
-                            <span className="truncate text-left font-mono text-[12px] sm:text-sm">
+                            <span className="truncate text-left font-mono">
                                 {selectedAccount === 'All'
                                     ? `All Accounts (${Object.keys(ledgerData).length})`
                                     : `${ledgerData[selectedAccount]?.meta?.account_no || ''} — ${ledgerData[selectedAccount]?.meta?.name || selectedAccount}`}
                             </span>
                             <Icons.ChevronDown className={`w-4 h-4 shrink-0 text-cyan-400 transition-transform ${accountPickerOpen ? 'rotate-180' : ''}`} />
                         </button>
-                        {accountPickerOpen && accountMenuBox && createPortal(
-                            <div
-                                data-uu-gl-account-menu="1"
-                                className="overflow-hidden rounded-xl border border-cyan-500/40 bg-slate-950 shadow-2xl shadow-black/80"
-                                style={{
-                                    position: 'fixed',
-                                    top: accountMenuBox.top,
-                                    left: accountMenuBox.left,
-                                    width: accountMenuBox.width,
-                                    maxHeight: accountMenuBox.maxHeight,
-                                    zIndex: 2147483646,
-                                }}
-                            >
-                                <div className="p-2 border-b border-white/10 bg-slate-950 sticky top-0 z-10">
+                        {accountPickerOpen && (
+                            <div className="absolute z-50 mt-2 w-full max-h-80 overflow-hidden rounded-2xl border border-cyan-500/30 bg-slate-950 shadow-2xl">
+                                <div className="p-2 border-b border-white/10 sticky top-0 bg-slate-950">
                                     <input
                                         autoFocus
                                         type="text"
-                                        placeholder="Filter by code or name…"
+                                        placeholder="Type code or name to filter accounts..."
                                         value={accountQuery}
                                         onChange={(e) => setAccountQuery(e.target.value)}
-                                        className="w-full max-w-full box-border py-2 px-3 rounded-lg bg-black/70 border border-white/10 text-white text-sm outline-none focus:ring-1 focus:ring-cyan-500/50"
+                                        className="w-full py-2 px-3 rounded-xl bg-black/70 border border-white/10 text-white text-xs outline-none focus:ring-1 focus:ring-cyan-500/50"
                                     />
                                 </div>
-                                <div className="overflow-y-auto custom-scrollbar" style={{ maxHeight: Math.max(120, (accountMenuBox.maxHeight || 320) - 56) }}>
+                                <div className="max-h-64 overflow-y-auto custom-scrollbar">
                                     <button
                                         type="button"
-                                        className={`w-full text-left px-3 py-2.5 text-sm hover:bg-cyan-500/15 border-b border-white/5 ${selectedAccount === 'All' ? 'bg-cyan-500/20 text-cyan-300' : 'text-gray-300'}`}
+                                        className={`w-full text-left px-3 py-2.5 text-xs hover:bg-cyan-500/15 border-b border-white/5 ${selectedAccount === 'All' ? 'bg-cyan-500/20 text-cyan-300' : 'text-gray-300'}`}
                                         onClick={() => { setSelectedAccount('All'); setAccountPickerOpen(false); setAccountQuery(''); }}
                                     >
-                                        <span className="font-black uppercase tracking-wider text-[11px]">All Accounts</span>
+                                        <span className="font-black uppercase tracking-wider">All Accounts</span>
                                         <span className="text-gray-500 ml-2">({Object.keys(ledgerData).length})</span>
                                     </button>
                                     {Object.keys(ledgerData)
-                                        .filter((k) => {
+                                        .filter(k => {
                                             const q = accountQuery.trim().toLowerCase();
                                             if (!q) return true;
                                             const m = ledgerData[k].meta;
@@ -21692,74 +22366,66 @@ export const FIN_GL_DISPLAY = ({ data, coaData, glassClass }) => {
                                                 || String(m.type || '').toLowerCase().includes(q);
                                         })
                                         .sort((a, b) => String(ledgerData[a].meta.account_no).localeCompare(String(ledgerData[b].meta.account_no), undefined, { numeric: true }))
-                                        .slice(0, 400)
-                                        .map((k) => {
+                                        .slice(0, 200)
+                                        .map(k => {
                                             const m = ledgerData[k].meta;
-                                            const active = selectedAccount === k;
                                             return (
                                                 <button
                                                     key={k}
                                                     type="button"
-                                                    className={`w-full text-left px-3 py-2.5 text-sm hover:bg-cyan-500/15 border-b border-white/5 flex items-center gap-2 ${active ? 'bg-cyan-500/20 text-cyan-200' : 'text-gray-300'}`}
+                                                    className={`w-full text-left px-3 py-2 text-xs hover:bg-cyan-500/10 border-b border-white/5 flex gap-2 items-start ${selectedAccount === k ? 'bg-cyan-500/20' : ''}`}
                                                     onClick={() => { setSelectedAccount(k); setAccountPickerOpen(false); setAccountQuery(''); }}
                                                 >
                                                     <span className="font-mono text-cyan-400 font-bold shrink-0 w-28">{m.account_no || '—'}</span>
-                                                    <span className="text-gray-200 truncate flex-1">{m.name || '—'}</span>
-                                                    <span className="text-[10px] text-gray-500 shrink-0">{m.type || ''}</span>
+                                                    <span className="text-gray-200 truncate flex-1">{m.name}</span>
+                                                    <span className="text-[9px] text-gray-500 uppercase shrink-0">{m.type}</span>
                                                 </button>
                                             );
                                         })}
                                 </div>
-                            </div>,
-                            document.body
+                                <div className="p-2 text-[9px] text-gray-500 border-t border-white/10 text-center">
+                                    Type to filter · showing up to 200 matches
+                                </div>
+                            </div>
                         )}
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pt-1 border-t border-white/10">
-                        <div className="min-w-0 space-y-1.5">
-                            <label className="block text-[10px] font-black uppercase tracking-wider text-gray-400">Period from</label>
-                            <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-full max-w-full box-border py-2.5 px-3 rounded-xl bg-black/70 border border-white/20 text-white text-sm min-h-[44px] outline-none focus:ring-2 focus:ring-cyan-500/30 [color-scheme:dark]" />
-                        </div>
-                        <div className="min-w-0 space-y-1.5">
-                            <label className="block text-[10px] font-black uppercase tracking-wider text-gray-400">Period to</label>
-                            <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="w-full max-w-full box-border py-2.5 px-3 rounded-xl bg-black/70 border border-white/20 text-white text-sm min-h-[44px] outline-none focus:ring-2 focus:ring-cyan-500/30 [color-scheme:dark]" />
-                        </div>
-                        <div className="min-w-0 flex items-end">
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    const now = new Date();
-                                    const y = now.getFullYear();
-                                    const m = String(now.getMonth() + 1).padStart(2, '0');
-                                    setStartDate(`${y}-${m}-01`);
-                                    setEndDate(`${y}-${m}-${String(new Date(y, now.getMonth() + 1, 0).getDate()).padStart(2, '0')}`);
-                                }}
-                                className="w-full py-2.5 rounded-xl text-[10px] font-black uppercase bg-cyan-500/15 text-cyan-300 border border-cyan-500/25 min-h-[44px] hover:bg-cyan-500/25"
-                            >
-                                This month
-                            </button>
-                        </div>
-                        <div className="min-w-0 flex items-end gap-2">
-                            {(searchTerm || selectedAccount !== 'All' || typeFilter !== 'All' || startDate || endDate) && (
-                                <button
-                                    type="button"
-                                    onClick={() => { setSearchTerm(''); setSelectedAccount('All'); setTypeFilter('All'); setStartDate(''); setEndDate(''); setAccountQuery(''); }}
-                                    className="flex-1 py-2.5 rounded-xl text-[10px] font-black uppercase bg-rose-500/15 text-rose-300 border border-rose-500/25 min-h-[44px] hover:bg-rose-500/25"
-                                >
-                                    Clear
-                                </button>
-                            )}
-                            <span className="text-[10px] text-gray-500 font-mono py-2 whitespace-nowrap">
-                                <span className="text-cyan-400 font-bold">{accountKeys.length}</span> acct
-                            </span>
-                        </div>
+                    <select
+                        value={typeFilter}
+                        onChange={(e) => setTypeFilter(e.target.value)}
+                        className="xl:col-span-2 py-3 px-3 rounded-xl bg-black/60 border border-white/15 text-white text-xs outline-none"
+                    >
+                        {accountTypes.map(t => <option key={t} value={t}>{t === 'All' ? 'All Types' : t}</option>)}
+                    </select>
+                    <select
+                        value={sortMode}
+                        onChange={(e) => setSortMode(e.target.value)}
+                        className="xl:col-span-2 py-3 px-3 rounded-xl bg-black/60 border border-white/15 text-white text-xs outline-none"
+                    >
+                        <option value="code">Sort: Account Code</option>
+                        <option value="name">Sort: Account Name</option>
+                        <option value="balance">Sort: Balance</option>
+                    </select>
+                </div>
+                <div className="flex flex-wrap items-center gap-3">
+                    <div className="flex items-center gap-2">
+                        <span className="text-[9px] text-gray-500 font-black uppercase">From</span>
+                        <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="py-2 px-2 rounded-xl bg-black/60 border border-white/15 text-white text-[11px]" />
+                        <span className="text-[9px] text-gray-500 font-black uppercase">To</span>
+                        <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="py-2 px-2 rounded-xl bg-black/60 border border-white/15 text-white text-[11px]" />
                     </div>
-
-                    {(startDate || endDate) && (
-                        <p className="text-[10px] text-cyan-300/70 font-bold m-0">
-                            Period: {startDate || '…'} → {endDate || '…'} · activity in range only
-                        </p>
+                    {(searchTerm || selectedAccount !== 'All' || typeFilter !== 'All' || startDate || endDate) && (
+                        <button
+                            type="button"
+                            onClick={() => { setSearchTerm(''); setSelectedAccount('All'); setTypeFilter('All'); setStartDate(''); setEndDate(''); setAccountQuery(''); }}
+                            className="px-3 py-1.5 rounded-lg text-[10px] font-black uppercase bg-rose-500/15 text-rose-400 border border-rose-500/20 hover:bg-rose-500/25"
+                        >
+                            Clear filters
+                        </button>
                     )}
+                    <span className="text-[10px] text-gray-500 ml-auto font-mono">
+                        Showing <span className="text-cyan-400 font-bold">{accountKeys.length}</span> account(s)
+                    </span>
                 </div>
             </div>
 
@@ -21959,7 +22625,7 @@ export const FIN_GL_DISPLAY = ({ data, coaData, glassClass }) => {
 // --- Export Utility Functions ---
 // const generateRobustWorkbook = async (rows, filename) => {
 //     const csvContent = "data:text/csv;charset=utf-8," 
-//         + ["Account Designation,Notes,Amount (ETB)"].concat(rows.map(r => `"${r.label}","${r.note || ''}",${r.amount || 0}`)).join("\n");
+//         + ["Account Designation,Notes,Amount (ETB)"].concat(rows.map(r => `"${r.label}","${r.note || ''}",${r.amount || 0}`)).join(String.fromCharCode(10));
 //     const encodedUri = encodeURI(csvContent);
 //     const link = document.createElement("a");
 //     link.setAttribute("href", encodedUri);
@@ -21981,7 +22647,7 @@ export const FIN_GL_DISPLAY = ({ data, coaData, glassClass }) => {
 
 // const generateRobustCSV = (rows, filename) => {
 //     const csvContent = "data:text/csv;charset=utf-8," 
-//         + ["Account Designation,Notes,Amount (ETB)"].concat(rows.map(r => `"${r.label}","${r.note || ''}",${r.amount || 0}`)).join("\n");
+//         + ["Account Designation,Notes,Amount (ETB)"].concat(rows.map(r => `"${r.label}","${r.note || ''}",${r.amount || 0}`)).join(String.fromCharCode(10));
 //     const encodedUri = encodeURI(csvContent);
 //     const link = document.createElement("a");
 //     link.setAttribute("href", encodedUri);
@@ -22234,241 +22900,11 @@ export const FIN_STATEMENTS_DISPLAY = ({ glassClass, viewId, ledgerEntries, payr
         return reportEngine.rows.filter(r => (r.label || '').toLowerCase().includes(q));
     }, [reportEngine, searchTerm]);
 
-    
-    /** Full-statement print: robust iframe report for FP / P&L / Cash Flow (no popup dependency). */
-    const printFullStatement = React.useCallback(() => {
-        const rows = (reportEngine && Array.isArray(reportEngine.rows) && reportEngine.rows.length)
-            ? reportEngine.rows
-            : (activeRows || []);
-        if (!rows.length) {
-            try { alert('No statement lines to print.'); } catch (e) {}
-            return;
-        }
-        const title = (reportEngine && reportEngine.title) || 'Financial Statement';
-        const subtitle = (reportEngine && reportEngine.subtitle) || 'Institutional financial report';
-        const periodFrom = startDate || 'Opening';
-        const periodTo = endDate || new Date().toISOString().slice(0, 10);
-        const printedAt = new Date().toLocaleString();
-        const stmtId = 'UU-FS-' + Date.now().toString(36).toUpperCase();
-
-        const esc = (s) => String(s == null ? '' : s)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;');
-
-        const money = (v) => {
-            if (v == null || v === '') return '';
-            const n = Number(v);
-            if (!Number.isFinite(n)) return '';
-            const abs = Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-            return n < 0 ? ('(' + abs + ')') : abs;
-        };
-
-        let lineCount = 0;
-        let amountSum = 0;
-        rows.forEach((r) => {
-            if (r && r.amount != null && r.amount !== '' && !r.isHeader) {
-                lineCount += 1;
-                amountSum += Number(r.amount) || 0;
-            }
-        });
-
-        const rowHtml = rows.map((r, idx) => {
-            const isHdr = !!r.isHeader;
-            const isTot = !!(r.isTotal || r.isGrandTotal);
-            const indent = Math.max(0, Number(r.indent) || 0);
-            const pad = 10 + indent * 16;
-            const amtCur = (!isHdr && r.amount != null && r.amount !== '') ? money(r.amount) : '';
-            const priorRaw = r.prior != null ? r.prior : (r.previous != null ? r.previous : r.amount_prior);
-            const amtPrior = (!isHdr && priorRaw != null && priorRaw !== '') ? money(priorRaw) : '';
-            const labelCls = isHdr || isTot || r.isBold ? 'lab bold' : (r.isItalic ? 'lab ital' : 'lab');
-            const trCls = isHdr ? 'hdr' : (r.isGrandTotal ? 'grand' : (isTot ? 'tot' : (idx % 2 ? 'alt' : '')));
-            return (
-                '<tr class="' + trCls + '">' +
-                '<td class="ln">' + (isHdr ? '' : String(idx + 1)) + '</td>' +
-                '<td class="' + labelCls + '" style="padding-left:' + pad + 'px">' + esc(r.label) + '</td>' +
-                '<td class="note">' + esc(r.note || '') + '</td>' +
-                '<td class="amt">' + esc(amtCur) + '</td>' +
-                '<td class="amt muted">' + esc(amtPrior) + '</td>' +
-                '</tr>'
-            );
-        }).join('');
-
-        const html = '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/>' +
-'<meta name="viewport" content="width=device-width, initial-scale=1"/>' +
-'<title>' + esc(title) + ' · Unity University</title><style>' +
-'@page{size:A4 portrait;margin:12mm 10mm 14mm 10mm}' +
-'*{box-sizing:border-box}' +
-'html,body{margin:0;padding:0;background:#fff;color:#0f172a;font-family:"Segoe UI",Arial,sans-serif;' +
-'-webkit-print-color-adjust:exact;print-color-adjust:exact}' +
-'.toolbar{position:sticky;top:0;z-index:50;display:flex;flex-wrap:wrap;gap:10px;align-items:center;' +
-'justify-content:space-between;padding:12px 16px;background:#0f172a;color:#f8fafc}' +
-'.toolbar .hint{font-size:11px;color:#94a3b8;max-width:460px;line-height:1.4}' +
-'.toolbar button{border:0;border-radius:8px;padding:9px 16px;font-weight:700;font-size:12px;cursor:pointer}' +
-'.btn-print{background:#0891b2;color:#fff}.btn-close{background:#334155;color:#e2e8f0}' +
-'.sheet{max-width:190mm;margin:0 auto;padding:10mm 8mm 8mm}' +
-'.entity{display:grid;grid-template-columns:1fr auto;gap:12px;border-bottom:3px solid #0e7490;padding-bottom:10px;margin-bottom:12px}' +
-'.entity h1{margin:0;font-size:15pt;font-weight:800;color:#0e7490;text-transform:uppercase;letter-spacing:.03em}' +
-'.entity .org-sub{margin:3px 0 0;font-size:8.5pt;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#475569}' +
-'.entity .org-meta{margin:4px 0 0;font-size:8pt;color:#64748b;line-height:1.4}' +
-'.entity-badge{text-align:right;font-size:8pt;color:#64748b}' +
-'.entity-badge strong{display:block;font-size:9pt;color:#0f172a;margin-bottom:2px}' +
-'h2.stmt{margin:10px 0 2px;text-align:center;font-size:13pt;font-weight:800;text-transform:uppercase;letter-spacing:.06em}' +
-'.stmt-sub{text-align:center;font-size:8.5pt;color:#64748b;margin:0 0 8px}' +
-'.period-box{display:flex;flex-wrap:wrap;justify-content:center;gap:14px 24px;margin:0 0 12px;padding:8px 12px;' +
-'background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;font-size:9pt}' +
-'.period-box span{color:#64748b}.period-box strong{color:#0f172a}' +
-'.summary-strip{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}' +
-'.summary-strip .cell{border:1px solid #e2e8f0;border-radius:6px;padding:8px 10px;background:#f8fafc}' +
-'.summary-strip .cell label{display:block;font-size:7.5pt;text-transform:uppercase;letter-spacing:.08em;color:#64748b;margin-bottom:2px}' +
-'.summary-strip .cell strong{font-size:10pt;color:#0f172a;font-variant-numeric:tabular-nums}' +
-'table.stmt{width:100%;border-collapse:collapse;font-size:9pt}' +
-'table.stmt thead th{background:#0e7490;color:#fff;text-align:left;padding:7px 8px;font-size:7.5pt;' +
-'text-transform:uppercase;letter-spacing:.05em;border:1px solid #0e7490}' +
-'table.stmt thead th.r{text-align:right}table.stmt thead th.c{text-align:center}' +
-'table.stmt td{padding:4px 8px;border:.5px solid #e2e8f0;vertical-align:top}' +
-'table.stmt tr.alt td{background:#fafbfc}' +
-'table.stmt tr.hdr td{background:#f1f5f9;font-weight:800;text-transform:uppercase;font-size:8.5pt;' +
-'border-top:1.5px solid #94a3b8;border-bottom:1.5px solid #94a3b8}' +
-'table.stmt tr.tot td{background:#ecfeff;font-weight:700;border-top:1px solid #67e8f9}' +
-'table.stmt tr.grand td{background:#cffafe;font-weight:800;border-top:2px solid #0e7490;border-bottom:2px solid #0e7490}' +
-'.ln{width:28px;text-align:center;color:#94a3b8;font-size:7.5pt}' +
-'.lab{color:#1e293b}.lab.bold{font-weight:800;text-transform:uppercase;font-size:8.5pt}' +
-'.lab.ital{font-style:italic;color:#64748b}' +
-'.note{text-align:center;color:#64748b;font-size:8pt;width:42px}' +
-'.amt{text-align:right;font-variant-numeric:tabular-nums;font-family:ui-monospace,Consolas,monospace;white-space:nowrap;width:22%;font-size:8.5pt}' +
-'.amt.muted{color:#64748b}' +
-'.notes-block{margin-top:14px;padding:10px 12px;border:1px solid #e2e8f0;border-radius:6px;font-size:8pt;color:#475569;line-height:1.45}' +
-'.notes-block h3{margin:0 0 6px;font-size:8.5pt;text-transform:uppercase;letter-spacing:.08em;color:#0e7490}' +
-'.foot{margin-top:22px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:18px;page-break-inside:avoid}' +
-'.sign{text-align:center;padding-top:36px;border-top:1px solid #94a3b8;font-size:8pt;color:#475569}' +
-'.sign strong{display:block;color:#0f172a;font-size:8.5pt;margin-bottom:3px;text-transform:uppercase}' +
-'.disclaimer{margin-top:14px;font-size:7.5pt;color:#94a3b8;text-align:center;border-top:1px solid #e2e8f0;padding-top:8px}' +
-'@media print{.toolbar{display:none!important}.sheet{max-width:none;padding:0}' +
-'thead{display:table-header-group}tr{page-break-inside:avoid}.foot{page-break-inside:avoid}}' +
-'</style></head><body>' +
-'<div class="toolbar"><div class="hint"><strong style="color:#fff">' + esc(title) + '</strong><br/>' +
-'Full institutional statement · ' + rows.length + ' lines · Review, then Print / Save as PDF.</div>' +
-'<div><button type="button" class="btn-print" id="uuPrintBtn">Print / Save as PDF</button> ' +
-'<button type="button" class="btn-close" id="uuCloseBtn">Close</button></div></div>' +
-'<div class="sheet">' +
-'<div class="entity"><div>' +
-'<h1>Unity University</h1>' +
-'<p class="org-sub">Official Financial Statement</p>' +
-'<p class="org-meta">Gerji Head Office · Torhailoch Campus · Addis Ababa, Ethiopia<br/>' +
-'Functional currency: Ethiopian Birr (ETB) · Accrual basis</p></div>' +
-'<div class="entity-badge"><strong>Document ' + esc(stmtId) + '</strong>Printed ' + esc(printedAt) + '</div></div>' +
-'<h2 class="stmt">' + esc(title) + '</h2>' +
-'<p class="stmt-sub">' + esc(subtitle) + '</p>' +
-'<div class="period-box">' +
-'<div><span>Period from</span> <strong>' + esc(periodFrom) + '</strong></div>' +
-'<div><span>Period to</span> <strong>' + esc(periodTo) + '</strong></div>' +
-'<div><span>Currency</span> <strong>ETB</strong></div></div>' +
-'<div class="summary-strip">' +
-'<div class="cell"><label>Statement lines</label><strong>' + rows.length + '</strong></div>' +
-'<div class="cell"><label>Amount lines</label><strong>' + lineCount + '</strong></div>' +
-'<div class="cell"><label>Control sum (non-header)</label><strong>' + esc(money(amountSum)) + '</strong></div></div>' +
-'<table class="stmt"><thead><tr>' +
-'<th class="c">#</th><th>Description / Account designation</th><th class="c">Note</th>' +
-'<th class="r">Current period (ETB)</th><th class="r">Prior period (ETB)</th>' +
-'</tr></thead><tbody>' + rowHtml + '</tbody></table>' +
-'<div class="notes-block"><h3>Presentation notes</h3><div>' +
-'1. Prepared from the institutional chart of accounts and trial-balance linked amounts where available.<br/>' +
-'2. Figures in parentheses denote credit / negative movements as shown on screen.<br/>' +
-'3. Prior period column fills when comparative balances exist on the line; otherwise blank.<br/>' +
-'4. Control sum is arithmetic of non-header lines only — not a statutory total.</div></div>' +
-'<div class="foot">' +
-'<div class="sign"><strong>Prepared by</strong>Finance Officer<br/>Name / Signature / Date</div>' +
-'<div class="sign"><strong>Reviewed by</strong>Chief Accountant<br/>Name / Signature / Date</div>' +
-'<div class="sign"><strong>Approved by</strong>Finance Director<br/>Name / Signature / Date</div></div>' +
-'<p class="disclaimer">' + esc(title) + ' · Unity University SIS · Full statement (' + rows.length + ' lines) · ' +
-'Period ' + esc(periodFrom) + ' → ' + esc(periodTo) + ' · ' + esc(printedAt) + '</p>' +
-'</div>' +
-'<script>(function(){var b=document.getElementById("uuPrintBtn");var c=document.getElementById("uuCloseBtn");' +
-'if(b)b.onclick=function(){try{window.focus();window.print()}catch(e){}};' +
-'if(c)c.onclick=function(){try{window.close()}catch(e){}};' +
-'setTimeout(function(){try{window.focus()}catch(e){}},100);})();<\/script>' +
-'</body></html>';
-
-        // Prefer iframe (works when popups blocked). Fallback: new tab, then blob URL.
-        const runPrintInFrame = (doc) => {
-            try {
-                doc.open();
-                doc.write(html);
-                doc.close();
-            } catch (e) {}
-        };
-
-        let used = false;
-        try {
-            const existing = document.getElementById('uu-statement-print-frame');
-            if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
-            const iframe = document.createElement('iframe');
-            iframe.id = 'uu-statement-print-frame';
-            iframe.setAttribute('title', 'Statement print');
-            iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;opacity:0;pointer-events:none;';
-            document.body.appendChild(iframe);
-            const idoc = iframe.contentDocument || (iframe.contentWindow && iframe.contentWindow.document);
-            if (idoc) {
-                runPrintInFrame(idoc);
-                used = true;
-                setTimeout(() => {
-                    try {
-                        iframe.contentWindow.focus();
-                        iframe.contentWindow.print();
-                    } catch (e) {}
-                }, 350);
-                // Also open visible preview tab when possible
-                try {
-                    const w = window.open('', '_blank', 'noopener,noreferrer,width=920,height=1100');
-                    if (w) {
-                        w.document.open();
-                        w.document.write(html);
-                        w.document.close();
-                    }
-                } catch (e2) {}
-            }
-        } catch (e) {}
-
-        if (!used) {
-            try {
-                const w = window.open('', '_blank', 'noopener,noreferrer,width=920,height=1100');
-                if (w) {
-                    w.document.open();
-                    w.document.write(html);
-                    w.document.close();
-                    setTimeout(() => { try { w.focus(); w.print(); } catch (e) {} }, 400);
-                    return;
-                }
-            } catch (e) {}
-            try {
-                const blob = new Blob([html], { type: 'text/html' });
-                const url = URL.createObjectURL(blob);
-                const w2 = window.open(url, '_blank');
-                if (!w2) {
-                    // last resort: navigate hidden link
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.target = '_blank';
-                    a.rel = 'noopener';
-                    document.body.appendChild(a);
-                    a.click();
-                    a.remove();
-                }
-                setTimeout(() => URL.revokeObjectURL(url), 60000);
-            } catch (e3) {
-                try { window.print(); } catch (e4) {}
-            }
-        }
-    }, [reportEngine, activeRows, startDate, endDate]);
-
-
-const exportCSV = () => {
+    const exportCSV = () => {
         if (!activeRows.length) return;
         const headers = ['Line', 'Note', 'Amount (ETB)'];
         const body = activeRows.map(r => `"${(r.label || '').replace(/"/g, '""')}","${r.note || ''}","${r.amount != null ? Number(r.amount).toFixed(2) : ''}"`);
-        const csv = [headers.join(','), ...body].join('\n');
+        const csv = [headers.join(','), ...body].join(String.fromCharCode(10));
         const blob = new Blob([csv], { type: 'text/csv' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -22518,14 +22954,8 @@ const exportCSV = () => {
                             chartRef={statementRef}
                             isFinancial={true}
                         />
-                        <button type="button" onClick={printFullStatement} className="px-3 py-2 rounded-xl text-[10px] font-black uppercase bg-cyan-600/90 text-white hover:bg-cyan-500 flex items-center gap-1.5 shadow-lg shadow-cyan-900/30">
-                        <button
-  type="button"
-  onClick={printFullStatement}
-  className="px-3 py-2 rounded-xl text-[10px] font-black uppercase bg-cyan-600/90 text-white hover:bg-cyan-500 flex items-center gap-1.5"
->
-  <Icons.Printer className="w-3.5 h-3.5" /> Print full statement
-</button>    <Icons.Printer className="w-3.5 h-3.5" /> Print full statement
+                        <button type="button" onClick={() => window.print()} className="px-3 py-2 rounded-xl text-[10px] font-black uppercase bg-white/10 text-white hover:bg-white/15 flex items-center gap-1.5">
+                            <Icons.Printer className="w-3.5 h-3.5" /> Print
                         </button>
                     </div>
                 </div>
@@ -22547,7 +22977,7 @@ const exportCSV = () => {
                 </div>
             </div>
 
-            <div ref={statementRef} className="statement-print-root overflow-hidden rounded-[1.75rem] border border-white/10 bg-black/50 shadow-2xl">
+            <div ref={statementRef} className="overflow-hidden rounded-[1.75rem] border border-white/10 bg-black/50 shadow-2xl">
                 <div className="px-6 py-4 border-b border-white/10 bg-slate-950/80 flex justify-between items-center">
                     <div>
                         <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Unity University</p>
@@ -22557,8 +22987,8 @@ const exportCSV = () => {
                         {startDate || 'Opening'} → {endDate || new Date().toISOString().slice(0, 10)}
                     </p>
                 </div>
-                <div className="overflow-x-auto max-h-[70vh] custom-scrollbar statement-print-body">
-                    <table className="w-full text-left border-collapse min-w-[640px] statement-print-table">
+                <div className="overflow-x-auto max-h-[70vh] custom-scrollbar">
+                    <table className="w-full text-left border-collapse min-w-[640px]">
                         <thead className="sticky top-0 z-10 bg-slate-950/95 text-[10px] uppercase font-black tracking-widest text-cyan-400 border-b border-white/10">
                             <tr>
                                 <th className="p-4">Description</th>
@@ -22592,37 +23022,7 @@ const exportCSV = () => {
                     <span>Unity Finance Statements</span>
                 </div>
             </div>
-            <style>{`
-@media print {
-  @page { size: A4 portrait; margin: 12mm; }
-  body * { visibility: hidden !important; }
-  .statement-print-root, .statement-print-root * { visibility: visible !important; }
-  .statement-print-root {
-    position: absolute !important;
-    left: 0 !important; top: 0 !important;
-    width: 100% !important;
-    background: #fff !important;
-    color: #0f172a !important;
-    border: none !important;
-    border-radius: 0 !important;
-    box-shadow: none !important;
-    overflow: visible !important;
-    max-height: none !important;
-  }
-  .statement-print-body {
-    max-height: none !important;
-    overflow: visible !important;
-  }
-  .statement-print-table { min-width: 0 !important; width: 100% !important; }
-  .statement-print-root th, .statement-print-root td {
-    color: #0f172a !important;
-    border-color: #cbd5e1 !important;
-  }
-  .statement-print-root thead { background: #0e7490 !important; }
-  .statement-print-root thead th { color: #fff !important; }
-  .no-print { display: none !important; }
-}
-`}</style>
+            <style>{`@media print { .no-print { display: none !important; } body { background: white !important; } }`}</style>
         </div>
     );
 };
@@ -22646,7 +23046,7 @@ const DynamicPayrollTerminal = ({ glassClass }) => {
     const exportCSV = (slug) => {
         const data = allData[slug] || [];
         if (!data.length) return;
-        const csv = [Object.keys(data[0]).join(','), ...data.map(r => Object.values(r).join(','))].join('\n');
+        const csv = [Object.keys(data[0]).join(','), ...data.map(r => Object.values(r).join(','))].join(String.fromCharCode(10));
         const blob = new Blob([csv], { type: 'text/csv' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a'); a.href = url; a.download = `${slug}.csv`; a.click();
@@ -22812,7 +23212,7 @@ const PayrollRobustSummaryCard = ({ glassClass }) => {
     const exportCSV = (slug) => {
         const data = allData[slug] || [];
         if (!data.length) return;
-        const csv = [Object.keys(data[0]).join(','), ...data.map(r => Object.values(r).join(','))].join('\n');
+        const csv = [Object.keys(data[0]).join(','), ...data.map(r => Object.values(r).join(','))].join(String.fromCharCode(10));
         const blob = new Blob([csv], { type: 'text/csv' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a'); a.href = url; a.download = `${slug}.csv`; a.click();
@@ -23210,15 +23610,15 @@ const SlipModule = ({ glassClass }) => {
     const isCommitted = data && statusOf(data) === 'committed';
 
     return (
-        <div className="h-full min-h-0 flex flex-col gap-3 sm:gap-5 animate-in fade-in duration-500 overflow-y-auto lg:overflow-hidden">
+        <div className="h-full flex flex-col gap-5 animate-in fade-in duration-500">
             {/* Toolbar */}
-            <div className={`p-4 sm:p-5 rounded-[1.75rem] ${glassClass} border border-cyan-500/25 bg-gradient-to-r from-cyan-950/30 to-black/40 no-print flex flex-col md:flex-row md:items-center justify-between gap-3 sm:gap-4 shrink-0`}>
-                <div className="flex items-center gap-3 min-w-0">
-                    <div className="p-3 rounded-2xl bg-cyan-500/15 border border-cyan-400/25 shrink-0">
+            <div className={`p-5 rounded-[1.75rem] ${glassClass} border border-cyan-500/25 bg-gradient-to-r from-cyan-950/30 to-black/40 no-print flex flex-col md:flex-row md:items-center justify-between gap-4`}>
+                <div className="flex items-center gap-3">
+                    <div className="p-3 rounded-2xl bg-cyan-500/15 border border-cyan-400/25">
                         <Icons.FileText className="w-6 h-6 text-cyan-400" />
                     </div>
-                    <div className="min-w-0">
-                        <h2 className="text-lg sm:text-xl md:text-2xl font-black text-white italic uppercase tracking-tight">Official Pay Slip</h2>
+                    <div>
+                        <h2 className="text-xl md:text-2xl font-black text-white italic uppercase tracking-tight">Official Pay Slip</h2>
                         <p className="text-[10px] text-cyan-300/80 font-black uppercase tracking-[0.2em]">Unity University · Committed payroll documents</p>
                     </div>
                 </div>
@@ -23239,9 +23639,9 @@ const SlipModule = ({ glassClass }) => {
                 </div>
             </div>
 
-            <div className="flex flex-col lg:flex-row gap-4 lg:gap-5 flex-1 min-h-0 overflow-hidden">
-                {/* Sidebar list — capped height on mobile so slip stays visible */}
-                <div className={`w-full lg:w-80 shrink-0 flex flex-col rounded-[1.75rem] ${glassClass} border border-white/10 overflow-hidden bg-black/40 no-print max-h-[38vh] lg:max-h-none`}>
+            <div className="flex gap-5 flex-1 min-h-0">
+                {/* Sidebar list */}
+                <div className={`w-80 shrink-0 flex flex-col rounded-[1.75rem] ${glassClass} border border-white/10 overflow-hidden bg-black/40 no-print`}>
                     <div className="p-3 border-b border-white/10 space-y-2">
                         <div className="relative">
                             <Icons.Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-cyan-400/70" />
@@ -23296,8 +23696,8 @@ const SlipModule = ({ glassClass }) => {
                     </div>
                 </div>
 
-                {/* Document — full width on mobile, scrolls under the employee list */}
-                <div className="flex-1 min-h-[45vh] lg:min-h-0 overflow-y-auto overflow-x-hidden pb-8 w-full px-0 sm:px-1">
+                {/* Document */}
+                <div className="flex-1 overflow-y-auto pb-8">
                     {data ? (
                         <div className="space-y-4">
                             {/* On-screen summary chips */}
@@ -23315,19 +23715,19 @@ const SlipModule = ({ glassClass }) => {
                                 ))}
                             </div>
 
-                            <div id="printable-slip" className="bg-white p-4 sm:p-8 md:p-12 shadow-2xl border border-slate-200 mx-auto w-full max-w-[21cm] text-slate-900 printable-content min-h-0 md:min-h-[29.7cm] rounded-sm overflow-x-auto">
+                            <div id="printable-slip" className="bg-white p-10 md:p-12 shadow-2xl border border-slate-200 mx-auto max-w-[21cm] text-slate-900 printable-content min-h-[29.7cm] rounded-sm">
                                 {/* Letterhead */}
-                                <div className="flex flex-col sm:flex-row justify-between items-start gap-4 border-b-4 border-slate-900 pb-4 sm:pb-6 mb-4 sm:mb-6">
-                                    <div className="flex items-center gap-3 sm:gap-4 min-w-0">
-                                        <div className="w-12 h-12 sm:w-16 sm:h-16 shrink-0 bg-slate-900 rounded-full flex items-center justify-center text-white font-black text-xl sm:text-2xl shadow-lg">U</div>
-                                        <div className="min-w-0">
-                                            <h1 className="text-xl sm:text-3xl md:text-4xl font-black text-slate-900 uppercase tracking-tighter leading-none">Unity University</h1>
+                                <div className="flex justify-between items-start border-b-4 border-slate-900 pb-6 mb-6">
+                                    <div className="flex items-center gap-4">
+                                        <div className="w-16 h-16 bg-slate-900 rounded-full flex items-center justify-center text-white font-black text-2xl shadow-lg">U</div>
+                                        <div>
+                                            <h1 className="text-3xl md:text-4xl font-black text-slate-900 uppercase tracking-tighter leading-none">Unity University</h1>
                                             <p className="text-[11px] font-bold text-slate-500 tracking-[0.25em] mt-1">OFFICIAL PAY ADVICE</p>
                                             <p className="text-[9px] text-slate-400 font-medium mt-0.5">Torhailoch · Addis Ababa · Ethiopia</p>
                                         </div>
                                     </div>
-                                    <div className="text-left sm:text-right w-full sm:w-auto">
-                                        <p className="text-base sm:text-lg md:text-xl font-black text-slate-900">{data.period || data.month || 'Current Month'}</p>
+                                    <div className="text-right">
+                                        <p className="text-lg md:text-xl font-black text-slate-900">{data.period || data.month || 'Current Month'}</p>
                                         <p className="text-[10px] text-slate-500 font-bold uppercase mt-1">
                                             Process date: {data.payroll_process_date || data.processing_date || new Date().toLocaleDateString()}
                                         </p>
@@ -23478,23 +23878,6 @@ const SlipModule = ({ glassClass }) => {
 
 
 
-
-/** Resolve sidebar label for a view id (used as DataTable title). */
-const findMenuItemTitle = (items, viewId) => {
-    if (!viewId) return '';
-    const walk = (nodes) => {
-        if (!Array.isArray(nodes)) return null;
-        for (const node of nodes) {
-            if (!node) continue;
-            if (String(node.id) === String(viewId)) return node.label || node.id;
-            const child = walk(node.children);
-            if (child) return child;
-        }
-        return null;
-    };
-    return walk(items) || String(viewId).replace(/_/g, ' ');
-};
-
 const renderView = (currentView, glassClass, getCollection, checkPermission, allRoles = [], allData = {}) => {
     switch (currentView) {
 
@@ -23540,7 +23923,7 @@ const renderView = (currentView, glassClass, getCollection, checkPermission, all
             const exportCSV = (slug) => {
         const data = allData[slug] || [];
         if (!data.length) return;
-        const csv = [Object.keys(data[0]).join(','), ...data.map(r => Object.values(r).join(','))].join('\n');
+        const csv = [Object.keys(data[0]).join(','), ...data.map(r => Object.values(r).join(','))].join(String.fromCharCode(10));
         const blob = new Blob([csv], { type: 'text/csv' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a'); a.href = url; a.download = `${slug}.csv`; a.click();
@@ -24053,6 +24436,7 @@ const Navigation = ({ menuItems = [], currentView, setCurrentView, expandedFolde
         </div>
     );
 };
+
 const HrmAppContent = () => {
     const { isLoggedIn, currentView, setCurrentView, currentUser, checkPermission, logout } = useAuth();
     const { glassOpacityClass, rootStyle, uiSettings } = useUI();
@@ -24061,7 +24445,6 @@ const HrmAppContent = () => {
     // FETCH LIVE ROLES: This is the heartbeat of the April 21 logic
     const allRoles = getCollection('ROLE_CRUD') || [];
     const [showNotifications, setShowNotifications] = useState(false);
-    const [notifBadgeCount, setNotifBadgeCount] = useState(0);
     const [mobileNavOpen, setMobileNavOpen] = useState(false);
     const isMobile = useIsMobile(768); 
     const [expandedFolders, setExpandedFolders] = useState(['HR', 'SETTINGS']); 
@@ -24109,7 +24492,7 @@ const HrmAppContent = () => {
     const exportCSV = (slug) => {
         const data = allData[slug] || [];
         if (!data.length) return;
-        const csv = [Object.keys(data[0]).join(','), ...data.map(r => Object.values(r).join(','))].join('\n');
+        const csv = [Object.keys(data[0]).join(','), ...data.map(r => Object.values(r).join(','))].join(String.fromCharCode(10));
         const blob = new Blob([csv], { type: 'text/csv' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a'); a.href = url; a.download = `${slug}.csv`; a.click();
@@ -24117,7 +24500,6 @@ const HrmAppContent = () => {
 
     return (
         <div className="h-full w-full flex flex-col overflow-hidden relative uu-module-root" style={{ ...(rootStyle || {}), position: "relative", inset: "auto", zIndex: "auto", pointerEvents: "auto" }}>
-            <FieldIntelligenceRuntime />
             <MobileStyles />
             <header className={`uu-app-header h-14 shrink-0 flex items-center justify-between px-3 sm:px-6 border-b border-white/10 z-20 ${glassClass}`}>
                 <div className="flex items-center gap-2 sm:gap-4 min-w-0">
@@ -24142,15 +24524,9 @@ const HrmAppContent = () => {
                     <button 
                         type="button"
                         onClick={() => setShowNotifications(!showNotifications)}
-                        className={`relative p-2 rounded-full transition-all ${showNotifications ? 'bg-cyan-500 text-white' : 'text-gray-400 hover:text-white'}`}
-                        aria-label="Notifications"
+                        className={`p-2 rounded-full transition-all ${showNotifications ? 'bg-cyan-500 text-white' : 'text-gray-400'}`}
                     >
                         <Icons.Bell className="w-5 h-5" />
-                        {notifBadgeCount > 0 && (
-                            <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-rose-600 text-white text-[10px] font-black border-2 border-slate-950 shadow-lg shadow-rose-900/40">
-                                {notifBadgeCount > 99 ? '99+' : notifBadgeCount}
-                            </span>
-                        )}
                     </button>
                 </div>
             </header>
@@ -24159,7 +24535,7 @@ const HrmAppContent = () => {
                 {mobileNavOpen && (
                     <div className="uu-sidebar-backdrop md:hidden" onClick={() => setMobileNavOpen(false)} aria-hidden />
                 )}
-                <aside className={`uu-sidebar-desktop hidden md:block w-[20%] min-w-[260px] max-w-[280px] border-r border-white/10 ${glassClass}`}>
+                <aside className={`uu-sidebar-desktop hidden md:block w-[20%] min-w-[200px] max-w-[280px] border-r border-white/10 ${glassClass}`}>
                     <Navigation
                         menuItems={MENU_ITEMS}
                         currentView={currentView}
@@ -24198,16 +24574,17 @@ const HrmAppContent = () => {
                     {renderView(currentView, glassClass, getCollection, checkPermission, allRoles, allData)}
                 </main>
 
-                <aside className={`${showNotifications ? 'w-[min(100%,320px)] sm:w-[25%] border-l border-white/10 animate-in slide-in-from-right' : 'w-0 overflow-hidden border-0'} ${glassClass} shrink-0 transition-[width] duration-200`}>
-                    <div className={showNotifications ? 'h-full' : 'h-0 overflow-hidden opacity-0 pointer-events-none'}>
+                {showNotifications && (
+                    <aside className={`w-[25%] border-l border-white/10 animate-in slide-in-from-right ${glassClass}`}>
                         <NotificationBar 
                             glassClass={glassClass} 
                             currentUser={currentUser} 
-                            onClose={() => setShowNotifications(false)}
-                            onCountChange={(n) => setNotifBadgeCount(Number(n) || 0)}
+                            onClose={() => setShowNotifications(false)} 
                         />
-                    </div>
-                </aside>
+                    </aside>
+                )}
+                    <UnityUniversityAIDock glassClass={glassClass} />
+
             </div>
         </div>
     );
@@ -24679,24 +25056,6 @@ const EnhancedChartOfAccountsManager = ({ initialAccounts = [] }) => {
     const [selectedCostCenter, setSelectedCostCenter] = useState('All');
     const [activeTab, setActiveTab] = useState('accounts');
 
-    const typeOptionsCoa = useMemo(() => ['All', 'Asset', 'Liability', 'Equity', 'Revenue', 'Expense'], []);
-    const locationOptions = useMemo(() => {
-        const s = new Set(['All']);
-        (initialAccounts || []).forEach((a) => {
-            const c = a.location_code || a.loc || a.campus;
-            if (c) s.add(String(c));
-        });
-        return Array.from(s);
-    }, [initialAccounts]);
-    const costCenterOptions = useMemo(() => {
-        const s = new Set(['All']);
-        (initialAccounts || []).forEach((a) => {
-            const c = a.cost_center || a.cc || a.unit;
-            if (c) s.add(String(c));
-        });
-        return Array.from(s);
-    }, [initialAccounts]);
-
     const columnConfig = useMemo(() => [
         { key: 'account_no', label: 'Account ID', sortable: true, width: 'w-40' },
         { key: 'name', label: 'Account Description', sortable: true, width: 'w-96' },
@@ -24739,9 +25098,18 @@ const EnhancedChartOfAccountsManager = ({ initialAccounts = [] }) => {
                             <Icons.Search className="absolute left-3 top-3 text-slate-400" size={18} />
                             <input type="text" placeholder="Search ID or description..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-lg pl-10 pr-4 py-2 text-sm" />
                         </div>
-                        <UUSelect value={selectedType} onChange={setSelectedType} options={typeof typeOptionsCoa !== "undefined" ? typeOptionsCoa : ["All","Asset","Liability","Equity","Revenue","Expense"]} allLabel="All types" className="min-w-[240px]" />
-                        <UUSelect value={selectedLocation} onChange={setSelectedLocation} options={locationOptions} allLabel="All locations" className="min-w-[260px]" />
-                        <UUSelect value={selectedCostCenter} onChange={setSelectedCostCenter} options={costCenterOptions} allLabel="All cost centers" className="min-w-[260px]" />
+                        <select value={selectedType} onChange={(e) => setSelectedType(e.target.value)} className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+                            <option value="All">All Types</option>
+                            {[...new Set(initialAccounts.map(a => a.type))].map(t => <option key={t} value={t}>{t}</option>)}
+                        </select>
+                        <select value={selectedLocation} onChange={(e) => setSelectedLocation(e.target.value)} className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+                            <option value="All">All Locations</option>
+                            {['10','11','12','13','14','15','16'].map(l => <option key={l} value={l}>{l}</option>)}
+                        </select>
+                        <select value={selectedCostCenter} onChange={(e) => setSelectedCostCenter(e.target.value)} className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+                            <option value="All">All Cost Centers</option>
+                            {['01','41','42','43','44','45','46','47','48','49','50'].map(c => <option key={c} value={c}>{c}</option>)}
+                        </select>
                     </div>
                     <div className="overflow-x-auto border border-slate-800 rounded-lg max-h-[600px]">
                         <table className="w-full text-left border-collapse">
@@ -26422,24 +26790,7 @@ const UnityFinanceConsolidator = () => {
     </div>
   );
 };
-/** Relative time for notification rows (e.g. "1 min ago"). */
-const formatRelativeTime = (isoOrDate) => {
-    if (!isoOrDate) return '';
-    const then = new Date(isoOrDate);
-    if (isNaN(then.getTime())) return String(isoOrDate).slice(0, 16);
-    const sec = Math.round((Date.now() - then.getTime()) / 1000);
-    if (sec < 10) return 'just now';
-    if (sec < 60) return sec + ' sec ago';
-    const min = Math.floor(sec / 60);
-    if (min < 60) return min + (min === 1 ? ' min ago' : ' mins ago');
-    const hr = Math.floor(min / 60);
-    if (hr < 24) return hr + (hr === 1 ? ' hour ago' : ' hours ago');
-    const day = Math.floor(hr / 24);
-    if (day < 30) return day + (day === 1 ? ' day ago' : ' days ago');
-    return then.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
-};
-
-const NotificationBar = ({ glassClass, currentUser, onClose, onCountChange }) => {
+const NotificationBar = ({ glassClass, currentUser, onClose }) => {
     const { getCollection, notificationTrigger, leaveUpdateTrigger, roleUpdateTrigger, allData } = useData();
     const [activeTab, setActiveTab] = useState('all');
     const [filter, setFilter] = useState('all'); // all | alert | warning | info
@@ -26672,13 +27023,6 @@ const NotificationBar = ({ glassClass, currentUser, onClose, onCountChange }) =>
         success: notifications.filter(n => n.severity === 'success').length,
     }), [notifications]);
 
-    useEffect(() => {
-        if (typeof onCountChange === 'function') {
-            const badge = (counts.alert || 0) + (counts.warning || 0) || counts.all || 0;
-            onCountChange(badge, counts);
-        }
-    }, [counts, onCountChange]);
-
     const sevStyle = {
         alert: 'border-rose-500/40 bg-rose-950/40 text-rose-100',
         warning: 'border-amber-500/40 bg-amber-950/30 text-amber-100',
@@ -26756,9 +27100,6 @@ const NotificationBar = ({ glassClass, currentUser, onClose, onCountChange }) =>
                                     <div className="flex items-center gap-2 flex-wrap">
                                         <span className="text-[9px] font-black uppercase tracking-wider opacity-80">{n.category}</span>
                                         <span className="text-[8px] uppercase opacity-50">{n.severity}</span>
-                                        <span className="text-[9px] text-white/50 ml-auto font-mono tabular-nums" title={n.time ? new Date(n.time).toLocaleString() : ''}>
-                                            {formatRelativeTime(n.time)}
-                                        </span>
                                     </div>
                                     <p className="text-[11px] font-medium mt-0.5 leading-snug">{n.message}</p>
                                 </div>
@@ -26774,6 +27115,7 @@ const NotificationBar = ({ glassClass, currentUser, onClose, onCountChange }) =>
         </div>
     );
 };
+
 export function FinanceApp() {
     return (
         <AuthProvider>

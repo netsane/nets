@@ -331,7 +331,10 @@ const UIProvider = ({ children }) => {
     // GAUGE STATES
     const [bgScale, setBgScale] = useState(1);
     const [bgBlur, setBgBlur] = useState(0);
-    const [bgBrightness, setBgBrightness] = useState(100); 
+    const [bgBrightness, setBgBrightness] = useState(100);
+    const [aiDockEnabled, setAiDockEnabled] = useState(() => {
+        try { return localStorage.getItem('uu_ai_dock') === '1'; } catch (e) { return false; }
+    }); 
 
     // --- NEW: Global Transparency Injector ---
     // This forcibly removes solid backgrounds from your Main, Sidebar, and Nav components
@@ -386,6 +389,10 @@ const UIProvider = ({ children }) => {
         }
         if (settings.bgScale !== undefined) setBgScale(settings.bgScale);
         if (settings.bgBlur !== undefined) setBgBlur(settings.bgBlur);
+        if (settings.aiDockEnabled !== undefined) {
+            setAiDockEnabled(!!settings.aiDockEnabled);
+            try { localStorage.setItem('uu_ai_dock', settings.aiDockEnabled ? '1' : '0'); } catch (e) {}
+        }
         if (settings.bgBrightness !== undefined) setBgBrightness(settings.bgBrightness);
     };
 
@@ -408,8 +415,8 @@ const UIProvider = ({ children }) => {
 
     return (
         <UIContext.Provider value={{ 
-            rootStyle, updateUISettings, resetToDefault,
-            uiSettings: { backgroundImage, logoURL, primaryColor: backgroundColor, textColor, bgBlur, bgScale, bgBrightness } 
+            rootStyle, updateUISettings, resetToDefault, aiDockEnabled,
+            uiSettings: { backgroundImage, logoURL, primaryColor: backgroundColor, textColor, bgBlur, bgScale, bgBrightness, aiDockEnabled } 
         }}>
             {/* THE BACKGROUND IMAGE LAYER */}
             <div style={rootStyle} />
@@ -2845,7 +2852,7 @@ const ExportButton = ({ data, columns, filename, chartRef, isFinancial = false }
                     '',
                     'Unity University · Official system export · Confidential'
                 ];
-                saveAs(new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8' }), `${fname}_${new Date().toISOString().slice(0, 10)}.csv`);
+                saveAs(new Blob(['\ufeff' + lines.join(String.fromCharCode(10))], { type: 'text/csv;charset=utf-8' }), `${fname}_${new Date().toISOString().slice(0, 10)}.csv`);
             }
         } catch (err) {
             console.error('[EXPORT]', err);
@@ -4082,7 +4089,7 @@ const HrDashboard = ({ glassClass }) => {
         if (format === 'CSV') {
             if (!rows.length) return;
             const keys = Object.keys(rows[0]);
-            const csv = [keys.join(','), ...rows.map((r) => keys.map((k) => `"${String(r[k] ?? '').replace(/"/g, '""')}"`).join(','))].join('\n');
+            const csv = [keys.join(','), ...rows.map((r) => keys.map((k) => `"${String(r[k] ?? '').replace(/"/g, '""')}"`).join(','))].join(String.fromCharCode(10));
             const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
             saveAs(blob, `HR_Employees_${stamp}.csv`);
             return;
@@ -4918,13 +4925,336 @@ const uuCorrectEmployeeGender_DUP = (e) => {
 };
 const uuCorrectEmployeeList_DUP = (list) => Array.isArray(list) ? list.map(uuCorrectEmployeeGender) : [];
 
-const UU_AI_KNOWLEDGE = [
-    { id: 'sis', title: 'Unity SIS overview', tags: ['sis', 'unity', 'overview', 'modules', 'system'], body: 'Unity SIS integrates Finance, HR, and Material under shared login/RBAC. Finance: COA, journals, TB/GL, payroll, partners, FP/P&L/cash flow. HR: employee master, leave, recruitment, training, transfer, appraisal. Material: inventory, GRV, GIV, purchases; posts stock events to Finance.' },
-    { id: 'finance', title: 'Finance module', tags: ['finance', 'coa', 'journal', 'payroll', 'trial', 'ledger'], body: 'Finance covers chart of accounts, single/journal transactions, trial balance, general ledger, partners, payroll process & reconciliation, and statements (FP, P&L, cash flow).' },
-    { id: 'hr', title: 'HR module', tags: ['hr', 'employee', 'staff', 'leave', 'recruitment'], body: 'HR is the staff system of record: employee master (ID, names, department, position, salary, TIN, pension), leave, recruitment, training, transfer, appraisal, competence, awards.' },
-    { id: 'material', title: 'Material module', tags: ['material', 'inventory', 'grv', 'giv', 'sku', 'store'], body: 'Material manages inventory SKUs, GRV (goods received), GIV (goods issued), local/foreign purchase, and parts robbing. GRV/GIV can post toward Finance stock/expense accounts.' },
-    { id: 'students', title: 'SIS students', tags: ['student', 'students', 'tuition', 'registrar', 'qms'], body: 'Students connect via registrar/QMS/attendance concepts, tuition partners in Finance, and campus stores in Material.' },
+
+
+/* ---- unityUniversity AI: dictionary + literal/contextual analyzers ---- */
+const UU_AI_DICTIONARY = [
+  { term: 'SKU', aliases: ['stock keeping unit', 'item code'], def: 'Stock Keeping Unit — unique code for an inventory item in Material master.', tags: ['material', 'inventory'] },
+  { term: 'GRV', aliases: ['goods received voucher', 'goods received'], def: 'Goods Received Voucher — stock received into store; may post to Finance.', tags: ['material', 'finance'] },
+  { term: 'GIV', aliases: ['goods issued voucher', 'goods issued'], def: 'Goods Issued Voucher — stock issued from store to a department or job.', tags: ['material'] },
+  { term: 'COA', aliases: ['chart of accounts', 'chart of account'], def: 'Chart of Accounts — list of ledger accounts in Finance.', tags: ['finance'] },
+  { term: 'TB', aliases: ['trial balance'], def: 'Trial Balance — accounts with debit and credit totals that should balance.', tags: ['finance'] },
+  { term: 'GL', aliases: ['general ledger'], def: 'General Ledger — account-level history of postings.', tags: ['finance'] },
+  { term: 'PAYE', aliases: ['income tax', 'pay as you earn'], def: 'Pay As You Earn — employee income tax withheld in payroll.', tags: ['finance', 'hr'] },
+  { term: 'Basic salary', aliases: ['basic pay', 'base salary'], def: 'Core contracted pay before allowances, overtime, and deductions (HR master → payroll).', tags: ['hr', 'finance'] },
+  { term: 'Parts robbing', aliases: ['part robbing', 'cannibalization'], def: 'Taking parts from one item/asset to maintain another while tracking both sides in Material.', tags: ['material'] },
+  { term: 'Power Geez', aliases: ['geez calendar', 'ethiopian calendar'], def: 'Ethiopian (Geez) ↔ Gregorian converter in UI Customization.', tags: ['ui'] },
+  { term: 'RBAC', aliases: ['role based access', 'roles'], def: 'Role-Based Access Control — roles grant module and permission access.', tags: ['security'] },
+  { term: 'Gerji campus', aliases: ['gerji', 'al-amoudi campus', 'alamoudi'], def: 'Main Unity University campus identity in Addis Ababa.', tags: ['university'] },
+  { term: 'Bootstrap', aliases: ['api bootstrap'], def: 'API load of collections from PostgreSQL into the SPA session.', tags: ['system'] },
+  { term: 'Appraisal', aliases: ['performance review', 'evaluation'], def: 'HR performance evaluation record (employee, period, score).', tags: ['hr'] },
+  { term: 'Award', aliases: ['recognition', 'prize'], def: 'HR recognition record under Awards.', tags: ['hr'] },
+  { term: 'Equity', aliases: ['share capital', 'capital', 'owners equity'], def: 'Owners residual interest; Share Capital and related equity accounts (often 3xxx).', tags: ['finance'] },
+  { term: 'Question paper', aliases: ['exam paper', 'test paper', 'a4 paper', 'copy paper', 'paper ream'], def: 'Stationery inventory concept — match Material SKUs whose name/description mentions paper / A4 / ream / exam paper.', tags: ['material', 'inventory'] },
+  { term: 'Chair', aliases: ['office chair', 'seat'], def: 'Furniture inventory — SKUs with chair/seat in name or description.', tags: ['material', 'inventory'] },
+  { term: 'Table', aliases: ['desk', 'office table'], def: 'Furniture inventory — SKUs with table/desk in name or description.', tags: ['material', 'inventory'] },
+  { term: 'Toner', aliases: ['cartridge', 'laser toner'], def: 'IT consumable inventory — toner/cartridge SKUs.', tags: ['material', 'inventory'] },
+  { term: 'Unity University', aliases: ['uu', 'unity'], def: 'Private higher education institution in Ethiopia; modules Finance, HR, Material under shared SIS login.', tags: ['university'] },
+  { term: 'Moral use', aliases: ['ethics'], def: 'Report only operational facts from accessible session data; do not invent quantities or confidential fields.', tags: ['system'] },
 ];
+
+const UU_STOPWORDS = new Set(('a an the in on at to for of and or is are was were be been being how many much what is there store inventory stock sku item items quantity qty total sum count number please show list me our university unity have has had do does did with from by about than then also just only campus campuses president vice founder chairman leadership faculty college school'.split(/\s+/)));
+
+const uuNormalizeText = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9\s\-./]/g, ' ').replace(/\s+/g, ' ').trim();
+
+/** Extract subject phrase from count/amount questions */
+const uuExtractSubject = (question) => {
+    const q = uuNormalizeText(question);
+    let m =
+        q.match(/how many (.+?)(?:\s+are|\s+is|\s+in|\s+at|\s+do|\s+does|\?|$)/) ||
+        q.match(/how much (.+?)(?:\s+is|\s+are|\s+in|\s+at|\s+do|\s+does|\?|$)/) ||
+        q.match(/(?:quantity|qty|total|sum|count|number) (?:of )?(.+?)(?:\s+in|\s+at|\?|$)/) ||
+        q.match(/(.+?) in (?:the )?store/) ||
+        q.match(/store (?:has|have|hold) (.+)/);
+    let sub = m ? m[1] : '';
+    sub = sub.replace(/\b(are|is|there|available|currently|now|total|please)\b/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!sub || sub.length < 2) {
+        // fallback: meaningful tokens
+        sub = q.split(/\s+/).filter((w) => w.length > 2 && !UU_STOPWORDS.has(w)).join(' ');
+    }
+    return sub;
+};
+
+const uuTokenize = (s) => uuNormalizeText(s).split(/\s+/).filter((w) => w.length > 1 && !UU_STOPWORDS.has(w));
+
+/** Literal + contextual score of query tokens against a text blob */
+
+const uuStem = (w) => {
+    let t = String(w || '').toLowerCase();
+    if (t.length > 4 && t.endsWith('ies')) t = t.slice(0, -3) + 'y';
+    else if (t.length > 3 && t.endsWith('es') && !t.endsWith('ss')) t = t.slice(0, -2);
+    else if (t.length > 3 && t.endsWith('s') && !t.endsWith('ss')) t = t.slice(0, -1);
+    return t;
+};
+
+const uuExpandTokens = (tokens) => {
+    const out = [];
+    const seen = {};
+    const add = (t) => {
+        t = String(t || '').toLowerCase().trim();
+        if (!t || t.length < 2 || seen[t]) return;
+        seen[t] = true;
+        out.push(t);
+    };
+    (tokens || []).forEach((tok) => {
+        add(tok);
+        add(uuStem(tok));
+        // domain synonyms
+        if (/^papers?$/.test(tok) || uuStem(tok) === 'paper') {
+            ['paper', 'papers', 'a4', 'ream', 'copy', 'exam', 'stationery', 'bond'].forEach(add);
+        }
+        if (/^chairs?$/.test(tok) || uuStem(tok) === 'chair') {
+            ['chair', 'chairs', 'seat', 'stool', 'furniture'].forEach(add);
+        }
+        if (/^tables?$/.test(tok) || uuStem(tok) === 'table') {
+            ['table', 'tables', 'desk', 'desks', 'furniture'].forEach(add);
+        }
+        if (/toner|cartridge/.test(tok)) ['toner', 'cartridge', 'laser', 'hp'].forEach(add);
+        if (/^pens?$/.test(tok) || uuStem(tok) === 'pen') ['pen', 'pens', 'biro', 'ballpoint'].forEach(add);
+    });
+    return out;
+};
+
+/** Flatten all fields of a table row for search */
+const uuRowBlob = (r) => {
+    if (!r || typeof r !== 'object') return '';
+    const parts = [];
+    try {
+        Object.keys(r).forEach((k) => {
+            const v = r[k];
+            if (v == null) return;
+            if (typeof v === 'object') {
+                try { parts.push(JSON.stringify(v)); } catch (e) {}
+            } else {
+                parts.push(String(v));
+                parts.push(String(k)); // field names help contextual match
+            }
+        });
+    } catch (e) {
+        try { parts.push(JSON.stringify(r)); } catch (e2) {}
+    }
+    return parts.join(' ');
+};
+
+const uuMatchScore = (queryTokens, blob) => {
+    const b = uuNormalizeText(blob);
+    if (!b || !queryTokens || !queryTokens.length) return 0;
+    const expanded = uuExpandTokens(queryTokens);
+    let score = 0;
+    const phrase = queryTokens.join(' ');
+    if (phrase.length > 2 && b.indexOf(uuNormalizeText(phrase)) >= 0) score += 14;
+    expanded.forEach((tok) => {
+        if (!tok) return;
+        if (b.indexOf(tok) >= 0) score += tok.length >= 4 ? 5 : 3;
+        const st = uuStem(tok);
+        if (st !== tok && b.indexOf(st) >= 0) score += 4;
+        // soft: token inside longer words (copy-paper, papertowel)
+        if (st.length >= 4 && b.indexOf(st) >= 0) score += 1;
+    });
+    return score;
+};
+
+/** Analyze Material inventory for any subject — uses ALL row fields */
+const uuAnalyzeStoreSubject = (question, items) => {
+    const subject = uuExtractSubject(question);
+    const tokens = uuTokenize(subject);
+    const focus = tokens.filter((t) => !/^(store|stores|stock|inventory|sku|item|items|qty|quantity)$/.test(t));
+    if (!focus.length) return null;
+    const rows = Array.isArray(items) ? items : [];
+    const expanded = uuExpandTokens(focus);
+    const scored = [];
+    rows.forEach((r) => {
+        const blob = uuRowBlob(r);
+        const score = uuMatchScore(focus, blob);
+        if (score >= 3) {
+            const qty = Number(
+                r.quantity != null ? r.quantity :
+                r.qty != null ? r.qty :
+                r.qty_on_hand != null ? r.qty_on_hand :
+                r.on_hand != null ? r.on_hand :
+                r.stock_qty != null ? r.stock_qty :
+                r.balance_qty != null ? r.balance_qty : 0
+            ) || 0;
+            scored.push({ r: r, score: score, qty: qty });
+        }
+    });
+    scored.sort((a, b) => b.score - a.score || b.qty - a.qty);
+    const best = scored[0] ? scored[0].score : 0;
+    const hit = scored.filter((s) => s.score >= Math.max(3, best * 0.4));
+    const qtySum = hit.reduce((s, x) => s + x.qty, 0);
+    const nl = String.fromCharCode(10);
+    const lines = hit.slice(0, 25).map((x) => {
+        const r = x.r;
+        const sku = (r.sku || r.item_sku || r.item_code || r.code || r.id) || '—';
+        const name = (r.name || r.item_name || r.description || r.desc) || '';
+        const store = (r.location || r.store || r.warehouse || r.receiving_store || r.store_name) || '—';
+        const unit = (r.unit || r.uom || r.unit_of_measure) || '';
+        return '• ' + sku + (name ? ' — ' + name : '') + ' | qty ' + x.qty + (unit ? ' ' + unit : '') + ' | ' + store + ' | score ' + Math.round(x.score);
+    });
+    // Near misses when empty
+    let near = '';
+    if (!hit.length && rows.length) {
+        const soft = rows.map((r) => {
+            const blob = uuRowBlob(r);
+            return { r: r, score: uuMatchScore(focus, blob) };
+        }).sort((a, b) => b.score - a.score).slice(0, 5);
+        near = nl + 'Closest rows (low score — may still help):' + nl + soft.map((x) => {
+            const r = x.r;
+            const sku = (r.sku || r.item_code || r.id) || '—';
+            const name = (r.name || r.item_name || r.description) || '';
+            return '• ' + sku + (name ? ' — ' + name : '') + ' | score ' + Math.round(x.score);
+        }).join(nl);
+    }
+    const body = [
+        'Store / inventory analysis (all table fields · literal + stem + synonyms):',
+        '• Question subject: ' + (subject || focus.join(' ')),
+        '• Focus tokens: ' + focus.join(', '),
+        '• Expanded search tokens: ' + expanded.slice(0, 12).join(', '),
+        '• Matching SKU types: ' + hit.length,
+        '• Total quantity on matches: ' + qtySum,
+        '• Inventory rows scanned: ' + rows.length,
+        '',
+        hit.length ? 'Matches:' : 'No strong SKU match for those tokens.',
+        lines.join(nl) || '• —',
+        near,
+        '',
+        'Logic: every column on the item row is searched; plurals stem (papers→paper); synonyms (paper↔A4/ream/copy). Quantities come only from qty fields.',
+        'Source: MAT_ITEM_CRUD / inventory master.',
+    ].filter((x) => x !== '').join(nl);
+    return {
+        title: 'Live · Store analysis · ' + (subject || focus.join(' ')) + ' (' + hit.length + ' SKU · qty ' + qtySum + ')',
+        body: body,
+        topic: 'store_item',
+        source: 'session',
+    };
+};
+
+const uuDictionarySearch = (question) => {
+    const q = uuNormalizeText(question);
+    const qTokens = uuTokenize(q);
+    const hits = [];
+    (UU_AI_DICTIONARY || []).forEach((d) => {
+        const term = uuNormalizeText(d.term);
+        const aliases = (d.aliases || []).map(uuNormalizeText);
+        let score = 0;
+        if (q.indexOf(term) >= 0) score += 10;
+        aliases.forEach((a) => { if (a && q.indexOf(a) >= 0) score += 8; });
+        score += uuMatchScore(qTokens, term + ' ' + aliases.join(' ') + ' ' + (d.def || '') + ' ' + (d.tags || []).join(' ')) * 0.35;
+        if (score >= 3) hits.push({ d: d, score: score });
+    });
+    hits.sort((a, b) => b.score - a.score);
+    return hits;
+};
+
+const uuDictionaryAnswer = (question) => {
+    try {
+        const q = String(question || '');
+        const wantsDef = /\b(what is|what's|whats|define|definition|meaning of|explain|dictionary|glossary)\b/i.test(q);
+        const hits = uuDictionarySearch(q);
+        if (!hits.length) return null;
+        if (!wantsDef && hits[0].score < 8) return null;
+        const top = hits.slice(0, 6);
+        const nl = String.fromCharCode(10);
+        const body = [
+            'Dictionary search (literal + contextual):',
+            ...top.map((h, i) => (i + 1) + '. ' + h.d.term + ' — ' + h.d.def + (h.d.aliases && h.d.aliases.length ? ' (also: ' + h.d.aliases.join(', ') + ')' : '')),
+            '',
+            'Tip: for stock quantities ask “how many [item] in store?” — the analyzer searches SKU names/descriptions.',
+        ].join(nl);
+        return { title: 'Dictionary · ' + top[0].d.term, body: body, topic: 'dictionary', source: 'dictionary' };
+    } catch (e) { return null; }
+};
+
+
+const UU_AI_KNOWLEDGE = [
+    {
+        id: 'uu_profile',
+        title: 'Unity University profile',
+        tags: ['unity university', 'university', 'profile', 'about', 'what is unity', 'private', 'ethiopia', 'quality house', 'motto', 'founder', 'president', 'chairman', 'midroc', 'accreditation', 'herqa'],
+        body: 'Unity University (Amharic: ዩኒቲ ዩኒቨርስቲ) is Ethiopia’s pioneer private higher education institution. Motto: “Quality House”. Type: private, co-educational, English-medium instruction. Established 1991 as Unity Language School (English, Arabic, French, Italian). Became the first private college (1998), Unity University College (2002), and the first full-fledged private university (June 2008). Founder: Fisseha Eshetu. Chairman (historical/public listings): Mohammed Hussein Al Amoudi. President/CEO (public listings): Dr. Arega Yirdaw. Accredited by the Ethiopian Ministry of Education; quality agency HERQA is commonly cited. Official website: https://www.uu.edu.et · Student portal: sis.uu.edu.et · General: info@uu.edu.et · Registrar: registrar@uu.edu.et · P.O. Box 6722, Addis Ababa. Main campus identity: Gerji / Al-Amoudi Campus, Addis Ababa. Note: program and leadership titles can change—confirm on uu.edu.et for official decisions.'
+    },
+    {
+        id: 'uu_history',
+        title: 'Unity University history',
+        tags: ['history', 'established', '1991', 'language school', 'college', '2008', 'timeline', 'phases', 'midroc', 'founded', 'founder', 'construct', 'constructed', 'construction', 'built', 'build', 'when', 'year', 'started', 'start', 'opened', 'opening', 'begin', 'began'],
+        body: 'Founded / constructed (as language school): 1991. Full private university status: June 2008.\nTimeline (public institutional history):\n• 1991 — Unity Language School founded; small cohort, language courses.\n• 1993–1994 — Certificate/Diploma in Basic Law; Adama branch begins expanding reach.\n• 1997–1999 — Diploma programs (Accounting, Marketing, Business, Personnel Admin, Secretarial Science); upgraded to college level (~1998), first private college in Ethiopia.\n• 1999–2000 — Undergraduate degrees expand (Accounting, Management, Economics; MIS, Law, Marketing, Computer Technology).\n• Aug 2002 — Renamed Unity University College (first private university college).\n• 2003 — Architecture & Urban Planning, Civil Engineering, Mining, Construction Technology Management; distance education college expands.\n• Feb 2007 — Postgraduate launch: MBA and Master of Development Economics.\n• Jun 2008 — Full university status; later associated with MIDROC Technology Group (public accounts cite membership ~2008–2020).\n• 2011/12 — Health sciences (SalaM Nurses College absorbed); Dessie campus (~2012).\n• 2013/14 onward — Unity Academy (KG–secondary) linked to the university ecosystem.\n• 2016/17 — Burayu campus developments (printing, academy hub, distance).\nPublic sources also cite later expansion of postgraduate fields (e.g. marketing, economics, leadership, project management) and plans toward PhD pathways.'
+    },
+    {
+        id: 'uu_campuses',
+        title: 'Campuses and locations',
+        tags: ['campus', 'campuses', 'gerji', 'al-amoudi', 'adama', 'dessie', 'burayu', 'keranio', 'cmc', 'location', 'address', 'where', 'bole', 'addis', 'phone', 'contact'],
+        body: 'Primary campus identity: Gerji / Al-Amoudi Campus, Addis Ababa (main operational and academic hub). Other locations cited across official and public sources:\n• Adama (Oromia) — undergraduate and related programs; historical early branch.\n• Dessie (Amhara) — undergraduate programs such as Accounting & Finance, Business Administration, Computer Science; TVET offerings reported.\n• Burayu — distance hub / academy / support services.\n• Additional Addis names appearing in public lists: CMC, Keranio/Keranyo (academy/general education contexts).\nContacts (from university contact pages; verify current numbers):\n• Main / Al-Amoudi: +251 (0)11 629 8154 · Fax +251 (0)11 629 8156 · info@uu.edu.et · registrar@uu.edu.et · P.O. Box 6722.\n• Adama: +251 (0)22 111 3666 / 4650 · P.O. Box 1486.\n• Dessie: +251 (0)33 111 5050 / 8604.\n• Burayu: +251 (0)11 260 4983 / 4731.\nModes of study: Regular, Extension, Distance/Continuing; distance coordination centers reported in Addis, Adama, Burayu, Bahir Dar, Debre Berhan.'
+    },
+  { id: 'uu_leadership', title: 'Unity University leadership', tags: ['president', 'vice president', 'vice-president', 'vp', 'ceo', 'chairman', 'founder', 'leadership', 'fisseha', 'amoudi', 'arega', 'vice'], body: 'Publicly cited leadership (always verify on https://www.uu.edu.et for current office-holders):\n• Founder: Fisseha Eshetu\n• Chairman (historical/public listings): Mohammed Hussein Al Amoudi\n• President / CEO (public listings): Dr. Arega Yirdaw\nVice President: universities often have academic and administrative vice presidents. This SIS library does not invent a specific current vice-president name when not published here. Use the official website, board notices, or registrar for the authoritative current vice-president name.' },
+
+    {
+        id: 'uu_programs',
+        title: 'Academic programs and faculties',
+        tags: ['program', 'programs', 'faculty', 'course', 'courses', 'degree', 'undergraduate', 'postgraduate', 'mba', 'engineering', 'nursing', 'computer', 'accounting', 'law', 'tvet', 'masters', 'bachelor'],
+        body: 'Unity organizes teaching mainly under Business/Economics/Social Sciences; Engineering/Technology/Computational Sciences; Health Sciences; and Distance & Continuing Education.\nUndergraduate examples (campus offerings vary): Accounting & Finance, Economics, Business Administration, Marketing Management, Management, Sociology & Social Anthropology, Computer Science, Architecture & Urban Planning, Civil Engineering, Nursing, Public Health, Medical Laboratory Sciences, Law (historical listings).\nPostgraduate examples: MBA, Development Economics, Project Management; expanded masters areas (marketing, economics, leadership) reported by the university.\nTVET examples: Accounting & Finance, Marketing & Sales, Nursing, Midwifery, Hardware Maintenance & Networking, Pharmacy (campus-dependent).\nGeneral education: Unity Academy — KG through primary/secondary at Gerji, Keranyo, Burayu, Adama (as reported).\nDelivery: Regular, Extension, Distance. Always confirm the live prospectus on uu.edu.et because program lists change by campus and year.'
+    },
+    {
+        id: 'uu_vision_mission',
+        title: 'Vision mission and values',
+        tags: ['vision', 'mission', 'goal', 'values', 'strategy', '2030', 'quality'],
+        body: 'Vision (university public statement): to be among leading African universities in teaching-learning and research with international reputation by 2030.\nMission (public statement): contribute to sustainable development of society by providing education from KG to PhD, conducting research at high standards, and participating in community development.\nMotto: Quality House. Positioning: pioneer private HEI in Ethiopia; English-medium; multi-campus; mix of academic, TVET, and academy pathways.'
+    },
+    {
+        id: 'uu_students_admissions',
+        title: 'Students admissions and SIS portal',
+        tags: ['admission', 'admissions', 'student', 'students', 'tuition', 'fee', 'sis', 'registrar', 'enrollment', 'how to apply', 'portal'],
+        body: 'Student information systems and registrar services are central to operations. Public guides point to sis.uu.edu.et for student portal services and registrar@uu.edu.et for academic records.\nAdmissions (typical private HEI pattern in Ethiopia — confirm current rules with Registrar):\n• Undergraduate: secondary completion (Grade 12 / equivalent), institutional requirements, English-medium study.\n• Postgraduate: accredited bachelor degree, institutional GPA/exam requirements (e.g. entrance processes for MBA), recommendations/statement as required.\nTuition is charged in ETB; amounts vary by program and year (media has reported fee adjustments—always use official fee schedules). Scholarships and staff/family support schemes have been described in university history materials (e.g. targeted grants).\nHistorical size notes: older public figures cited ~5,000 students; later media mentions substantially larger multi-campus enrollment—treat headcount as time-sensitive.'
+    },
+    {
+        id: 'uu_notable',
+        title: 'Leadership alumni and recognition',
+        tags: ['alumni', 'notable', 'bethlehem', 'solereb', 'president', 'arega', 'fisseha', 'amoudi', 'ranking'],
+        body: 'Public leadership associations: founder Fisseha Eshetu; chairman listings for Mohammed Hussein Al Amoudi; president/CEO Dr. Arega Yirdaw in contemporary public materials.\nNotable alumni often cited: Bethlehem Tilahun Alemu (entrepreneur, soleRebels), Maria Yusuf (activist).\nRecognition: first private college and first full-fledged private university in Ethiopia; MOE recognition; HERQA referenced for quality assurance. Rankings in global directories are secondary signals only—not substitutes for accreditation status.'
+    },
+    {
+        id: 'sis_overview',
+        title: 'Unity SIS software overview',
+        tags: ['sis', 'system', 'dashboard', 'modules', 'rbac', 'login', 'integration', 'unity sis', 'software', 'app'],
+        body: 'Unity SIS (this application) is an integrated institutional system for Unity University operations with three core modules under shared authentication and RBAC:\n1) Finance — chart of accounts, partners, journals/single transactions, trial balance, general ledger, payroll process & reconciliation, financial statements (position, P&L, cash flow), exports.\n2) HR — employee master, departments, leave, recruitment, training, transfer, appraisal, competence, awards/penalties, role assignment, notifications.\n3) Material — inventory/SKU master, GRV, GIV, purchases, parts robbing; posting hooks toward Finance.\nCross-cutting: module switcher after login, shared credentials/roles, bootstrap from API/PostgreSQL when backend is up, UI Customization (theme, Field Intelligence, Power Geez calendar, unityUniversity AI), mobile-friendly layouts, robust search/export on major tables.'
+    },
+    {
+        id: 'finance_module',
+        title: 'Finance module in depth',
+        tags: ['finance', 'coa', 'chart of accounts', 'journal', 'transaction', 'trial balance', 'tb', 'ledger', 'gl', 'payroll', 'payslip', 'reconciliation', 'partner', 'supplier', 'customer', 'fp', 'p&l', 'cashflow', 'cash flow', 'statement', 'export'],
+        body: 'Finance module purpose: institutional accounting and payroll finance for Unity University.\nKey masters/screens:\n• Chart of Accounts (COA) — account codes (e.g. 6110 salaries, 1141 bank, 1520 inventory-related), types Asset/Liability/Equity/Revenue/Expense.\n• Partners — customers, suppliers, banks, government (ERCA, pension) with default AR/AP/bank/expense/income COA maps.\n• Single transactions & day journals — source lines that feed TB/GL (not synthetic COA-only amounts).\n• Trial Balance & General Ledger — balances from posted transactions/journals (+ payroll postings when integrated).\n• Payroll process — select employees from HR master; earnings (basic, doctoral, allowances, OT, cash indemnity), deductions (PAYE, pension EE/ER, cost sharing, credit, sundry), net pay; payslip print.\n• Payroll reconciliation — I Payment totals vs II difference analysis so III net ≈ 0 when changes are explained.\n• Statements — Financial Position, Profit or Loss, Cash Flow (print-oriented layouts).\n• Exports — Excel/PDF/Word/CSV with institutional header framing.\nOutputs users expect: balanced TB, GL movement, payslips, recon sheets, partner balances, statement packs, audit-friendly exports.'
+    },
+    {
+        id: 'hr_module',
+        title: 'HR module in depth',
+        tags: ['hr', 'human resource', 'employee', 'staff', 'leave', 'recruitment', 'training', 'transfer', 'appraisal', 'competence', 'award', 'department', 'role', 'notification', 'retirement', 'resignation'],
+        body: 'HR module purpose: staff system of record and workforce processes.\nEmployee master fields (representative): ID NO, full name, gender, DOB GC/EC, age, marital status, seniority GC/EC, work location, department, position/academic rank, reporting to, employment category/type, education, GPA, field of study, salary, family contact, pension ID, retirement EC, national ID, TIN, phones, emergency contacts, remarks, system access role.\nOther areas: Departments; Leave; Recruitment / vacancies; Training; Transfer; Appraisal & competence matrix scoring; Awards/penalties; Insurance; attrition/resignation/retirement notifications; Role assignment on users (not only staff names); HR dashboard analytics; Report generator.\nIntegration: employee list and salary attributes feed Finance payroll process; roles feed module RBAC.\nOutputs: complete staff registers, leave balances, recruitment pipelines, appraisal scores, role maps, exportable HR reports, notification triggers (e.g. approaching retirement).'
+    },
+    {
+        id: 'material_module',
+        title: 'Material module in depth',
+        tags: ['material', 'inventory', 'sku', 'grv', 'giv', 'store', 'warehouse', 'purchase', 'po', 'lpo', 'robbing', 'stock', 'item'],
+        body: 'Material module purpose: inventory and store logistics for campuses/stores.\nCore ideas:\n• Item/SKU master — codes, descriptions, units, costs, store locations (e.g. Main Store West, IT Store, Furniture Store), campus.\n• GRV (Goods Received Voucher) — receiving against PO/LPO, vendor, qty, unit cost, line value, inspection, GL/COA, status; can post toward Finance.\n• GIV (Goods Issued Voucher) — issues to departments/jobs.\n• Local/foreign purchase documents; parts robbing (take parts from one asset/item to maintain another—Unity operational meaning).\n• Dashboard cards, search, filters, robust exports matching Finance/HR style.\nIntegration: GRV/GIV postings create finance legs (inventory/expense vs payable/bank) via bridge/API when configured.\nOutputs: stock positions by SKU/store, GRV/GIV registers, purchase follow-up, posting status to Finance, export packs.'
+    },
+    {
+        id: 'integration_flow',
+        title: 'Cross-module integration',
+        tags: ['integration', 'posting', 'bridge', 'sync', 'payroll post', 'material post', 'bootstrap', 'api', 'postgres', 'backend'],
+        body: 'Integration design:\n• Shared Auth/RBAC — one login model; module access by role; users created/assigned roles in settings.\n• SharedData / bootstrap — frontend can load collections from Node/Express API + PostgreSQL (`/api/bootstrap`, `/api/collections/...`).\n• HR → Finance: employee master drives payroll employee select; basic salary and identifiers (TIN, pension) flow into process; payroll commit posts journal legs (wages, tax, pension, net payable).\n• Material → Finance: GRV/GIV post creates balanced transaction legs mapped to COA (e.g. inventory/stock and AP/bank).\n• Finance statements/TB should reflect only real transactions/journals/postings—not random COA seed amounts.\n• When API is down, modules may keep local/session data; production intent is DB as source of truth after seed/migrate.'
+    },
+    {
+        id: 'ui_ai_geez',
+        title: 'UI customization AI and Power Geez',
+        tags: ['ui', 'customization', 'theme', 'geez', 'calendar', 'ethiopian', 'power geez', 'ai', 'assistant', 'field intelligence'],
+        body: 'UI Customization (all modules): atmospheric theme (scale, glass, logo/background), Field Intelligence tooltips, Power Geez Ethiopian↔Gregorian converter with month grid, and unityUniversity AI.\nPower Geez: convert Gregorian→Geez and Geez→Gregorian; calendar click fills converter; month names Meskerem–Pagumen.\nunityUniversity AI: answers from (1) live session data (employees, SKUs, GRV, payroll rows, COA counts, etc.) and (2) this knowledge library about the university and the three modules. Prefer live numbers when the question is about current records; prefer library for institutional facts (history, campuses, programs, contacts).'
+    },
+    {
+        id: 'outputs_reports',
+        title: 'Reports exports and outputs',
+        tags: ['report', 'export', 'excel', 'pdf', 'word', 'csv', 'print', 'payslip', 'output', 'dashboard'],
+        body: 'Common outputs across modules:\n• On-screen dashboards with KPI cards (clickable where implemented to retarget charts/tables).\n• Data tables with search, filters, status chips, add/edit modals.\n• Export dropdown: Excel (formatted workbook headers), Word, PDF, CSV, optional PNG capture—Finance-style framing reused in HR/Material.\n• Finance-specific: TB, GL, FP, P&L, Cash Flow print layouts; payslip full-page print; payroll recon sheet.\n• HR-specific: staff lists, leave/training/appraisal extracts.\n• Material-specific: inventory and GRV/GIV registers.\n• Report generator screens build presentable filtered extracts by collection/fields.'
+    },
+];
+
 
 const uuSafeList = (data, key) => {
     try {
@@ -4949,6 +5279,10 @@ const uuPull = (allData, getCollection, key) => {
         FIN_COA_CRUD: ['FIN_COA_CRUD', 'chartsOfAccounts', 'coa'],
         transactions: ['transactions', 'dayJournals', 'FIN_TRANSACTIONS'],
         PAY_PROCESS_CRUD: ['PAY_PROCESS_CRUD'],
+        HR_AWARD_CRUD: ['HR_AWARD_CRUD', 'HR_AWARD_CRUD_HR', 'HR_STAFF_AWARDS_CRUD', 'awards'],
+        HR_PENALTY_CRUD: ['HR_PENALTY_CRUD', 'penalties'],
+        HR_TRAINING_CRUD: ['HR_TRAINING_CRUD', 'training'],
+        HR_APPRAISAL_CRUD: ['HR_APPRAISAL_CRUD', 'appraisals'],
         HR_LEAVE_CRUD: ['HR_LEAVE_CRUD'],
     };
     try {
@@ -5041,81 +5375,565 @@ const uuResolveQuery = (question, priorTopic, priorQuestion) => {
     try {
         const raw = String(question || '').trim();
         const q = raw.toLowerCase();
-        if (!q) return { query: '', topic: priorTopic || '', filters: {}, followUp: false };
-        const followUp = /^(be )?specific|more detail|tell me more|what about|who are they|those|them|same|again|elaborate|details?|narrow|focus|only the/.test(q)
-            || (q.split(/\s+/).length <= 8 && priorTopic && !/\b(grv|giv|payroll|inventory|sku|partner|coa|student)\b/.test(q));
-        let topic = priorTopic || '';
-        if (/\b(sku|skus|item|items|inventory|stock|product|tables?)\b/.test(q)) topic = 'sku';
-        else if (/\b(employee|employees|staff|worker|personnel|female|male|women|men)\b/.test(q)) topic = 'employee';
+        if (!q) return { query: '', topic: '', filters: {}, followUp: false };
+
+        let topic = '';
+        if (/\b(how many|how much)\b/.test(q) && /\b(store|stock|inventory)\b/.test(q)) topic = 'store_item';
+        else if (/\b(question paper|copy paper|a4 paper|toner|chairs?|tables?)\b/.test(q)) topic = 'store_item';
+        else if (/\b(chairs?|stools?)\b/.test(q)) topic = 'chairs';
+        else if (/\b(basic salary|total basic|total salary)\b/.test(q) || (/\bsalary\b/.test(q) && /\b(total|sum|how much)\b/.test(q))) topic = 'salary_total';
+        else if (/\b(award|awards|awarded|recognition)\b/.test(q)) topic = 'award';
+        else if (/\b(appraisals?|performance review|competence)\b/.test(q)) topic = 'appraisal';
+        else if (/\b(on leave|leave records?|how many .*leave|annual leave|sick leave)\b/.test(q) || (/\bleave\b/.test(q) && /\b(how many|count|list|who)\b/.test(q))) topic = 'leave';
+        else if (/\b(share capital|paid[- ]?up capital|equity capital|how much .*capital|capital now)\b/.test(q) || (/\bcapital\b/.test(q) && /\b(how much|total|current|now|balance)\b/.test(q))) topic = 'capital';
+        else if (/\b(sku|skus|item|items|inventory|stock|product|tables? in store|store tables)\b/.test(q)) topic = 'sku';
+        else if (/\b(how many tables?|tables? in (the )?store)\b/.test(q)) topic = 'tables';
+        else if (/\b(employee|employees|staff|worker|personnel|female|male|women|men|academic|non[- ]?academic)\b/.test(q)) topic = 'employee';
         else if (/\b(grv|goods received)\b/.test(q)) topic = 'grv';
         else if (/\b(giv|goods issued)\b/.test(q)) topic = 'giv';
         else if (/\bleave\b/.test(q)) topic = 'leave';
         else if (/\b(partner|supplier|customer|vendor)\b/.test(q)) topic = 'partner';
         else if (/\b(coa|chart of account)/.test(q)) topic = 'coa';
         else if (/\b(payroll|payslip|salary process)\b/.test(q)) topic = 'payroll';
-        else if (/\b(transaction|journal|trial balance|\btb\b)\b/.test(q)) topic = 'tx';
-        else if (followUp && priorTopic) topic = priorTopic;
+        else if (/\b(profit|loss|p&l|pnl|net income)\b/.test(q)) topic = 'profit';
+        else if (/\b(trial\s*balance|\btb\b)\b/.test(q)) topic = 'tb';
+        else if (/\b(transaction|journal)\b/.test(q)) topic = 'tx';
+
+        const softFollow = /^(be )?specific|more detail|tell me more|what about (them|those|it)|elaborate|details?$|narrow|focus on that|same as above|specific number|exact number|how many exactly/.test(q);
+        const followUp = softFollow && !!priorTopic && !topic;
+        if (followUp) topic = priorTopic;
+
         let query = raw;
-        if (followUp && priorTopic) query = raw + ' (about ' + priorTopic + (priorQuestion ? '; earlier: ' + priorQuestion : '') + ')';
+        if (followUp && priorTopic) {
+            query = raw + ' (about ' + priorTopic + (priorQuestion ? '; earlier: ' + priorQuestion : '') + ')';
+        }
+        // Follow-ups like "specific number of awards?" keep awards topic
+        if (!topic && priorTopic && /\b(specific|number|count|how many|exact)\b/.test(q)) topic = priorTopic;
+
         const filterSrc = query + (followUp && priorQuestion ? ' ' + priorQuestion : '');
-        return { query, topic, followUp: !!followUp, filters: uuParseEmployeeFilters(filterSrc) };
+        return { query, topic, followUp: !!followUp, filters: typeof uuParseEmployeeFilters === 'function' ? uuParseEmployeeFilters(filterSrc) : {} };
     } catch (err) {
-        return { query: String(question || ''), topic: priorTopic || '', filters: {}, followUp: false };
+        return { query: String(question || ''), topic: '', filters: {}, followUp: false };
     }
 };
+
+
 const unityUniversityLiveAnswer = (question, allData, getCollection, topicHint, filtersIn) => {
     try {
         const q = String(question || '').toLowerCase().trim();
         if (!q && !topicHint) return null;
-        const filters = filtersIn || uuParseEmployeeFilters(q) || {};
-        let topic = topicHint || '';
+        const filters = filtersIn || (typeof uuParseEmployeeFilters === 'function' ? uuParseEmployeeFilters(q) : {}) || {};
+                let topic = topicHint || '';
         if (!topic) {
-            if (/\b(sku|skus|item|items|inventory|stock|tables?)\b/.test(q)) topic = 'sku';
-            else if (/\b(employee|staff|female|male|women|men|personnel)\b/.test(q) || filters.gender) topic = 'employee';
+            // Specific operational questions FIRST (before broad employee/module matches)
+            if (/(campus|campuses|president|vice[ -]?president|vp|chairman|founder|leadership|faculty|college|university only)/.test(q)) topic = 'institutional';
+            else if (/(how many|how much|quantity|qty)/.test(q) && /(store|stock|inventory|sku|warehouse)/.test(q) && !/(campus|president|university leadership)/.test(q)) topic = 'store_item';
+            else if (/(question paper|copy paper|a4|toner|chairs?|tables?|desks?|pens?|paper towel)/.test(q) && /(store|stock|how many|how much|inventory)/.test(q)) topic = 'store_item';
+            else if (/\b(chairs?|stools?)\b/.test(q)) topic = 'chairs';
+            else if (/\b(basic salary|total basic|sum of (the )?salary|total salary|payroll basic)\b/.test(q) || (/\bsalary\b/.test(q) && /\b(total|sum|how much|aggregate)\b/.test(q))) topic = 'salary_total';
+            else if (/\b(award|awards|awarded|recognition|medal|prize)\b/.test(q)) topic = 'award';
+            else if (/\b(appraisals?|performance review|competence matrix|evaluation)\b/.test(q)) topic = 'appraisal';
+            else if (/\b(on leave|leave records?|how many .*leave|leave balance|annual leave|sick leave)\b/.test(q) || (/\bleave\b/.test(q) && /\b(how many|count|list|who|employee|staff)\b/.test(q))) topic = 'leave';
+            else if (/\b(share capital|paid[- ]?up capital|equity capital|how much .*capital|capital now|owners'? equity)\b/.test(q) || (/\bcapital\b/.test(q) && /\b(how much|total|current|now|balance)\b/.test(q))) topic = 'capital';
+            else if (/\b(profit|loss|p&l|pnl|surplus|deficit|net income|revenue|income statement)\b/.test(q)) topic = 'profit';
+            else if (/\b(trial\s*balance|\btb\b)\b/.test(q)) topic = 'tb';
+            else if (/\b(transaction|journal|ledger entry|list of transaction)\b/.test(q)) topic = 'tx';
+            else if (/\b(academic|acedamic|non[-\s]?academic|non[-\s]?acedamic|nonacademic|nonacedamic)\b/.test(q)) topic = 'emp_category';
+            else if (/\b(how many tables?|tables? in (the )?store|office tables?|furniture tables?)\b/.test(q)) topic = 'tables';
+            else if (/\btables?\b/.test(q) && /\bstore\b/.test(q)) topic = 'tables';
+            else if (/\b(sku|skus|item|items|inventory|stock)\b/.test(q)) topic = 'sku';
             else if (/\bgrv\b/.test(q)) topic = 'grv';
             else if (/\bgiv\b/.test(q)) topic = 'giv';
             else if (/\bleave\b/.test(q)) topic = 'leave';
+            else if (/\b(employee|staff|female|male|women|men|personnel)\b/.test(q) || filters.gender) topic = 'employee';
             else if (/\b(partner|supplier|customer)\b/.test(q)) topic = 'partner';
             else if (/\b(coa|chart of account)/.test(q)) topic = 'coa';
             else if (/\b(payroll|payslip)\b/.test(q)) topic = 'payroll';
-            else if (/\b(transaction|journal|\btb\b)\b/.test(q)) topic = 'tx';
+            else if (/\b(dashboard|overview|summary|kpi)\b/.test(q)) topic = 'dashboard';
         }
-        const employees = uuCorrectEmployeeList(uuPull(allData, getCollection, 'HR_EMPLOYEE_CRUD'));
+
+        const employees = (typeof uuCorrectEmployeeList === 'function'
+            ? uuCorrectEmployeeList(uuPull(allData, getCollection, 'HR_EMPLOYEE_CRUD'))
+            : uuPull(allData, getCollection, 'HR_EMPLOYEE_CRUD'));
         const leave = uuPull(allData, getCollection, 'HR_LEAVE_CRUD');
         const items = uuPull(allData, getCollection, 'MAT_ITEM_CRUD');
         const grv = uuPull(allData, getCollection, 'MAT_GRV_CRUD');
         const giv = uuPull(allData, getCollection, 'MAT_GIV_CRUD');
         const partners = uuPull(allData, getCollection, 'FIN_PARTNERS_CRUD');
         const coa = uuPull(allData, getCollection, 'FIN_COA_CRUD');
-        const tx = uuPull(allData, getCollection, 'transactions');
+        let tx = uuPull(allData, getCollection, 'transactions');
+        if (!tx.length) tx = uuPull(allData, getCollection, 'dayJournals');
         const process = uuPull(allData, getCollection, 'PAY_PROCESS_CRUD');
+        const awards = uuPull(allData, getCollection, 'HR_AWARD_CRUD');
+        const penalties = uuPull(allData, getCollection, 'HR_PENALTY_CRUD');
+        const training = uuPull(allData, getCollection, 'HR_TRAINING_CRUD');
+        const appraisals = uuPull(allData, getCollection, 'HR_APPRAISAL_CRUD');
+        const yearNow = new Date().getFullYear();
 
+        const money = (n) => {
+            const v = Number(n) || 0;
+            try { return v.toLocaleString('en-ET', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+            catch (e) { return String(Math.round(v * 100) / 100); }
+        };
+        const txDebit = (r) => Number(r && (r.debit != null ? r.debit : (r.type === 'Debit' || r.txn_type === 'Debit' ? r.amount : 0))) || 0;
+        const txCredit = (r) => Number(r && (r.credit != null ? r.credit : (r.type === 'Credit' || r.txn_type === 'Credit' ? r.amount : 0))) || 0;
+        const txAcc = (r) => String((r && (r.account_code || r.account_no || r.account_id || r.accountCode || r.coa)) || '—').replace(/^acc-/i, '');
+        const txName = (r) => String((r && (r.account_name || r.narration || r.description || r.name)) || '').trim();
+        const txDate = (r) => String((r && (r.date || r.txn_date || r.posting_date || r.created_at)) || '').slice(0, 10);
+        const txYear = (r) => {
+            const d = txDate(r);
+            const y = parseInt(d.slice(0, 4), 10);
+            return Number.isFinite(y) ? y : yearNow;
+        };
+
+        // Build simple TB from transactions
+        const buildTb = () => {
+            const ledger = {};
+            (tx || []).forEach((r) => {
+                const acc = txAcc(r);
+                if (!acc || acc === '—') return;
+                if (!ledger[acc]) ledger[acc] = { account: acc, name: txName(r) || acc, debit: 0, credit: 0 };
+                ledger[acc].debit += txDebit(r);
+                ledger[acc].credit += txCredit(r);
+                if (!ledger[acc].name || ledger[acc].name === acc) {
+                    const nm = txName(r);
+                    if (nm) ledger[acc].name = nm;
+                }
+            });
+            // enrich names from COA
+            (coa || []).forEach((c) => {
+                const code = String((c && (c.account_no || c.account_code || c.id)) || '').replace(/^acc-/i, '');
+                if (code && ledger[code]) {
+                    ledger[code].name = c.name || c.desc || c.description || ledger[code].name;
+                    ledger[code].type = c.account_type || c.type || c.category || '';
+                }
+            });
+            return Object.values(ledger).sort((a, b) => String(a.account).localeCompare(String(b.account)));
+        };
+
+        const classifyAcc = (code, typeHint) => {
+            const t = String(typeHint || '').toLowerCase();
+            if (/revenue|income/.test(t)) return 'revenue';
+            if (/expense|cost/.test(t)) return 'expense';
+            if (/asset/.test(t)) return 'asset';
+            if (/liab/.test(t)) return 'liability';
+            if (/equity|capital/.test(t)) return 'equity';
+            const c = String(code || '');
+            const head = parseInt(c.slice(0, 1), 10) || parseInt(c.slice(0, 4), 10);
+            // UU-style: 1xxx assets, 2xxx liabilities, 3xxx equity, 4xxx revenue, 5-6xxx expense (approx)
+            if (/^4/.test(c)) return 'revenue';
+            if (/^[56]/.test(c)) return 'expense';
+            if (/^1/.test(c)) return 'asset';
+            if (/^2/.test(c)) return 'liability';
+            if (/^3/.test(c)) return 'equity';
+            return 'other';
+        };
+
+        const empCategory = (e) => {
+            const raw = String((e && (e.employment_category || e.category || e.emp_category || e.EmploymentCategory || e.staff_type)) || '').toLowerCase();
+            if (/non[-\s]?academic|nonacademic|admin|support/.test(raw)) return 'non-academic';
+            if (/academic|lecturer|faculty|teaching/.test(raw)) return 'academic';
+            // infer from position
+            const pos = String((e && (e.current_position || e.position || e.job_title || e.title)) || '').toLowerCase();
+            if (/lecturer|professor|dean|academic/.test(pos)) return 'academic';
+            if (/officer|registrar|finance|hr |human|store|material|it |admin/.test(pos)) return 'non-academic';
+            return raw ? raw : 'unspecified';
+        };
+
+        // —— Dashboard overview ——
+        if (topic === 'dashboard' || (!topic && /\b(overview|summary)\b/.test(q))) {
+            const census = typeof uuGenderCensus === 'function' ? uuGenderCensus(employees) : { total: employees.length, female: 0, male: 0, unknown: 0 };
+            const tb = buildTb();
+            let td = 0, tc = 0;
+            tb.forEach((r) => { td += r.debit; tc += r.credit; });
+            return {
+                title: 'Live · SIS dashboard snapshot',
+                body: [
+                    'Institutional live snapshot (session data):',
+                    '• Employees: ' + census.total + ' (F ' + census.female + ' · M ' + census.male + ')',
+                    '• Leave rows: ' + leave.length,
+                    '• Inventory SKUs: ' + items.length,
+                    '• GRV: ' + grv.length + ' · GIV: ' + giv.length,
+                    '• Partners: ' + partners.length,
+                    '• COA rows: ' + coa.length,
+                    '• Transactions/journals: ' + tx.length,
+                    '• Payroll process rows: ' + process.length,
+                    '• Trial balance accounts with movement: ' + tb.length,
+                    '• TB totals — Debit ' + money(td) + ' · Credit ' + money(tc),
+                    '',
+                    'Ask follow-ups: trial balance · list of transactions · profit this year · academic vs non-academic · female staff · SKUs · GRV',
+                ].join(String.fromCharCode(10)),
+            };
+        }
+
+        // —— Academic vs non-academic ——
+        if (topic === 'emp_category' || /\b(academic|acedamic|non[-\s]?academic|non[-\s]?acedamic)\b/.test(q)) {
+            const groups = { academic: [], 'non-academic': [], unspecified: [] };
+            (employees || []).forEach((e) => {
+                const c = empCategory(e);
+                if (!groups[c]) groups[c] = [];
+                groups[c].push(e);
+            });
+            const linePeople = (arr) => arr.slice(0, 12).map((e) => {
+                const id = typeof uuEmpId === 'function' ? uuEmpId(e) : (e.id_number || e.id);
+                const name = typeof uuEmpName === 'function' ? uuEmpName(e) : (e.full_name || e.name);
+                const pos = typeof uuEmpPos === 'function' ? uuEmpPos(e) : (e.current_position || e.position || '—');
+                return '  • ' + id + ' | ' + name + ' | ' + pos;
+            }).join(String.fromCharCode(10));
+            const body = [
+                'Staff by employment category (live HR master):',
+                '• Academic: ' + groups.academic.length,
+                '• Non-academic: ' + groups['non-academic'].length,
+                '• Unspecified: ' + groups.unspecified.length,
+                '• Total employees: ' + employees.length,
+                '',
+                'Academic sample:',
+                linePeople(groups.academic) || '  • —',
+                '',
+                'Non-academic sample:',
+                linePeople(groups['non-academic']) || '  • —',
+                '',
+                'Category is read from employment_category when present, else inferred from position (Lecturer→academic, Officer→non-academic).',
+                'Source: HR_EMPLOYEE_CRUD.',
+            ].join(String.fromCharCode(10));
+            return { title: 'Live · Academic vs non-academic (' + groups.academic.length + ' / ' + groups['non-academic'].length + ')', body };
+        }
+
+        // —— Employees (gender / general) ——
         if (topic === 'employee' || filters.gender || /\b(employee|staff|female|male|women|men|personnel)\b/.test(q)) {
-            const census = uuGenderCensus(employees);
-            const filtered = uuFilterEmployees(employees, filters);
-            const filteredCensus = uuGenderCensus(filtered);
+            const census = typeof uuGenderCensus === 'function' ? uuGenderCensus(employees) : { total: employees.length, female: 0, male: 0, unknown: 0 };
+            const filtered = typeof uuFilterEmployees === 'function' ? uuFilterEmployees(employees, filters) : employees;
+            const filteredCensus = typeof uuGenderCensus === 'function' ? uuGenderCensus(filtered) : { total: filtered.length, female: 0, male: 0, unknown: 0 };
             const n = filtered.length;
             let logicNote = filters.gender
                 ? ('Logic check: list length ' + n + ' vs ' + filters.gender + ' in list ' + (filters.gender === 'female' ? filteredCensus.female : filteredCensus.male) + '.')
                 : '';
             const depts = {};
-            filtered.forEach((e) => { const d = uuEmpDept(e); depts[d] = (depts[d] || 0) + 1; });
-            const deptLines = Object.entries(depts).sort((a, b) => b[1] - a[1]).slice(0, 12).map(([d, c]) => '• ' + d + ': ' + c).join('\n');
-            const lines = filtered.slice(0, 30).map((e) => '• ' + uuEmpId(e) + ' | ' + uuEmpName(e) + ' | ' + uuNormalizeGender(uuEmpGenderRaw(e)) + ' | ' + uuEmpPos(e) + ' | ' + uuEmpDept(e));
+            filtered.forEach((e) => {
+                const d = typeof uuEmpDept === 'function' ? uuEmpDept(e) : ((e && e.department) || '—');
+                depts[d] = (depts[d] || 0) + 1;
+            });
+            const deptLines = Object.entries(depts).sort((a, b) => b[1] - a[1]).map(([d, c]) => '• ' + d + ': ' + c).join(String.fromCharCode(10));
+            const lines = filtered.slice(0, 30).map((e) => {
+                const id = typeof uuEmpId === 'function' ? uuEmpId(e) : (e.id_number || '—');
+                const name = typeof uuEmpName === 'function' ? uuEmpName(e) : (e.full_name || '—');
+                const g = typeof uuNormalizeGender === 'function' ? uuNormalizeGender(e.gender) : String(e.gender || '');
+                const pos = typeof uuEmpPos === 'function' ? uuEmpPos(e) : (e.current_position || '—');
+                const dept = typeof uuEmpDept === 'function' ? uuEmpDept(e) : (e.department || '—');
+                return '• ' + id + ' | ' + name + ' | ' + g + ' | ' + pos + ' | ' + dept;
+            });
             const filterBits = [];
             if (filters.gender) filterBits.push('gender=' + filters.gender);
             if (filters.department) filterBits.push('department~' + filters.department);
             if (filters.location) filterBits.push('location~' + filters.location);
-            let head = 'Employees (live HR data)\n• Matching: ' + n + '\n• Total in master: ' + census.total + '\n• Full split: female ' + census.female + ' · male ' + census.male + ' · unspecified ' + census.unknown + '\n';
+            // mini category split on filtered set
+            let ac = 0, nac = 0;
+            filtered.forEach((e) => { const c = empCategory(e); if (c === 'academic') ac++; else if (c === 'non-academic') nac++; });
+            let head = 'Employees (live HR data)\n• Matching: ' + n + '\n• Total in master: ' + census.total + '\n• Full split: female ' + census.female + ' · male ' + census.male + ' · unspecified ' + census.unknown + '\n• In this set — academic ' + ac + ' · non-academic ' + nac + '\n';
             if (n === 0) {
                 return { title: filters.gender ? ('Live · ' + filters.gender + ' employees') : 'Live · HR employees', body: head + '• Filters: ' + (filterBits.join(', ') || 'none') + '\n\nNo rows match.\n' + logicNote + '\nSource: HR_EMPLOYEE_CRUD.' };
             }
             return {
                 title: filters.gender ? ('Live · ' + filters.gender + ' employees (' + n + ')') : ('Live · HR employees (' + n + ')'),
-                body: head + '• Active filters: ' + (filterBits.join(', ') || 'none') + '\n\nBy department:\n' + (deptLines || '• —') + '\n\nPeople (' + Math.min(n, 30) + (n > 30 ? ' of ' + n : '') + '):\n' + lines.join('\n') + '\n\n' + logicNote + '\nGender uses the record field, corrected from first name when the name is a known male/female Ethiopian name.\nSource: HR_EMPLOYEE_CRUD.',
+                body: head + '• Active filters: ' + (filterBits.join(', ') || 'none') + '\n\nBy department:\n' + (deptLines || '• —') + '\n\nPeople (' + Math.min(n, 30) + (n > 30 ? ' of ' + n : '') + '):\n' + lines.join(String.fromCharCode(10)) + String.fromCharCode(10,10) + logicNote + '\nGender uses the record field, corrected from first name when the name is a known male/female Ethiopian name.\nSource: HR_EMPLOYEE_CRUD.',
             };
         }
-        if (topic === 'sku' || /\b(sku|skus|inventory|stock|tables?)\b/.test(q)) {
+
+        // —— Transactions list ——
+        if (topic === 'tx' || /\b(transaction|journal|list of transaction)\b/.test(q)) {
+            const n = tx.length;
+            if (!n) {
+                return { title: 'Live · Transactions (0)', body: 'No transaction/journal rows in session data.\nPost single transactions, day journals, payroll, or Material GRV so they appear here.\nSources tried: transactions, dayJournals.' };
+            }
+            let sumD = 0, sumC = 0;
+            const byYear = {};
+            tx.forEach((r) => {
+                sumD += txDebit(r);
+                sumC += txCredit(r);
+                const y = txYear(r);
+                byYear[y] = (byYear[y] || 0) + 1;
+            });
+            const yearLines = Object.entries(byYear).sort((a, b) => String(b[0]).localeCompare(String(a[0]))).map(([y, c]) => '• ' + y + ': ' + c + ' line(s)').join(String.fromCharCode(10));
+            const lines = tx.slice(0, 25).map((r, i) => {
+                const d = txDebit(r);
+                const c = txCredit(r);
+                return (i + 1) + '. ' + txDate(r) + ' | ' + txAcc(r) + ' | ' + (txName(r) || '—').slice(0, 40) + ' | Dr ' + money(d) + ' | Cr ' + money(c);
+            });
+            return {
+                title: 'Live · Transactions (' + n + ')',
+                body: [
+                    'Finance transaction / journal lines (live):',
+                    '• Lines: ' + n,
+                    '• Total debit: ' + money(sumD) + ' ETB',
+                    '• Total credit: ' + money(sumC) + ' ETB',
+                    '• Imbalance (Dr − Cr): ' + money(sumD - sumC) + ' ETB',
+                    '',
+                    'By year:',
+                    yearLines || '• —',
+                    '',
+                    'Sample lines (up to 25):',
+                    lines.join(String.fromCharCode(10)),
+                    '',
+                    'Dashboard tip: ask “trial balance” or “what profit did we achieve this year?” for analysed views.',
+                    'Source: transactions / dayJournals.',
+                ].join(String.fromCharCode(10)),
+            };
+        }
+
+        // —— Trial balance ——
+        if (topic === 'tb' || /\b(trial\s*balance|\btb\b)\b/.test(q)) {
+            const rows = buildTb();
+            if (!rows.length) {
+                return { title: 'Live · Trial balance (empty)', body: 'No movement to build TB. Need posted transactions/journals.\nCOA rows available: ' + coa.length + ' (structure only; balances come from transactions).' };
+            }
+            let td = 0, tc = 0;
+            rows.forEach((r) => { td += r.debit; tc += r.credit; });
+            const lines = rows.slice(0, 40).map((r) => {
+                const bal = r.debit - r.credit;
+                const side = bal >= 0 ? ('Dr ' + money(bal)) : ('Cr ' + money(-bal));
+                return '• ' + r.account + ' | ' + String(r.name || '').slice(0, 36) + ' | Dr ' + money(r.debit) + ' | Cr ' + money(r.credit) + ' | Net ' + side;
+            });
+            return {
+                title: 'Live · Trial balance (' + rows.length + ' accounts)',
+                body: [
+                    'Trial balance built from live transactions (not COA seed zeros):',
+                    '• Accounts with movement: ' + rows.length,
+                    '• Total debit: ' + money(td) + ' ETB',
+                    '• Total credit: ' + money(tc) + ' ETB',
+                    '• Difference: ' + money(td - tc) + ' ETB ' + (Math.abs(td - tc) < 0.05 ? '(balanced ✓)' : '(review postings)'),
+                    '',
+                    'Accounts:',
+                    lines.join(String.fromCharCode(10)),
+                    rows.length > 40 ? '\n… +' + (rows.length - 40) + ' more accounts' : '',
+                    '',
+                    'Source: sum of transaction debits/credits by account_code; names enriched from FIN_COA_CRUD when present.',
+                ].join(String.fromCharCode(10)),
+            };
+        }
+
+        // —— Profit / P&L current year ——
+
+        if (topic === 'chairs' || (/\bchairs?\b/.test(q) && /\b(store|inventory|sku|how many|stock|furniture)\b/.test(q)) || topic === 'furniture') {
+            const rows = Array.isArray(items) ? items : [];
+            const matchWord = topic === 'chairs' || /\bchairs?\b/.test(q) ? /chair|stool|seat/i : /chair|desk|table|furniture|sofa|cabinet|stool/i;
+            const hit = rows.filter((r) => matchWord.test(JSON.stringify(r || {})));
+            let qtySum = 0;
+            const lines = hit.slice(0, 20).map((r) => {
+                const sku = (r && (r.sku || r.item_sku || r.item_code || r.code || r.id)) || '—';
+                const name = (r && (r.name || r.item_name || r.description)) || '';
+                const qty = Number(r && (r.quantity != null ? r.quantity : r.qty)) || 0;
+                qtySum += qty;
+                const store = (r && (r.location || r.store || r.warehouse || r.receiving_store)) || '—';
+                return '• ' + sku + (name ? ' — ' + name : '') + ' | qty ' + qty + ' | ' + store;
+            });
+            // If filtering chairs only, recompute qtySum from chair rows only
+            if (/\bchairs?\b/.test(q)) {
+                qtySum = hit.reduce((s, r) => s + (Number(r && (r.quantity != null ? r.quantity : r.qty)) || 0), 0);
+            }
+            const nl = String.fromCharCode(10);
+            const body = [
+                'Inventory interpretation (Material master — not database tables):',
+                '• Matching SKU types: ' + hit.length,
+                '• Total quantity on those SKUs: ' + qtySum,
+                '• All inventory SKU rows: ' + rows.length,
+                '',
+                'Matching items:',
+                lines.join(nl) || '• No matching furniture/chair SKU in MAT_ITEM_CRUD.',
+                '',
+                'Logical note: “how many chairs in store” sums quantity fields on chair-related SKUs.',
+                'Source: MAT_ITEM_CRUD / inventory master.',
+            ].join(nl);
+            return { title: 'Live · Store items (' + hit.length + ' SKU · qty ' + qtySum + ')', body: body, topic: 'chairs', source: 'session' };
+        }
+
+
+        if (topic === 'salary_total' || (/\b(basic salary|total basic|sum of salary|total salary|payroll basic)\b/.test(q)) || (/\bsalary\b/.test(q) && /\b(total|sum|how much|aggregate)\b/.test(q))) {
+            const rows = Array.isArray(employees) ? employees : [];
+            let total = 0;
+            let n = 0;
+            const lines = [];
+            rows.forEach((r) => {
+                const sal = Number(r && (r.current_salary != null ? r.current_salary : (r.basic_salary != null ? r.basic_salary : (r.salary != null ? r.salary : r.basic)))) || 0;
+                if (sal > 0) n += 1;
+                total += sal;
+            });
+            rows.slice(0, 15).forEach((r) => {
+                const who = (r && (r.full_name || r.name || r.employee_name || r.id_no || r.id)) || '—';
+                const sal = Number(r && (r.current_salary != null ? r.current_salary : (r.basic_salary != null ? r.basic_salary : (r.salary != null ? r.salary : r.basic)))) || 0;
+                lines.push('• ' + who + ' · ' + (sal ? sal.toLocaleString('en-ET', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00') + ' ETB');
+            });
+            const nl = String.fromCharCode(10);
+            const money = (v) => {
+                try { return Number(v).toLocaleString('en-ET', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+                catch (e) { return String(v); }
+            };
+            const body = [
+                'Total basic / current salary from HR employee master (live):',
+                '• Employees in master: ' + rows.length,
+                '• Employees with salary > 0: ' + n,
+                '• Sum of current/basic salary: ' + money(total) + ' ETB',
+                '',
+                'Sample (up to 15):',
+                lines.join(nl) || '• No employee rows.',
+                '',
+                'Logical note: this is the HR master total, not necessarily the latest payroll process batch net pay.',
+                'Moral note: salary figures are sensitive — only visible according to your role access in the system.',
+                'Source: HR_EMPLOYEE_CRUD (current_salary / basic_salary / salary).',
+            ].join(nl);
+            return { title: 'Live · Total basic salary (' + money(total) + ' ETB)', body: body, topic: 'salary_total', source: 'session' };
+        }
+
+
+        if (topic === 'profit' || /\b(profit|loss|p&l|pnl|surplus|net income)\b/.test(q)) {
+            const yMatch = q.match(/\b(20\d{2})\b/);
+            const year = yMatch ? parseInt(yMatch[1], 10) : yearNow;
+            let revenue = 0, expense = 0;
+            const revLines = [];
+            const expLines = [];
+            const tb = buildTb();
+            // Prefer year-filtered txs
+            const yearTx = (tx || []).filter((r) => txYear(r) === year);
+            const useRows = yearTx.length ? yearTx : (tx || []);
+            const usedYearFilter = yearTx.length > 0;
+            useRows.forEach((r) => {
+                const code = txAcc(r);
+                const coaRow = (coa || []).find((c) => String(c.account_no || c.account_code || '').replace(/^acc-/i, '') === code);
+                const kind = classifyAcc(code, coaRow && (coaRow.account_type || coaRow.type));
+                const d = txDebit(r);
+                const c = txCredit(r);
+                if (kind === 'revenue') {
+                    // revenue normally credit-balance
+                    const amt = c - d;
+                    revenue += amt;
+                    if (Math.abs(amt) > 0.001) revLines.push({ code, name: txName(r) || (coaRow && coaRow.name) || code, amt });
+                } else if (kind === 'expense') {
+                    const amt = d - c;
+                    expense += amt;
+                    if (Math.abs(amt) > 0.001) expLines.push({ code, name: txName(r) || (coaRow && coaRow.name) || code, amt });
+                }
+            });
+            // Aggregate duplicate accounts in samples
+            const agg = (arr) => {
+                const m = {};
+                arr.forEach((x) => {
+                    const k = x.code;
+                    if (!m[k]) m[k] = { code: k, name: x.name, amt: 0 };
+                    m[k].amt += x.amt;
+                });
+                return Object.values(m).sort((a, b) => Math.abs(b.amt) - Math.abs(a.amt));
+            };
+            const revA = agg(revLines).slice(0, 12);
+            const expA = agg(expLines).slice(0, 12);
+            const profit = revenue - expense;
+            const body = [
+                'Profit / loss analysis (live transactions' + (usedYearFilter ? ', year ' + year : ', all dated lines — few/no rows tagged ' + year) + '):',
+                '• Revenue (Cr − Dr on income accounts): ' + money(revenue) + ' ETB',
+                '• Expense (Dr − Cr on expense accounts): ' + money(expense) + ' ETB',
+                '• Net ' + (profit >= 0 ? 'profit' : 'loss') + ': ' + money(Math.abs(profit)) + ' ETB',
+                '',
+                'Top revenue accounts:',
+                revA.length ? revA.map((r) => '• ' + r.code + ' ' + String(r.name).slice(0, 40) + ' · ' + money(r.amt)).join(String.fromCharCode(10)) : '• — none classified',
+                '',
+                'Top expense accounts:',
+                expA.length ? expA.map((r) => '• ' + r.code + ' ' + String(r.name).slice(0, 40) + ' · ' + money(r.amt)).join(String.fromCharCode(10)) : '• — none classified',
+                '',
+                'Classification uses COA type when available, else account code head (4xxx≈revenue, 5–6xxx≈expense).',
+                'This is an operational snapshot from session postings — not a signed statutory statement.',
+                'Transactions used: ' + useRows.length + ' · TB accounts overall: ' + tb.length,
+            ].join(String.fromCharCode(10));
+            return { title: 'Live · P&L snapshot ' + year + ' (' + (profit >= 0 ? 'profit' : 'loss') + ' ' + money(Math.abs(profit)) + ')', body };
+        }
+
+        // —— SKU / inventory ——
+        
+        // —— 
+
+        
+        // —— Generic store item analysis (question paper, chairs, toner, …) ——
+        if (topic === 'institutional' || /\b(campus|campuses|president|vice[ -]?president|chairman|founder)\b/.test(q)) {
+            // fall through — university facts from knowledge library
+        } else if (
+            topic === 'store_item' || topic === 'chairs' || topic === 'tables' || topic === 'furniture' ||
+            (/\b(in store|in stock|inventory|warehouse)\b/.test(q) && /\b(how many|how much|quantity|qty)\b/.test(q) && !/\b(campus|employee|staff|salary)\b/.test(q))
+        ) {
+            const analyzed = typeof uuAnalyzeStoreSubject === 'function' ? uuAnalyzeStoreSubject(q, items) : null;
+            if (analyzed && analyzed.body) return analyzed;
+        }
+
+
+
+        if (topic === 'tables' || (/\\btable/.test(q) && /\\b(store|sku|inventory|furniture|how many)\\b/.test(q))) {
+            const furniture = (items || []).filter((r) => {
+                const blob = JSON.stringify(r || {}).toLowerCase();
+                return /table|desk|chair|furniture|sofa|cabinet/.test(blob);
+            });
+            const tablesOnly = (items || []).filter((r) => {
+                const blob = JSON.stringify(r || {}).toLowerCase();
+                return /\\btable\\b|desk/.test(blob);
+            });
+            const lines = tablesOnly.slice(0, 15).map((r) => {
+                const sku = (r && (r.sku || r.item_sku || r.item_code || r.code || r.id)) || '—';
+                const name = (r && (r.name || r.item_name || r.description)) || '';
+                const qty = (r && (r.quantity != null ? r.quantity : r.qty));
+                return '• ' + sku + (name ? ' — ' + name : '') + ' | qty ' + (qty ?? '—');
+            });
+            const storeSet = {};
+            (items || []).forEach((r) => {
+                const s = (r && (r.location || r.store || r.warehouse || r.receiving_store)) || 'Main store';
+                storeSet[s] = true;
+            });
+            return {
+                title: 'Live · Tables / furniture in store (' + tablesOnly.length + ' SKU types)',
+                body: [
+                    'Interpreted “tables in store” as furniture inventory (not database tables).',
+                    '• Table/desk SKU types: ' + tablesOnly.length,
+                    '• Broader furniture SKU types (chair/desk/table/cabinet…): ' + furniture.length,
+                    '• Total inventory SKU rows: ' + items.length,
+                    '• Distinct store locations: ' + Object.keys(storeSet).length + ' (' + Object.keys(storeSet).join(', ') + ')',
+                    '',
+                    'Matching table/desk items:',
+                    lines.join(String.fromCharCode(10)) || '• No SKU name contains table/desk — check Material master descriptions.',
+                    '',
+                    'Also try: How many SKUs? · GRV count · inventory by store',
+                    'Source: MAT_ITEM_CRUD.',
+                ].join(String.fromCharCode(10)),
+            };
+        }
+
+        // —— Awards ——
+                if (topic === 'award' || /\b(award|awards|awarded|recognition)\b/.test(q)) {
+            const rows = Array.isArray(awards) ? awards : [];
+            const n = rows.length;
+            const lines = rows.slice(0, 25).map((r, i) => {
+                const who = (r && (r.employee_name || r.full_name || r.name || r.staff_name || r.employee_id || r.id_no)) || '—';
+                const title = (r && (r.award_title || r.title || r.award_type || r.type || r.category)) || 'Award';
+                const when = (r && (r.date || r.award_date || r.created_at || r.year)) || '';
+                return '• ' + (i + 1) + '. ' + who + ' — ' + title + (when ? ' (' + when + ')' : '');
+            });
+            const body = [
+                'Awards / recognition (live HR data):',
+                '• Exact count: ' + n,
+                '• Employees in master (for context): ' + employees.length,
+                '',
+                n ? 'Records:' : 'No award rows in session.',
+                lines.join(String.fromCharCode(10)) || '• Seed HR_AWARD_CRUD or add awards under HR → Awards.',
+                '',
+                'Source: HR_AWARD_CRUD.',
+            ].join(String.fromCharCode(10));
+            return { title: 'Live · Awards (' + n + ')', body: body, topic: 'award', source: 'session' };
+        }
+
+        if (topic === 'penalty' || /\\bpenalt/.test(q)) {
+            return { title: 'Live · Penalties (' + penalties.length + ')', body: 'Penalty records: ' + penalties.length + '.\\nSource: HR_PENALTY_CRUD.' };
+        }
+        if (topic === 'training' || /\\btraining\\b/.test(q)) {
+            return { title: 'Live · Training (' + training.length + ')', body: 'Training records: ' + training.length + '.\\nSource: HR_TRAINING_CRUD.' };
+        }
+        if (topic === 'appraisal' || /\\bappraisal\\b/.test(q)) {
+            return { title: 'Live · Appraisals (' + appraisals.length + ')', body: 'Appraisal records: ' + appraisals.length + '.\\nSource: HR_APPRAISAL_CRUD.' };
+        }
+
+if (topic === 'sku' || /\b(sku|skus|inventory|stock|tables?)\b/.test(q)) {
             const n = items.length;
             const lines = items.slice(0, 15).map((r) => {
                 const sku = (r && (r.sku || r.item_sku || r.item_code || r.code || r.id)) || '—';
@@ -5123,67 +5941,329 @@ const unityUniversityLiveAnswer = (question, allData, getCollection, topicHint, 
                 return '• ' + sku + (name ? ' — ' + name : '') + ' | qty ' + ((r && (r.quantity != null ? r.quantity : r.qty)) ?? '—');
             });
             const stores = {};
+            let qtySum = 0;
             items.forEach((r) => {
                 const s = (r && (r.location || r.store || r.warehouse || r.receiving_store)) || 'Main store';
                 stores[s] = (stores[s] || 0) + 1;
+                qtySum += Number(r && (r.quantity != null ? r.quantity : r.qty)) || 0;
             });
-            const storeLines = Object.entries(stores).sort((a, b) => b[1] - a[1]).map(([s, c]) => '• ' + s + ': ' + c + ' item row(s)').join('\n');
-            const tableHint = /table/.test(q) ? '\n\n"Tables in store" = inventory item rows by store (not SQL tables).' : '';
-            return { title: 'Live · Store / SKUs (' + n + ')', body: n ? ('Inventory SKU rows: ' + n + '\nBy store:\n' + (storeLines || '• —') + '\n\nSample:\n' + lines.join('\n') + tableHint) : ('No inventory rows.' + tableHint) };
+            const storeLines = Object.entries(stores).sort((a, b) => b[1] - a[1]).map(([s, c]) => '• ' + s + ': ' + c + ' item row(s)').join(String.fromCharCode(10));
+            return {
+                title: 'Live · Store / SKUs (' + n + ')',
+                body: n
+                    ? ('Inventory dashboard:\n• SKU rows: ' + n + '\n• Qty sum (numeric fields): ' + qtySum + '\n• GRV docs: ' + grv.length + ' · GIV docs: ' + giv.length + '\n\nBy store:\n' + (storeLines || '• —') + '\n\nSample SKUs:\n' + lines.join(String.fromCharCode(10)) + '\nSource: MAT_ITEM_CRUD.')
+                    : 'No inventory rows in session.',
+            };
         }
-        if (topic === 'grv' || /\bgrv\b/.test(q)) return { title: 'Live · GRV', body: grv.length + ' GRV record(s). SKUs: ' + items.length + '.' };
-        if (topic === 'giv' || /\bgiv\b/.test(q)) return { title: 'Live · GIV', body: giv.length + ' GIV record(s).' };
-        if (topic === 'leave' || /\bleave\b/.test(q)) return { title: 'Live · Leave', body: leave.length + ' leave record(s). Employees: ' + employees.length + '.' };
-        if (topic === 'partner' || /\b(partner|supplier|customer)\b/.test(q)) return { title: 'Live · Partners', body: partners.length + ' partner(s).' };
-        if (topic === 'coa' || /\bcoa\b/.test(q)) return { title: 'Live · COA', body: coa.length + ' chart-of-account row(s).' };
-        if (topic === 'payroll' || /\bpayroll\b/.test(q)) return { title: 'Live · Payroll process', body: process.length + ' payroll process row(s).' };
-        if (topic === 'tx' || /\b(transaction|journal|\btb\b)\b/.test(q)) return { title: 'Live · Transactions', body: tx.length + ' transaction/journal row(s).' };
+
+        if (topic === 'grv' || /\bgrv\b/.test(q)) {
+            const n = grv.length;
+            let value = 0;
+            const lines = grv.slice(0, 12).map((r) => {
+                const v = Number(r.line_value || r.total || r.amount || ((r.qty_received || r.qty || 0) * (r.unit_cost || 0))) || 0;
+                value += v;
+                return '• ' + (r.grv_number || r.grv_no || r.id || '—') + ' | ' + String(r.item_name || r.item || r.description || '').slice(0, 32) + ' | ' + money(v) + ' | ' + (r.status || '—');
+            });
+            // if value still 0 recount
+            if (value === 0) grv.forEach((r) => { value += Number(r.line_value || r.total || r.amount || 0) || 0; });
+            return {
+                title: 'Live · GRV (' + n + ')',
+                body: 'Goods received dashboard:\n• Documents: ' + n + '\n• Approx line value sum: ' + money(value) + ' ETB\n• Linked inventory SKUs: ' + items.length + '\n\nSample:\n' + (lines.join(String.fromCharCode(10)) || '• —') + '\nSource: MAT_GRV_CRUD.',
+            };
+        }
+        if (topic === 'giv' || /\bgiv\b/.test(q)) {
+            return { title: 'Live · GIV (' + giv.length + ')', body: 'Goods issued documents: ' + giv.length + '.\nInventory SKUs: ' + items.length + '.\nSource: MAT_GIV_CRUD.' };
+        }
+                if (topic === 'leave' || (/\bleave\b/.test(q) && !/\b(employee master|staff master)\b/.test(q))) {
+            const rows = Array.isArray(leave) ? leave : [];
+            const activeStatuses = /approved|active|ongoing|on\s*leave|taken|current/i;
+            const active = rows.filter((r) => {
+                const st = String((r && (r.status || r.leave_status || r.state)) || '');
+                if (activeStatuses.test(st)) return true;
+                // date window: start <= today <= end when dates exist
+                try {
+                    const a = r.start_date || r.from_date || r.leave_from;
+                    const b = r.end_date || r.to_date || r.leave_to;
+                    if (a && b) {
+                        const t0 = new Date(a).getTime();
+                        const t1 = new Date(b).getTime();
+                        const now = Date.now();
+                        if (!isNaN(t0) && !isNaN(t1) && t0 <= now && now <= t1) return true;
+                    }
+                } catch (e) {}
+                return false;
+            });
+            const lines = (active.length ? active : rows).slice(0, 20).map((r) => {
+                const who = (r && (r.employee_name || r.full_name || r.name || r.staff_name || r.employee_id || r.id_no)) || '—';
+                const typ = (r && (r.leave_type || r.type || r.category)) || 'Leave';
+                const st = (r && (r.status || r.leave_status)) || '—';
+                const days = (r && (r.days != null ? r.days : r.no_of_days));
+                return '• ' + who + ' · ' + typ + ' · ' + st + (days != null ? ' · ' + days + ' day(s)' : '');
+            });
+            const body = [
+                'Leave records in HR (live session / DB bootstrap):',
+                '• Total leave rows: ' + rows.length,
+                '• Currently on leave / approved-active: ' + active.length,
+                '• Employees in master: ' + employees.length,
+                '',
+                active.length ? 'Active / on-leave sample:' : 'All leave rows (none marked active by status/dates):',
+                lines.join(String.fromCharCode(10)) || '• No leave rows — open HR → Leave or seed HR_LEAVE_CRUD.',
+                '',
+                'Source: HR_LEAVE_CRUD (and status/date fields when present).',
+            ].join(String.fromCharCode(10));
+            return { title: 'Live · Leave (' + rows.length + ' rows · ' + active.length + ' active)', body: body, topic: 'leave', source: 'session' };
+        }
+
+                if (topic === 'appraisal' || /\b(appraisals?|performance review|competence)\b/.test(q)) {
+            const rows = Array.isArray(appraisals) ? appraisals : [];
+            const n = rows.length;
+            const lines = rows.slice(0, 20).map((r, i) => {
+                const who = (r && (r.employee_name || r.full_name || r.name || r.employee_id || r.id_no)) || '—';
+                const score = (r && (r.score != null ? r.score : (r.total_score != null ? r.total_score : r.rating)));
+                const period = (r && (r.period || r.appraisal_period || r.year || r.cycle)) || '';
+                const st = (r && (r.status || r.state)) || '';
+                return '• ' + (i + 1) + '. ' + who + (score != null ? ' · score ' + score : '') + (period ? ' · ' + period : '') + (st ? ' · ' + st : '');
+            });
+            const body = [
+                'Appraisal / performance records (live HR data):',
+                '• Exact count: ' + n,
+                '• Employees in master: ' + (Array.isArray(employees) ? employees.length : 0),
+                '',
+                n ? 'Records:' : 'No appraisal rows in session.',
+                lines.join(String.fromCharCode(10)) || '• Open HR → Appraisal / Competence or seed HR_APPRAISAL_CRUD.',
+                '',
+                'Source: HR_APPRAISAL_CRUD.',
+            ].join(String.fromCharCode(10));
+            return { title: 'Live · Appraisals (' + n + ')', body: body, topic: 'appraisal', source: 'session' };
+        }
+
+        if (topic === 'capital' || (/\bcapital\b/.test(q) && /\b(how much|total|current|now|balance|share)\b/.test(q))) {
+            const coa = (uuPull(allData, getCollection, 'FIN_COA_CRUD') || []).length
+                ? uuPull(allData, getCollection, 'FIN_COA_CRUD')
+                : (uuPull(allData, getCollection, 'chartsOfAccounts') || []);
+            const txs = [].concat(
+                uuPull(allData, getCollection, 'transactions') || [],
+                uuPull(allData, getCollection, 'dayJournals') || [],
+                uuPull(allData, getCollection, 'FIN_TRANSACTIONS_CRUD') || []
+            );
+            const ledger = {};
+            const clean = (id) => (id == null ? '' : String(id).replace(/^acc-/i, '').trim());
+            (Array.isArray(coa) ? coa : []).forEach((acc) => {
+                const no = clean(acc.account_no || acc.account_code || acc.code || acc.id);
+                if (!no) return;
+                const typ = String(acc.account_type || acc.type || acc.category || '').toLowerCase();
+                const isEq = /equity|capital|share/.test(typ) || /^3/.test(no);
+                if (!isEq) return;
+                ledger[no] = { no: no, name: acc.name || acc.desc || acc.description || no, credit: 0, debit: 0 };
+            });
+            (Array.isArray(txs) ? txs : []).forEach((tx) => {
+                const no = clean(tx.account_code || tx.account_no || tx.account_id || tx.accountId);
+                if (!no) return;
+                if (!ledger[no] && /^3/.test(no)) {
+                    ledger[no] = { no: no, name: tx.account_name || no, credit: 0, debit: 0 };
+                }
+                if (!ledger[no]) return;
+                const d = Number(tx.debit != null ? tx.debit : (tx.type === 'Debit' ? tx.amount : 0)) || 0;
+                const c = Number(tx.credit != null ? tx.credit : (tx.type === 'Credit' ? tx.amount : 0)) || 0;
+                ledger[no].debit += d;
+                ledger[no].credit += c;
+            });
+            const rows = Object.values(ledger).map((r) => Object.assign({}, r, { balance: (r.credit || 0) - (r.debit || 0) }));
+            rows.sort((a, b) => String(a.no).localeCompare(String(b.no)));
+            const total = rows.reduce((s, r) => s + (Number(r.balance) || 0), 0);
+            const money = (n) => {
+                const v = Number(n) || 0;
+                try { return v.toLocaleString('en-ET', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+                catch (e) { return String(Math.round(v * 100) / 100); }
+            };
+            const lines = rows.filter((r) => Math.abs(r.balance) > 0.001).slice(0, 20).map((r) => '• ' + r.no + ' · ' + r.name + ' · ' + money(r.balance) + ' ETB');
+            const body = [
+                'Capital / equity snapshot (live COA + transactions):',
+                '• Total equity / capital (credit − debit on equity accounts): ' + money(total) + ' ETB',
+                '• Equity accounts touched: ' + rows.length,
+                '• Transaction lines scanned: ' + txs.length,
+                '',
+                'By equity account:',
+                lines.join(String.fromCharCode(10)) || '• No equity balances — post capital journals or seed opening balances.',
+                '',
+                'Source: FIN_COA_CRUD + transactions / dayJournals.',
+            ].join(String.fromCharCode(10));
+            return { title: 'Live · Capital / equity (' + money(total) + ' ETB)', body: body, topic: 'capital', source: 'session' };
+        }
+
+if (topic === 'partner' || /\b(partner|supplier|customer)\b/.test(q)) {
+            const types = {};
+            partners.forEach((p) => {
+                const t = String((p && (p.type || p.partner_type || p.category)) || 'Other');
+                types[t] = (types[t] || 0) + 1;
+            });
+            const typeLines = Object.entries(types).map(([k, v]) => '• ' + k + ': ' + v).join(String.fromCharCode(10));
+            const sample = partners.slice(0, 10).map((p) => '• ' + (p.name || p.partner_name || p.company || p.id) + ' | ' + (p.type || '—')).join(String.fromCharCode(10));
+            return { title: 'Live · Partners (' + partners.length + ')', body: 'Partner directory:\n• Count: ' + partners.length + '\nBy type:\n' + (typeLines || '• —') + '\n\nSample:\n' + (sample || '• —') + '\nSource: FIN_PARTNERS_CRUD.' };
+        }
+        if (topic === 'coa' || /\bcoa\b/.test(q) || /chart of account/.test(q)) {
+            const types = {};
+            coa.forEach((c) => {
+                const t = String((c && (c.account_type || c.type || c.category)) || 'General');
+                types[t] = (types[t] || 0) + 1;
+            });
+            const typeLines = Object.entries(types).sort((a, b) => b[1] - a[1]).map(([k, v]) => '• ' + k + ': ' + v).join(String.fromCharCode(10));
+            return { title: 'Live · COA (' + coa.length + ')', body: 'Chart of accounts:\n• Rows: ' + coa.length + '\nBy type:\n' + (typeLines || '• —') + '\n\nTB accounts with movement: ' + buildTb().length + '.\nSource: FIN_COA_CRUD.' };
+        }
+        if (topic === 'payroll' || /\bpayroll\b/.test(q)) {
+            let gross = 0, net = 0;
+            process.forEach((r) => {
+                gross += Number(r.gross || r.gross_amount || r.total_basic || r.basic_salary || 0) || 0;
+                net += Number(r.net || r.net_pay || r.net_salary || 0) || 0;
+            });
+            return {
+                title: 'Live · Payroll process (' + process.length + ')',
+                body: 'Payroll process dashboard:\n• Rows: ' + process.length + '\n• Approx gross sum: ' + money(gross) + ' ETB\n• Approx net sum: ' + money(net) + ' ETB\n• HR employees available: ' + employees.length + '\nSource: PAY_PROCESS_CRUD.',
+            };
+        }
+
         return null;
     } catch (err) {
-        return { title: 'unityUniversity AI', body: 'Live data step failed: ' + String(err && err.message ? err.message : err) };
+        return null;
     }
 };
+
 const unityUniversityAnswer = (question, allData, getCollection, priorTopic, priorQuestion) => {
     try {
         const raw = String(question || '').trim();
         const resolved = uuResolveQuery(raw, priorTopic, priorQuestion);
-        if (!raw) {
-            return { title: 'unityUniversity AI', body: 'Ask live questions:\n• how many female employees\n• how many male staff\n• how many skus\n• how many GRV', topic: '' };
+        // Institutional questions (campuses, president, VP) → knowledge, not store
+        const instForce = /\b(campus|campuses|president|vice[ -]?president|\bvp\b|chairman|founder|who (is|was) the|leadership)\b/i.test(resolved.query || raw);
+        if (instForce) {
+            resolved.topic = resolved.topic || 'institutional';
         }
-        const live = unityUniversityLiveAnswer(resolved.query, allData, getCollection, resolved.topic, resolved.filters);
-        if (live && live.body) return Object.assign({}, live, { topic: resolved.topic || priorTopic || '' });
+
+        // Dictionary / term definitions first when asked
+        try {
+            const dictHit = typeof uuDictionaryAnswer === 'function' ? uuDictionaryAnswer(resolved.query || raw) : null;
+            if (dictHit && dictHit.body && /\b(what is|what\'s|define|meaning|explain)\b/i.test(resolved.query || raw)) {
+                return dictHit;
+            }
+        } catch (eDict) {}
+        // Quantitative / inventory questions: never answer with generic module essays
+        const quantQ = (/\b(how many|how much|total|sum|count|number of|quantity)\b/i.test(resolved.query || raw)
+            || /\b(chairs?|tables?|sku|grv|giv|award|appraisal|leave|salary|capital|profit|transaction|paper|toner)\b/i.test(resolved.query || raw))
+            && !/\b(campus|campuses|president|vice[ -]?president|chairman|founder)\b/i.test(resolved.query || raw);
+
+        if (!raw) {
+            return { title: 'unityUniversity AI', body: 'Ask about Unity University or live SIS data:\n• What is Unity University? · campuses · programs · history\n• Finance / HR / Material modules\n• how many female employees · how many SKUs · GRV count', topic: '' };
+        }
+        const instQ = /\b(unity university|history of|who founded|founder|president|chairman|campus|campuses|gerji|adama|dessie|burayu|program|faculty|mba|admission|registrar|motto|vision|mission|accreditation|uu\.edu|sis\.uu|when was|when were|established|founded|constructed|construction|built|private university)\b/i.test(resolved.query);
+        const live = (!instQ || resolved.topic) ? unityUniversityLiveAnswer(resolved.query, allData, getCollection, resolved.topic, resolved.filters) : null;
+        if (live && live.body && !(typeof instForce !== 'undefined' && instForce) && String(live.topic || '') !== 'institutional' && String(live.title || '').indexOf('Store analysis') < 0) return Object.assign({}, live, { topic: live.topic || resolved.topic || priorTopic || '', source: live.source || 'session' });
+        if (typeof quantQ !== 'undefined' && quantQ && !(live && live.body)) {
+            return {
+                title: 'Live data · no matching rows',
+                body: 'I treated this as a live count/amount question, but no matching session rows were found for: ' + (resolved.query || raw) + String.fromCharCode(10) +
+                    'Check that HR/Material/Finance collections are loaded (bootstrap/API) and field names contain the item (e.g. chair in SKU description).' + String.fromCharCode(10) +
+                    'I will not invent numbers. Moral rule: only report data present in collections you can access.',
+                topic: resolved.topic || '',
+                source: 'session',
+            };
+        }
+
         const q = String(resolved.query || '').toLowerCase();
         const words = q.split(/[^a-z0-9]+/).filter((w) => w.length > 2);
-        let best = null, bestScore = 0;
         const knowledge = Array.isArray(UU_AI_KNOWLEDGE) ? UU_AI_KNOWLEDGE : [];
+        const scored = [];
         for (let i = 0; i < knowledge.length; i++) {
             const item = knowledge[i];
             if (!item) continue;
             let score = 0;
             const titleL = String(item.title || '').toLowerCase();
-            if (q.includes(titleL)) score += 6;
+            const bodyL = String(item.body || '').toLowerCase();
+            if (q.indexOf(titleL) >= 0) score += 8;
             const tags = Array.isArray(item.tags) ? item.tags : [];
-            for (let t = 0; t < tags.length; t++) {
-                const tag = String(tags[t] || '');
-                if (q.includes(tag)) score += 4;
+            for (let ti = 0; ti < tags.length; ti++) {
+                const tag = String(tags[ti] || '').toLowerCase();
+                if (!tag) continue;
+                if (q.indexOf(tag) >= 0) score += 5;
                 for (let w = 0; w < words.length; w++) {
-                    if (tag === words[w]) score += 3;
-                    else if (tag.includes(words[w]) || words[w].includes(tag)) score += 1;
+                    const word = words[w];
+                    if (tag === word) score += 4;
+                    else if (tag.indexOf(word) >= 0 || word.indexOf(tag) >= 0) score += 1.5;
                 }
             }
             for (let w = 0; w < words.length; w++) {
-                if (titleL.includes(words[w])) score += 2;
-                if (String(item.body || '').toLowerCase().includes(words[w])) score += 0.2;
+                const word = words[w];
+                if (titleL.indexOf(word) >= 0) score += 2.5;
+                if (bodyL.indexOf(word) >= 0) score += 0.35;
             }
-            if (score > bestScore) { bestScore = score; best = item; }
+            if (/unity|university|campus|gerji|adama|dessie|burayu|program|faculty|mba|admission|registrar|history|founder|president/.test(q)) {
+                if (String(item.id || '').indexOf('uu_') === 0 || String(item.id || '').indexOf('sis_') === 0) score += 1.5;
+            }
+            if (score >= 1.2) scored.push({ item: item, score: score });
         }
-        if (best && bestScore >= 1.5) return { title: best.title, body: best.body, topic: resolved.topic || best.id };
-        return { title: 'unityUniversity AI', body: 'No strong match. Try: how many female employees · how many SKUs · what is Unity SIS', topic: resolved.topic || priorTopic || '' };
+        scored.sort(function(a, b) { return b.score - a.score; });
+        if (scored.length && scored[0].score >= 1.5) {
+            const top = [];
+            for (let i = 0; i < scored.length && i < 3; i++) {
+                if (i === 0 || scored[i].score >= Math.max(2, scored[0].score * 0.45)) top.push(scored[i]);
+            }
+            if (top.length === 1) {
+                return { title: top[0].item.title, body: top[0].item.body, topic: resolved.topic || top[0].item.id };
+            }
+            const body = top.map(function(s, idx) {
+                return (idx + 1) + ') ' + s.item.title + String.fromCharCode(10) + s.item.body;
+            }).join(String.fromCharCode(10,10)+'——'+String.fromCharCode(10,10));
+            return {
+                title: 'unityUniversity AI · ' + top.map(function(s) { return s.item.title; }).join(' · '),
+                body: body,
+                topic: resolved.topic || top[0].item.id,
+            };
+        }
+        return {
+            title: 'unityUniversity AI',
+            body: 'No strong match in the library or live data.\nTry:\n• About Unity University / history / campuses / programs\n• Finance module · HR module · Material GRV\n• how many female employees · how many SKUs\n• contacts / registrar / sis.uu.edu.et',
+            topic: resolved.topic || priorTopic || '',
+        };
     } catch (err) {
         return { title: 'unityUniversity AI', body: 'Answer error: ' + String(err && err.message ? err.message : err), topic: priorTopic || '' };
     }
 };
-const UnityUniversityAI = ({ glassClass = '' }) => {
+
+const uuFetchLiveUniversityFacts = async (question) => {
+    try {
+        const q = String(question || '').toLowerCase();
+        const wantsWeb = /unity|university|campus|founded|establish|construct|built|history|president|program|gerji|adama|dessie|when|who|where|motto|accreditation/.test(q);
+        if (!wantsWeb) return null;
+        const url = 'https://en.wikipedia.org/api/rest_v1/page/summary/Unity_University';
+        const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        const timer = ctrl ? setTimeout(() => { try { ctrl.abort(); } catch (e) {} }, 4500) : null;
+        const res = await fetch(url, { method: 'GET', headers: { Accept: 'application/json' }, signal: ctrl ? ctrl.signal : undefined });
+        if (timer) clearTimeout(timer);
+        if (!res || !res.ok) return null;
+        const data = await res.json();
+        const extract = String((data && (data.extract || data.description)) || '').trim();
+        if (!extract) return null;
+        const title = String((data && data.title) || 'Unity University');
+        const page = (data && data.content_urls && data.content_urls.desktop && data.content_urls.desktop.page) || 'https://en.wikipedia.org/wiki/Unity_University';
+        return {
+            title: 'Live web · ' + title,
+            body: extract + '\n\nSource: Wikipedia summary (refresh each ask). Official site: https://www.uu.edu.et · ' + page + '\nNote: For admissions/fees/current programs prefer uu.edu.et.',
+            topic: 'uu_profile',
+            source: 'web',
+        };
+    } catch (e) {
+        return null;
+    }
+};
+
+const uuFormatAiBody = (s) => {
+    let t = String(s == null ? '' : s);
+    // Turn literal backslash-n / backslash-t into real control chars if present
+    t = t.replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n').replace(/\\t/g, '  ');
+    t = t.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    t = t.replace(/\n{3,}/g, '\n\n');
+    return t;
+};
+
+const UnityUniversityAI = ({ glassClass = '', dockMode = false }) => {
     let allData = {};
     let getCollection = null;
     try {
@@ -5194,96 +6274,308 @@ const UnityUniversityAI = ({ glassClass = '' }) => {
     try {
         if ((!allData || !Object.keys(allData).length) && typeof window !== 'undefined' && window.__UU_ALL_DATA__) allData = window.__UU_ALL_DATA__;
     } catch (e) {}
+
     const [question, setQuestion] = useState('');
-    const [answer, setAnswer] = useState({ title: 'unityUniversity AI', body: 'Ask live questions — answers appear here at the top.\nExamples: how many female employees · how many SKUs · what is Unity SIS', topic: '' });
-    const [history, setHistory] = useState([]);
+    const [messages, setMessages] = useState([]);
     const [priorTopic, setPriorTopic] = useState('');
     const [priorQuestion, setPriorQuestion] = useState('');
     const [busy, setBusy] = useState(false);
-    const answerRef = useRef(null);
-    const ask = (q) => {
+    const threadRef = useRef(null);
+    const bottomRef = useRef(null);
+    const inputRef = useRef(null);
+    const askSeq = useRef(0);
+
+    const scrollChat = () => {
+        window.setTimeout(() => {
+            try {
+                if (bottomRef.current && bottomRef.current.scrollIntoView) {
+                    bottomRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
+                } else if (threadRef.current) {
+                    threadRef.current.scrollTop = threadRef.current.scrollHeight;
+                }
+            } catch (e) {}
+        }, 40);
+    };
+
+    const ask = async (q) => {
         const query = String(q != null && String(q).length ? q : question).trim();
+        if (!query || busy) return;
+        const seq = ++askSeq.current;
+        const at = new Date().toISOString();
+        const userMsg = { id: 'u-' + seq + '-' + at, role: 'user', text: query, at: at };
+
         setBusy(true);
+        setMessages((prev) => [...(Array.isArray(prev) ? prev : []), userMsg]);
+        setQuestion('');
+        scrollChat();
+
         let ad = allData;
         let gc = getCollection;
         try { if (typeof window !== 'undefined' && window.__UU_ALL_DATA__) ad = window.__UU_ALL_DATA__; } catch (e) {}
-        window.setTimeout(() => {
+
+        try {
+            let res = unityUniversityAnswer(query, ad, gc, priorTopic, priorQuestion);
             try {
-                const res = unityUniversityAnswer(query, ad, gc, priorTopic, priorQuestion);
-                const safe = (res && res.body) ? res : { title: 'unityUniversity AI', body: 'No answer.', topic: priorTopic };
-                setAnswer(safe);
-                if (safe.topic) setPriorTopic(safe.topic);
-                if (query) {
-                    setPriorQuestion(query);
-                    setHistory((h) => [{ q: query, title: safe.title }, ...(Array.isArray(h) ? h : [])].slice(0, 12));
+                const liveWeb = await uuFetchLiveUniversityFacts(query);
+                if (liveWeb && liveWeb.body) {
+                    if (res && res.body && String(res.title || '').indexOf('Live') !== 0) {
+                        res = {
+                            title: (res.title || 'unityUniversity AI') + ' · Live web note',
+                            body: uuFormatAiBody(String(res.body || '') + '\n\n——\nLive web (Wikipedia summary, may lag official site):\n' + liveWeb.body),
+                            topic: res.topic || liveWeb.topic || '',
+                            source: 'library+web',
+                        };
+                    } else if (!res || !res.body) {
+                        res = Object.assign({}, liveWeb, { body: uuFormatAiBody(liveWeb.body) });
+                    }
                 }
-                setQuestion('');
-                window.setTimeout(() => { try { answerRef.current && answerRef.current.scrollIntoView && answerRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e2) {} }, 20);
-            } catch (err) {
-                setAnswer({ title: 'unityUniversity AI', body: 'Could not answer: ' + String(err && err.message ? err.message : err), topic: priorTopic });
-            } finally { setBusy(false); }
-        }, 40);
+            } catch (webErr) { /* ignore */ }
+
+            if (seq !== askSeq.current) return;
+
+            const safe = (res && res.body)
+                ? Object.assign({}, res, { body: uuFormatAiBody(res.body) })
+                : { title: 'unityUniversity AI', body: 'No answer for: ' + query + '\nTry: how many employees · trial balance · how many SKUs · campuses', topic: '', source: 'none' };
+
+            const botMsg = {
+                id: 'a-' + seq + '-' + Date.now(),
+                role: 'assistant',
+                text: uuFormatAiBody(safe.body),
+                title: String(safe.title || 'unityUniversity AI'),
+                source: safe.source || 'session',
+                topic: safe.topic || '',
+                at: new Date().toISOString(),
+            };
+            setMessages((prev) => [...(Array.isArray(prev) ? prev : []), botMsg]);
+            if (safe.topic) setPriorTopic(safe.topic);
+            else setPriorTopic('');
+            setPriorQuestion(query);
+            scrollChat();
+        } catch (err) {
+            if (seq !== askSeq.current) return;
+            setMessages((prev) => [...(Array.isArray(prev) ? prev : []), {
+                id: 'e-' + seq,
+                role: 'assistant',
+                title: 'unityUniversity AI',
+                text: 'Could not answer: ' + query + ' — ' + String(err && err.message ? err.message : err),
+                source: 'error',
+                at: new Date().toISOString(),
+            }]);
+            scrollChat();
+        } finally {
+            if (seq === askSeq.current) setBusy(false);
+            try { inputRef.current && inputRef.current.focus && inputRef.current.focus(); } catch (e) {}
+        }
     };
-    const quick = ['How many female employees?', 'How many male employees?', 'How many employees?', 'Who are the female staff?', 'How many SKUs?', 'How many GRV?', 'Payroll process count', 'What is Unity SIS?'];
+
+    const quick = [
+        'How many employees?',
+        'How many female employees?',
+        'Academic vs non-academic staff?',
+        'List of transactions',
+        'Trial balance',
+        'What profit this year?',
+        'How many SKUs?',
+        'How many GRV?',
+        'Who was awarded?',
+        'Tables in store?',
+        'What is Unity University?',
+        'Finance module',
+        'HR module',
+        'Material module',
+    ];
+
+    const timeAgo = (iso) => {
+        try {
+            const ms = Date.now() - new Date(iso).getTime();
+            if (ms < 60000) return 'just now';
+            if (ms < 3600000) return Math.floor(ms / 60000) + ' min ago';
+            if (ms < 86400000) return Math.floor(ms / 3600000) + ' h ago';
+            return new Date(iso).toLocaleString();
+        } catch (e) { return ''; }
+    };
+
+    const renderBody = (text) => {
+        const lines = uuFormatAiBody(text).split('\n');
+        return (
+            <div className="text-[13px] text-gray-50 leading-relaxed space-y-1 break-words">
+                {lines.map((line, idx) => (
+                    <div key={idx} className={line.trim() ? '' : 'h-2'}>{line || '\u00a0'}</div>
+                ))}
+            </div>
+        );
+    };
+
+    const shellClass = dockMode
+        ? 'flex flex-col h-full min-h-0 max-h-full rounded-none border-0 bg-transparent'
+        : 'mt-6 rounded-[1.75rem] border border-cyan-500/30 bg-gradient-to-br from-cyan-950/50 to-slate-950/80 ' + (glassClass || '') + ' flex flex-col relative z-[80] min-h-[28rem]';
+
     return (
-        <div className={'mt-6 rounded-[1.75rem] border border-cyan-500/30 bg-gradient-to-br from-cyan-950/50 to-slate-950/80 ' + (glassClass || '') + ' overflow-hidden'}>
-            <div className="px-5 py-4 border-b border-cyan-500/20 flex flex-wrap items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-2xl bg-cyan-500/20 border border-cyan-400/40 flex items-center justify-center text-cyan-300 text-lg font-black">AI</div>
-                    <div>
-                        <h3 className="text-sm font-black uppercase tracking-widest text-cyan-300">unityUniversity AI</h3>
-                        <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Consistent live logic{priorTopic ? ' · ' + priorTopic : ''}</p>
+        <div className={shellClass} style={{ isolation: 'isolate' }}>
+            <div className="px-4 sm:px-5 py-3 border-b border-cyan-500/20 flex flex-wrap items-center justify-between gap-2 shrink-0 bg-slate-950/80 backdrop-blur-md">
+                <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-9 h-9 rounded-2xl bg-cyan-500/20 border border-cyan-400/40 flex items-center justify-center text-cyan-300 text-sm font-black shrink-0">AI</div>
+                    <div className="min-w-0">
+                        <h3 className="text-sm font-black uppercase tracking-widest text-cyan-300 truncate">unityUniversity AI</h3>
+                        <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider truncate">
+                            Chat · live data · library{priorTopic ? ' · ' + priorTopic : ''}
+                        </p>
                     </div>
                 </div>
-                <span className="text-[9px] font-black uppercase px-2 py-1 rounded-lg bg-cyan-500/10 text-cyan-200/90 border border-cyan-500/20">{busy ? 'Thinking…' : 'Ask anything'}</span>
-            </div>
-            <div className="p-5 space-y-4">
-                <div ref={answerRef} className="rounded-2xl border border-cyan-400/30 bg-black/60 p-4 space-y-2 min-h-[8rem]">
-                    <h4 className="text-xs font-black uppercase tracking-widest text-cyan-300">{(answer && answer.title) || 'unityUniversity AI'}</h4>
-                    <p className="text-[13px] text-gray-100 leading-relaxed whitespace-pre-wrap">{(answer && answer.body) || 'Answer appears here at the top.'}</p>
+                <div className="flex items-center gap-2 shrink-0">
+                    {messages.length ? (
+                        <button type="button" onClick={() => { setMessages([]); setPriorTopic(''); setPriorQuestion(''); }}
+                            className="text-[9px] font-black uppercase px-2 py-1 rounded-lg bg-white/5 text-gray-400 border border-white/10 hover:text-white">
+                            Clear
+                        </button>
+                    ) : null}
+                    <span className="text-[9px] font-black uppercase px-2 py-1 rounded-lg bg-cyan-500/10 text-cyan-200/90 border border-cyan-500/20">
+                        {busy ? 'Thinking…' : 'Ready'}
+                    </span>
                 </div>
-                <div className="flex flex-wrap gap-2">
+            </div>
+
+            <div
+                ref={threadRef}
+                className="p-3 sm:p-4 space-y-3 flex-1 min-h-0 overflow-y-auto overscroll-contain bg-black/25"
+                style={{ maxHeight: dockMode ? undefined : 'min(42vh, 420px)' }}
+            >
+                {!messages.length ? (
+                    <div className="rounded-2xl border border-white/10 bg-black/40 p-4 text-[13px] text-gray-300 leading-relaxed">
+                        Ask anything about Unity University or this SIS. Each question gets its own answer in this chat.
+                        <div className="mt-2 text-gray-400 text-[12px]">Examples: how many female employees · trial balance · how many SKUs · campuses</div>
+                    </div>
+                ) : null}
+                {messages.map((m) => (
+                    <div
+                        key={m.id}
+                        className={
+                            m.role === 'user'
+                                ? 'ml-4 sm:ml-10 rounded-2xl border border-amber-400/30 bg-amber-500/10 px-3 py-2.5 shadow-lg shadow-black/20'
+                                : 'mr-2 sm:mr-8 rounded-2xl border border-cyan-400/35 bg-slate-950/90 px-3 py-3 shadow-xl shadow-cyan-950/30'
+                        }
+                    >
+                        <div className="flex items-center justify-between gap-2 mb-1.5">
+                            <span className={'text-[9px] font-black uppercase tracking-widest ' + (m.role === 'user' ? 'text-amber-300' : 'text-cyan-300')}>
+                                {m.role === 'user' ? 'You' : (m.title || 'unityUniversity AI')}
+                            </span>
+                            <span className="text-[9px] text-gray-500 font-bold whitespace-nowrap">{timeAgo(m.at)}{m.source ? ' · ' + m.source : ''}</span>
+                        </div>
+                        {m.role === 'user' ? (
+                            <p className="text-[13px] text-gray-50 leading-relaxed break-words">{m.text}</p>
+                        ) : (
+                            renderBody(m.text)
+                        )}
+                    </div>
+                ))}
+                {busy ? (
+                    <div className="mr-8 rounded-2xl border border-cyan-400/20 bg-cyan-500/5 px-3 py-2 text-[12px] text-cyan-200/90 font-bold animate-pulse">
+                        Thinking…
+                    </div>
+                ) : null}
+                <div ref={bottomRef} />
+            </div>
+
+            <div
+                className="p-3 sm:p-4 space-y-2 border-t border-cyan-500/30 shrink-0 bg-slate-950"
+                style={{ zIndex: 200, position: 'relative', paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}
+            >
+                <div className="flex flex-wrap gap-1.5 max-h-16 overflow-y-auto">
                     {quick.map((label) => (
-                        <button key={label} type="button" onClick={() => ask(label)} disabled={busy} className="px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wide bg-white/5 border border-white/10 text-gray-300 hover:border-cyan-400/40 hover:text-cyan-200 transition disabled:opacity-50">{label}</button>
+                        <button
+                            key={label}
+                            type="button"
+                            disabled={busy}
+                            onClick={() => ask(label)}
+                            className="px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wide bg-white/5 border border-white/10 text-cyan-100/90 hover:bg-cyan-500/20 hover:border-cyan-400/40 disabled:opacity-40"
+                        >
+                            {label}
+                        </button>
                     ))}
                 </div>
-                <div className="flex flex-col sm:flex-row gap-2">
-                    <input type="text" value={question} onChange={(e) => setQuestion(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); ask(); } }} placeholder="e.g. how many female employees" className="flex-1 min-w-0 px-4 py-3 rounded-xl bg-black/50 border border-cyan-500/25 text-sm text-white outline-none focus:border-cyan-400" disabled={busy} />
-                    <button type="button" onClick={() => ask()} disabled={busy} className="px-5 py-3 rounded-xl bg-cyan-600 hover:bg-cyan-500 disabled:bg-cyan-900 text-white text-xs font-black uppercase tracking-wider shrink-0">{busy ? '…' : 'Ask'}</button>
+                <div className="flex gap-2 items-end" style={{ zIndex: 210, position: 'relative' }}>
+                    <textarea
+                        ref={inputRef}
+                        rows={2}
+                        value={question}
+                        onChange={(e) => setQuestion(e.target.value)}
+                        onKeyDown={(e) => {
+                            if (e.key === 'Enter' && !e.shiftKey) {
+                                e.preventDefault();
+                                ask(question);
+                            }
+                        }}
+                        placeholder="Type a question… (Enter to send)"
+                        className="flex-1 min-w-0 rounded-xl bg-black border border-cyan-400/40 px-3 py-2.5 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:border-cyan-300 focus:ring-2 focus:ring-cyan-500/30 resize-none min-h-[3rem]"
+                        style={{ zIndex: 220, position: 'relative' }}
+                        disabled={busy}
+                    />
+                    <button
+                        type="button"
+                        onClick={() => ask(question)}
+                        disabled={busy || !String(question || '').trim()}
+                        className="h-12 px-5 rounded-xl text-xs font-black uppercase tracking-widest bg-cyan-600 hover:bg-cyan-500 text-white disabled:opacity-40 shrink-0"
+                        style={{ zIndex: 220, position: 'relative' }}
+                    >
+                        {busy ? '…' : 'Ask'}
+                    </button>
                 </div>
-                {history.length > 0 && (
-                    <div className="space-y-1">
-                        <p className="text-[9px] font-black uppercase tracking-widest text-gray-500">Recent</p>
-                        <div className="flex flex-wrap gap-2">
-                            {history.map((h, idx) => (
-                                <button key={String(h.q) + '-' + idx} type="button" onClick={() => ask(h.q)} className="text-[10px] px-2 py-1 rounded-lg bg-white/5 text-gray-400 hover:text-cyan-200">{h.q}</button>
-                            ))}
-                        </div>
-                    </div>
-                )}
             </div>
         </div>
     );
 };
 
 
-
-/* —— Ethiopian (Geez) ↔ Gregorian · Power Geez calendar —— */
-const ethiopianMonthNames = [
-    'Meskerem', 'Tikimt', 'Hidar', 'Tahsas', 'Tir', 'Yekatit',
-    'Megabit', 'Miazia', 'Genbot', 'Sene', 'Hamle', 'Nehase', 'Pagumen'
-];
-
-const isGregorianLeap = (y) => (y % 4 === 0 && y % 100 !== 0) || (y % 400 === 0);
-const isEthiopianLeap = (y) => (y % 4) === 3;
-
-const gregorianToJDN = (year, month, day) => {
-    const a = Math.floor((14 - month) / 12);
-    const y = year + 4800 - a;
-    const m = month + 12 * a - 3;
-    return day + Math.floor((153 * m + 2) / 5) + 365 * y + Math.floor(y / 4) - Math.floor(y / 100) + Math.floor(y / 400) - 32045;
+const UnityUniversityAIDock = ({ glassClass = '' }) => {
+    const ui = React.useContext(UIContext) || {};
+    const enabled = !!(ui.aiDockEnabled || (ui.uiSettings && ui.uiSettings.aiDockEnabled));
+    const [open, setOpen] = React.useState(false);
+    if (!enabled) return null;
+    return (
+        <>
+            <button
+                type="button"
+                onClick={() => setOpen((v) => !v)}
+                className="fixed bottom-5 right-5 w-14 h-14 rounded-2xl bg-cyan-600 hover:bg-cyan-500 text-white font-black shadow-2xl shadow-cyan-900/50 border border-cyan-300/50 flex items-center justify-center text-sm"
+                title="unityUniversity AI"
+                style={{ zIndex: 99950 }}
+            >
+                AI
+            </button>
+            {open ? (
+                <div
+                    className="fixed bottom-24 right-3 sm:right-5 w-[min(440px,calc(100vw-1.25rem))] h-[min(78vh,720px)] flex flex-col overflow-hidden rounded-2xl shadow-2xl border border-cyan-500/40 bg-slate-950"
+                    style={{ zIndex: 99960 }}
+                >
+                    <div className="flex items-center justify-between px-3 py-2 border-b border-white/10 bg-slate-950 shrink-0" style={{ zIndex: 99970 }}>
+                        <span className="text-[10px] font-black uppercase tracking-widest text-cyan-300">unityUniversity AI · dock</span>
+                        <button type="button" onClick={() => setOpen(false)} className="text-gray-400 hover:text-white text-xs font-bold px-2 py-1">Close</button>
+                    </div>
+                    <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+                        <UnityUniversityAI glassClass={glassClass || ''} dockMode />
+                    </div>
+                </div>
+            ) : null}
+        </>
+    );
 };
 
+
+/* ---- Ethiopian (Geez) ↔ Gregorian calendar helpers (Power Geez) ---- */
+const ETH_MONTHS = ['Meskerem','Tikimt','Hidar','Tahsas','Tir','Yekatit','Megabit','Miazia','Genbot','Sene','Hamle','Nehasse','Pagumen'];
+const ethiopianMonthNames = ETH_MONTHS;
+const isEthiopianLeap = (y) => (y % 4) === 3;
+const ethMonthLength = (y, m) => {
+    if (m < 1 || m > 13) return 0;
+    if (m === 13) return isEthiopianLeap(y) ? 6 : 5;
+    return 30;
+};
+const gregorianToJdn = (y, m, d) => {
+    const a = Math.floor((14 - m) / 12);
+    const yy = y + 4800 - a;
+    const mm = m + 12 * a - 3;
+    return d + Math.floor((153 * mm + 2) / 5) + 365 * yy + Math.floor(yy / 4) - Math.floor(yy / 100) + Math.floor(yy / 400) - 32045;
+};
 const jdnToGregorian = (jdn) => {
     const a = jdn + 32044;
     const b = Math.floor((4 * a + 3) / 146097);
@@ -5296,24 +6588,36 @@ const jdnToGregorian = (jdn) => {
     const year = 100 * b + d - 4800 + Math.floor(m / 10);
     return { year, month, day };
 };
-
-const ethiopianToJDNCore = (year, month, day) => {
-    // Standard: JDN = 1723856 + 365*(y-1) + floor(y/4) + 30*(m-1) + d
-    return 1723856 + 365 * (year - 1) + Math.floor(year / 4) + 30 * (month - 1) + day;
+const ethiopianToJdn = (y, m, d) => {
+    // Ethiopian epoch: Meskerem 1, 1 = Aug 29, 8 CE (JDN 1724220.5 ≈ 1724221 civil)
+    return (Math.floor(y / 4) * 1461) + ((y % 4) * 365) + ((m - 1) * 30) + d + 1723855;
 };
-
 const jdnToEthiopian = (jdn) => {
-    const r = jdn - 1723855;
-    const year = Math.floor((4 * r - 1) / 1461);
-    const t = Math.floor((4 * r - 1) % 1461);
-    const n = Math.floor(t / 4);
-    const month = Math.floor(n / 30) + 1;
-    const day = (n % 30) + 1;
-    return { year, month, day };
+    const r = jdn - 1723856;
+    const n = Math.floor(r / 1461);
+    const a = r % 1461;
+    const y = n * 4 + Math.floor(a / 365) - (a === 1460 ? 1 : 0);
+    const dayOfYear = a === 1460 ? 365 : a % 365;
+    const m = Math.floor(dayOfYear / 30) + 1;
+    const d = (dayOfYear % 30) + 1;
+    return { year: y + 1, month: m, day: d };
 };
-
-const gregorianToEthiopian = (y, m, d) => jdnToEthiopian(gregorianToJDN(y, m, d));
-const ethiopianToGregorian = (y, m, d) => jdnToGregorian(ethiopianToJDNCore(y, m, d));
+const gregorianToEthiopian = (y, m, d) => {
+    try {
+        const jdn = gregorianToJdn(Number(y), Number(m), Number(d));
+        return jdnToEthiopian(jdn);
+    } catch (e) {
+        return { year: 0, month: 1, day: 1 };
+    }
+};
+const ethiopianToGregorian = (y, m, d) => {
+    try {
+        const jdn = ethiopianToJdn(Number(y), Number(m), Number(d));
+        return jdnToGregorian(jdn);
+    } catch (e) {
+        return { year: 1970, month: 1, day: 1 };
+    }
+};
 
 const EthiopianCalendarPanel = ({ glassClass }) => {
     const now = new Date();
@@ -5473,6 +6777,21 @@ const UICustomization = ({ glassClass }) => {
             <EthiopianCalendarPanel glassClass={glassClass} />
 
             <UnityUniversityAI glassClass={glassClass} />
+            <div className={`p-5 rounded-[1.75rem] border border-cyan-500/25 ${glassClass} shadow-xl`}>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                        <h3 className="text-sm font-black uppercase tracking-widest text-cyan-300">AI access on all screens</h3>
+                        <p className="text-[11px] text-gray-400 mt-1">When enabled, a floating AI button appears on every page of this module (not only UI Customization).</p>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => updateUISettings({ aiDockEnabled: !uiSettings.aiDockEnabled })}
+                        className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest border transition ${uiSettings.aiDockEnabled ? 'bg-cyan-600 border-cyan-400 text-white' : 'bg-white/5 border-white/15 text-gray-300'}`}
+                    >
+                        {uiSettings.aiDockEnabled ? 'AI dock ON' : 'AI dock OFF'}
+                    </button>
+                </div>
+            </div>
 
             {/* 1. THE ATMOSPHERIC ENGINE (Scale & Transparency Fixes) */}
             <div className={`p-6 rounded-[2.5rem] border border-white/10 ${glassClass} shadow-2xl`}>
@@ -6442,6 +7761,8 @@ const HrmAppContent = () => {
                         />
                     </aside>
                 )}
+                    <UnityUniversityAIDock glassClass={glassClass} />
+
             </div>
         </div>
     );
