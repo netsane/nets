@@ -4,6 +4,7 @@ import { mergeFinanceIntegrations, publishFinanceCoa, consumePendingMaterialJour
 import LoginModuleSwitcher from '../../unity/LoginModuleSwitcher.jsx';
 import { MobileStyles, useIsMobile } from '../../unity/mobileCompat.js';
 
+
 /* Gender helpers (early — used by mock generators and AI) */
 const UU_FEMALE_FIRST_EARLY = new Set(['lomi','saba','tigist','eleni','hanna','aster','netsanet','sara','sarah','bethlehem','mahlet','selam','rahel','helen','meseret','hiwot','kidist','marta','martha','yeshi','almaz','tsion','beten','sosina','liya','ruth','meron','eden','abeba','tsehay','worknesh','senait','bezawit','hawi','meaza','frehiwot','genet','ayelech','mekdes','selamawit','tsehaynesh','bethel','hirut','firehiwot','yelena']);
 const UU_MALE_FIRST_EARLY = new Set(['abebe','kebede','chala','jemal','fasil','bereket','yonas','henok','kalab','tadesse','dawit','lemma','daniel','samuel','solomon','yared','mulugeta','getachew','tesfaye','hailu','mekonnen','assefa','girma','wolde','negash','bekele','yonatan','nahom','abel','kaleb','biruk','natnael','robelt','kirubel','ammanuel','amanuel','eyob','yohannes','melaku','sisay','asfaw','desta','haile','tewodros','mengistu','berhanu','gashaw','tamiru','fikadu','teklu','damte']);
@@ -530,6 +531,8 @@ const exportToExcelRobustTable = () => {
 
                
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
+
 import * as Icons from 'lucide-react';
 
 import {
@@ -15702,17 +15705,44 @@ const Input = ({ label, type, value, onChange, placeholder, isRequired = false, 
     const id = React.useId();
     const [showECPicker, setShowECPicker] = useState(false);
     const [selectOpen, setSelectOpen] = useState(false);
+    const [selectMenuBox, setSelectMenuBox] = useState(null);
     const selectRootRef = useRef(null);
+    const selectBtnRef = useRef(null);
     useEffect(() => {
-        if (!selectOpen) return undefined;
+        if (!selectOpen) {
+            setSelectMenuBox(null);
+            return undefined;
+        }
+        const place = () => {
+            const el = selectBtnRef.current || selectRootRef.current;
+            if (!el || !el.getBoundingClientRect) return;
+            const r = el.getBoundingClientRect();
+            const width = Math.max(r.width, 240);
+            let left = r.left;
+            if (left + width > window.innerWidth - 8) left = Math.max(8, window.innerWidth - width - 8);
+            if (left < 8) left = 8;
+            const gap = 6;
+            const spaceBelow = window.innerHeight - r.bottom - gap;
+            const openUp = spaceBelow < 220 && r.top > spaceBelow;
+            const maxHeight = Math.min(320, openUp ? Math.max(180, r.top - gap - 8) : Math.max(180, spaceBelow));
+            const top = openUp ? Math.max(8, r.top - gap - maxHeight) : r.bottom + gap;
+            setSelectMenuBox({ top, left, width, maxHeight, zIndex: 99999 });
+        };
+        place();
         const onDoc = (e) => {
-            if (selectRootRef.current && !selectRootRef.current.contains(e.target)) setSelectOpen(false);
+            if (selectRootRef.current && selectRootRef.current.contains(e.target)) return;
+            if (e.target && e.target.closest && e.target.closest('[data-uu-select-menu]')) return;
+            setSelectOpen(false);
         };
         document.addEventListener('mousedown', onDoc);
         document.addEventListener('touchstart', onDoc);
+        window.addEventListener('resize', place);
+        window.addEventListener('scroll', place, true);
         return () => {
             document.removeEventListener('mousedown', onDoc);
             document.removeEventListener('touchstart', onDoc);
+            window.removeEventListener('resize', place);
+            window.removeEventListener('scroll', place, true);
         };
     }, [selectOpen]);
 
@@ -15775,6 +15805,7 @@ const Input = ({ label, type, value, onChange, placeholder, isRequired = false, 
                 <button
                     type="button"
                     id={id}
+                    ref={selectBtnRef}
                     onClick={() => setSelectOpen((o) => !o)}
                     className="w-full min-h-[48px] flex items-center justify-between gap-2
                                p-3.5 rounded-xl bg-black/60 border border-white/20 text-left
@@ -15789,12 +15820,19 @@ const Input = ({ label, type, value, onChange, placeholder, isRequired = false, 
                     </span>
                     <span className="text-cyan-400/80 text-xs shrink-0">{selectOpen ? '▲' : '▼'}</span>
                 </button>
-                {selectOpen && (
+                {selectOpen && selectMenuBox && createPortal(
                     <div
-                        className="absolute left-0 right-0 top-full mt-1 z-[10050]
-                                   max-h-56 overflow-y-auto rounded-xl
-                                   border border-white/20 bg-slate-900 shadow-2xl shadow-black/60"
+                        data-uu-select-menu="1"
                         role="listbox"
+                        className="fixed overflow-y-auto rounded-xl border border-cyan-500/30
+                                   bg-slate-950 text-white shadow-2xl shadow-black/80 ring-1 ring-white/10"
+                        style={{
+                            top: selectMenuBox.top,
+                            left: selectMenuBox.left,
+                            width: selectMenuBox.width,
+                            maxHeight: selectMenuBox.maxHeight,
+                            zIndex: 99999,
+                        }}
                     >
                         <button
                             type="button"
@@ -15831,7 +15869,8 @@ const Input = ({ label, type, value, onChange, placeholder, isRequired = false, 
                                 </button>
                             );
                         })}
-                    </div>
+                    </div>,
+                    document.body
                 )}
             </div>
         );
@@ -15940,48 +15979,55 @@ const Input = ({ label, type, value, onChange, placeholder, isRequired = false, 
 
 // Component for Generic Reports (Only available to Admins/Managers/Staff)
 const ReportsGenerator = ({ glassClass }) => {
-    const { allData, getCollection } = useData(); 
+    const { allData, getCollection } = useData();
     const { currentUser, checkPermission } = useAuth();
 
-    // New constants for Report Type
     const REPORT_TYPES = [
         { label: 'All Time', value: 'all' },
         { label: 'Daily', value: 'daily' },
         { label: 'Weekly', value: 'weekly' },
         { label: 'Monthly', value: 'monthly' },
         { label: 'Quarterly', value: 'quarterly' },
-        { label: 'Annually', value: 'annually' }
+        { label: 'Annually', value: 'annually' },
+    ];
+
+    const REPORT_PRESETS = [
+        { id: '', label: 'Custom selection' },
+        { id: 'FIN_TX', label: 'Finance · Transactions', collection: 'transactions' },
+        { id: 'FIN_COA', label: 'Finance · Chart of Accounts', collection: 'FIN_COA_CRUD' },
+        { id: 'FIN_PARTNERS', label: 'Finance · Partners', collection: 'FIN_PARTNERS_CRUD' },
+        { id: 'PAY_PROCESS', label: 'Payroll · Process', collection: 'PAY_PROCESS_CRUD' },
+        { id: 'PAY_OT', label: 'Payroll · Overtime', collection: 'PAY_OVERTIME_CRUD' },
+        { id: 'HR_EMP', label: 'HR · Employees', collection: 'HR_EMPLOYEE_CRUD' },
+        { id: 'HR_LEAVE', label: 'HR · Leave', collection: 'HR_LEAVE_CRUD' },
     ];
 
     const getCollectionLabel = useCallback((name) => {
-        if (!name) return '';
-        if (typeof name !== 'string') return ''; 
+        if (!name || typeof name !== 'string') return '';
         return name.replace(/_/g, ' ').replace('CRUD', '(Data)').trim();
     }, []);
 
-    const collectionNames = useMemo(() => Object.keys(allData).sort(), [allData]);
-    const initialSelectedCollectionName = collectionNames.length > 0 ? collectionNames[0] : '';
-    
-    const [selectedCollection, setSelectedCollection] = useState(initialSelectedCollectionName);
+    const collectionNames = useMemo(() => Object.keys(allData || {}).sort(), [allData]);
+    const initialSelected = collectionNames.length > 0 ? collectionNames[0] : '';
+
+    const [selectedCollection, setSelectedCollection] = useState(initialSelected);
     const [sortKey, setSortKey] = useState('');
     const [groupByKey, setGroupByKey] = useState('');
-    const [reportType, setReportType] = useState('all'); // New State for Type
+    const [reportType, setReportType] = useState('all');
+    const [dateFrom, setDateFrom] = useState('');
+    const [dateTo, setDateTo] = useState('');
+    const [preset, setPreset] = useState('');
+    const [statusFilter, setStatusFilter] = useState('All');
+    const [searchTerm, setSearchTerm] = useState('');
 
-    const columns = useMemo(() => COLUMN_CONFIG[selectedCollection] || [], [selectedCollection]);
+    const columns = useMemo(() => (typeof COLUMN_CONFIG !== 'undefined' ? (COLUMN_CONFIG[selectedCollection] || []) : []), [selectedCollection]);
 
-    const filterableColumns = useMemo(() =>
-        (columns || []).filter(col => !col.isHidden && col.type !== 'array'),
+    const filterableColumns = useMemo(
+        () => (columns || []).filter((col) => !col.isHidden && col.type !== 'array'),
         [columns]
     );
 
-    const [columnFilters, setColumnFilters] = useState(() => {
-        return filterableColumns.reduce((acc, col) => {
-            acc[col.key] = '';  
-            return acc;
-        }, {});
-    });
-
-    const currentData = useMemo(() => getCollection(selectedCollection) || [], [getCollection, selectedCollection]);
+    const [columnFilters, setColumnFilters] = useState({});
 
     useEffect(() => {
         if (selectedCollection) {
@@ -15993,47 +16039,103 @@ const ReportsGenerator = ({ glassClass }) => {
             );
             setSortKey('');
             setGroupByKey('');
-            setReportType('all'); // Reset type on collection change
+            setReportType('all');
         }
     }, [selectedCollection, filterableColumns]);
 
+    const currentData = useMemo(() => getCollection(selectedCollection) || [], [getCollection, selectedCollection]);
+
     const getColumnFilterOptions = useCallback((data, columnKey) => {
         const values = new Set(['All']);
-        data.forEach(item => {
+        (data || []).forEach((item) => {
             const value = item[columnKey];
-            if (value !== null && value !== undefined) {
-                values.add(String(value));
-            }
+            if (value !== null && value !== undefined) values.add(String(value));
         });
-        return Array.from(values).map(v => ({ label: v, value: v }));
+        return Array.from(values).map((v) => ({ label: v, value: v }));
     }, []);
 
-    const columnOptions = React.useMemo(() => {
+    const columnOptions = useMemo(() => {
         const options = {};
-        filterableColumns.forEach(col => {
+        filterableColumns.forEach((col) => {
             options[col.key] = getColumnFilterOptions(currentData, col.key);
         });
         return options;
     }, [currentData, filterableColumns, getColumnFilterOptions]);
 
-    const [searchTerm, setSearchTerm] = useState('');
-
     const filteredAndSortedData = useMemo(() => {
         let data = [...currentData];
 
-        data = data.filter(item => {
-            return (filterableColumns || []).every(col => {
+        data = data.filter((item) =>
+            (filterableColumns || []).every((col) => {
                 const filterValue = columnFilters[col.key] || '';
                 if (filterValue === 'All' || !filterValue) return true;
-                const itemValue = String(item[col.key] || '').toLowerCase();
-                return itemValue === filterValue.toLowerCase();
+                return String(item[col.key] || '').toLowerCase() === filterValue.toLowerCase();
+            })
+        );
+
+        if (statusFilter && statusFilter !== 'All') {
+            const sf = statusFilter.toLowerCase();
+            data = data.filter((item) => String(item.status || item.Status || '').toLowerCase() === sf);
+        }
+
+        const dateKeys = [
+            'date', 'posting_date', 'createdAt', 'created_at', 'payroll_process_date',
+            'process_date', 'leave_start', 'start_date', 'transaction_date', 'grv_date', 'period',
+        ];
+
+        if (dateFrom || dateTo) {
+            const fromTs = dateFrom ? new Date(dateFrom).setHours(0, 0, 0, 0) : null;
+            const toTs = dateTo ? new Date(dateTo).setHours(23, 59, 59, 999) : null;
+            data = data.filter((item) => {
+                let raw = null;
+                for (const k of dateKeys) {
+                    if (item[k] != null && String(item[k]).trim() !== '') {
+                        raw = item[k];
+                        break;
+                    }
+                }
+                if (!raw) return true;
+                const ts = new Date(raw).getTime();
+                if (isNaN(ts)) return true;
+                if (fromTs != null && ts < fromTs) return false;
+                if (toTs != null && ts > toTs) return false;
+                return true;
             });
-        });
+        }
+
+        if (reportType && reportType !== 'all') {
+            const now = new Date();
+            data = data.filter((item) => {
+                let raw = null;
+                for (const k of dateKeys) {
+                    if (item[k] != null && String(item[k]).trim() !== '') {
+                        raw = item[k];
+                        break;
+                    }
+                }
+                if (!raw) return true;
+                const d = new Date(raw);
+                if (isNaN(d.getTime())) return true;
+                if (reportType === 'daily') return d.toDateString() === now.toDateString();
+                if (reportType === 'weekly') {
+                    const weekAgo = new Date(now);
+                    weekAgo.setDate(now.getDate() - 7);
+                    return d >= weekAgo && d <= now;
+                }
+                if (reportType === 'monthly') return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+                if (reportType === 'quarterly') {
+                    const q = Math.floor(now.getMonth() / 3);
+                    return Math.floor(d.getMonth() / 3) === q && d.getFullYear() === now.getFullYear();
+                }
+                if (reportType === 'annually') return d.getFullYear() === now.getFullYear();
+                return true;
+            });
+        }
 
         if (searchTerm && searchTerm.trim()) {
             const q = searchTerm.trim().toLowerCase();
-            data = data.filter(item =>
-                Object.values(item || {}).some(v => String(v ?? '').toLowerCase().includes(q))
+            data = data.filter((item) =>
+                Object.values(item || {}).some((v) => String(v ?? '').toLowerCase().includes(q))
             );
         }
 
@@ -16041,40 +16143,33 @@ const ReportsGenerator = ({ glassClass }) => {
             data.sort((a, b) => {
                 const aVal = a[sortKey];
                 const bVal = b[sortKey];
-                if ((typeof aVal === 'number' || (!isNaN(parseFloat(aVal)) && isFinite(aVal))) &&
-                    (typeof bVal === 'number' || (!isNaN(parseFloat(bVal)) && isFinite(bVal)))) {
-                    return parseFloat(aVal) - parseFloat(bVal);
-                }
-                const stringA = String(aVal || '').toLowerCase();
-                const stringB = String(bVal || '').toLowerCase();
-                if (stringA < stringB) return -1;
-                if (stringA > stringB) return 1;
-                return 0;
+                const na = parseFloat(aVal);
+                const nb = parseFloat(bVal);
+                if (!isNaN(na) && !isNaN(nb) && isFinite(na) && isFinite(nb)) return na - nb;
+                return String(aVal || '').toLowerCase().localeCompare(String(bVal || '').toLowerCase());
             });
         }
 
         return data;
-    }, [currentData, columnFilters, sortKey, filterableColumns, searchTerm]);
+    }, [currentData, columnFilters, sortKey, filterableColumns, searchTerm, dateFrom, dateTo, reportType, statusFilter]);
 
     const groupedData = useMemo(() => {
-        if (!groupByKey) {
-            return { 'All Records': filteredAndSortedData };
-        }
+        if (!groupByKey) return { 'All Records': filteredAndSortedData };
         return filteredAndSortedData.reduce((acc, item) => {
             const key = String(item[groupByKey] || 'N/A');
-            acc[key] = acc[key] || [];
+            if (!acc[key]) acc[key] = [];
             acc[key].push(item);
             return acc;
         }, {});
     }, [filteredAndSortedData, groupByKey]);
 
-    const displayColumns = useMemo(() => (columns || []).filter(col => !col.isHidden && col.type !== 'array').slice(0, 8), [columns]);
+    const displayColumns = useMemo(
+        () => (columns || []).filter((col) => !col.isHidden && col.type !== 'array').slice(0, 8),
+        [columns]
+    );
 
     const handleFilterChange = (columnKey, value) => {
-        setColumnFilters(prevFilters => ({
-            ...prevFilters,
-            [columnKey]: value,
-        }));
+        setColumnFilters((prev) => ({ ...prev, [columnKey]: value }));
     };
 
     useEffect(() => {
@@ -16083,209 +16178,303 @@ const ReportsGenerator = ({ glassClass }) => {
         }
     }, [collectionNames, selectedCollection]);
 
-    const exportCSV = (slug) => {
-        const rows = (slug && allData[slug]) ? allData[slug] : filteredAndSortedData;
+    const exportCSV = () => {
+        const rows = filteredAndSortedData;
         if (!rows || !rows.length) return;
-        const cols = displayColumns.length ? displayColumns : Object.keys(rows[0]).map(k => ({ key: k, label: k }));
-        const headers = cols.map(c => c.label || c.key);
-        const body = rows.map(r => cols.map(c => {
-            const v = r[c.key];
-            const s = v == null ? '' : String(v).replace(/"/g, '""');
-            return `"${s}"`;
-        }).join(','));
-        const csv = [headers.join(','), ...body].join(String.fromCharCode(10));
+        const cols = displayColumns.length
+            ? displayColumns
+            : Object.keys(rows[0] || {}).map((k) => ({ key: k, label: k }));
+        const headers = cols.map((c) => c.label || c.key);
+        const body = rows.map((r) =>
+            cols
+                .map((c) => {
+                    const v = r[c.key];
+                    const s = v == null ? '' : String(v).replace(/"/g, '""');
+                    return `"${s}"`;
+                })
+                .join(',')
+        );
+        const csv = [headers.join(','), ...body].join('\n');
         const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `${slug || selectedCollection || 'report'}.csv`;
+        a.download = `${selectedCollection || 'report'}.csv`;
         a.click();
         URL.revokeObjectURL(url);
     };
 
+    const partners = getCollection('FIN_PARTNERS_CRUD') || [];
+
     return (
-        <ContainerCard  Icon='FileText' glassClass={glassClass} className="h-full">
-            <div className="space-y-4 mb-6 p-4 border border-gray-700/50 rounded-xl">
-                <h3 className="text-lg font-semibold text-cyan-400 flex items-center">
-                    <Icons.Building className="w-5 h-5 mr-2" />
-                    Report Configuration
+        <ContainerCard Icon="FileText" glassClass={glassClass} className="h-full max-w-full min-w-0 overflow-x-hidden overflow-y-auto">
+            <div className="space-y-3 mb-4 p-3 sm:p-4 border border-white/10 rounded-xl max-w-full min-w-0 overflow-hidden bg-black/20">
+                <h3 className="text-base font-semibold text-cyan-400 flex items-center shrink-0">
+                    <Icons.FileBarChart className="w-5 h-5 mr-2 shrink-0" />
+                    Institutional Report Studio
                 </h3>
+                <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">
+                    Presets · date range · column filters · group · export
+                </p>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                    <div className="col-span-full">
-                        <div className="flex flex-wrap gap-4 justify-start items-end">
-                            
-                            {/* Data Collection Select */}
-                            <div className="flex-grow min-w-[200px]">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-2">
+                    <div className="rounded-xl border border-cyan-500/20 bg-cyan-950/20 p-3">
+                        <p className="text-[9px] text-cyan-400/80 uppercase font-black">Rows</p>
+                        <p className="text-lg font-black text-white">{filteredAndSortedData.length}</p>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-black/30 p-3">
+                        <p className="text-[9px] text-gray-500 uppercase font-black">Source</p>
+                        <p className="text-xs font-bold text-white truncate">{getCollectionLabel(selectedCollection) || '—'}</p>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-black/30 p-3">
+                        <p className="text-[9px] text-gray-500 uppercase font-black">Period</p>
+                        <p className="text-xs font-bold text-white">{reportType}</p>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-black/30 p-3">
+                        <p className="text-[9px] text-gray-500 uppercase font-black">Groups</p>
+                        <p className="text-lg font-black text-white">{Object.keys(groupedData || {}).length}</p>
+                    </div>
+                </div>
+
+                <div className="w-full max-w-full min-w-0 overflow-visible">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 items-end min-w-0 w-full">
+                        <div className="min-w-0 max-w-full w-full overflow-hidden">
+                            <Input
+                                label="Report preset"
+                                type="select"
+                                options={REPORT_PRESETS.map((p) => ({ label: p.label, value: p.id }))}
+                                value={preset}
+                                onChange={(val) => {
+                                    setPreset(val);
+                                    const hit = REPORT_PRESETS.find((p) => p.id === val);
+                                    if (hit && hit.collection && collectionNames.includes(hit.collection)) {
+                                        setSelectedCollection(hit.collection);
+                                    }
+                                }}
+                            />
+                        </div>
+
+                        <div className="min-w-0 max-w-full w-full overflow-hidden">
+                            <Input
+                                label="Data Collection"
+                                type="select"
+                                options={collectionNames.map((name) => ({ label: getCollectionLabel(name), value: name }))}
+                                value={selectedCollection}
+                                onChange={(val) => setSelectedCollection(val)}
+                                isRequired
+                            />
+                        </div>
+
+                        <div className="min-w-0 max-w-full w-full overflow-hidden">
+                            <label className="text-[10px] font-black uppercase text-gray-500 tracking-widest">Date from</label>
+                            <input
+                                type="date"
+                                value={dateFrom}
+                                onChange={(e) => setDateFrom(e.target.value)}
+                                className="w-full mt-1 bg-black/50 border border-white/15 rounded-xl px-3 py-2.5 text-white text-sm outline-none focus:ring-1 focus:ring-cyan-500/40"
+                            />
+                        </div>
+
+                        <div className="min-w-0 max-w-full w-full overflow-hidden">
+                            <label className="text-[10px] font-black uppercase text-gray-500 tracking-widest">Date to</label>
+                            <input
+                                type="date"
+                                value={dateTo}
+                                onChange={(e) => setDateTo(e.target.value)}
+                                className="w-full mt-1 bg-black/50 border border-white/15 rounded-xl px-3 py-2.5 text-white text-sm outline-none focus:ring-1 focus:ring-cyan-500/40"
+                            />
+                        </div>
+
+                        <div className="min-w-0 max-w-full w-full overflow-hidden">
+                            <Input
+                                label="Status"
+                                type="select"
+                                options={[
+                                    { label: 'All', value: 'All' },
+                                    { label: 'Draft', value: 'Draft' },
+                                    { label: 'Posted', value: 'Posted' },
+                                    { label: 'Approved', value: 'Approved' },
+                                    { label: 'Pending', value: 'Pending' },
+                                    { label: 'Active', value: 'Active' },
+                                ]}
+                                value={statusFilter}
+                                onChange={(val) => setStatusFilter(val)}
+                            />
+                        </div>
+
+                        <div className="min-w-0 max-w-full w-full overflow-hidden">
+                            <Input
+                                label="Filter by Partner/Entity"
+                                type="select"
+                                options={[
+                                    { label: 'All Entities', value: 'All' },
+                                    ...partners.map((p) => ({
+                                        label: p.partner_name || p.name || p.id,
+                                        value: p.partner_name || p.name || p.id,
+                                    })),
+                                ]}
+                                value={columnFilters.partner_name || ''}
+                                onChange={(val) => handleFilterChange('partner_name', val)}
+                            />
+                        </div>
+
+                        {(filterableColumns || []).map((col) => (
+                            <div key={col.key} className="min-w-0 max-w-full w-full overflow-hidden">
                                 <Input
-                                    label="Data Collection"
+                                    label={`Filter: ${col.label}`}
                                     type="select"
-                                    options={collectionNames.map(name => ({ label: getCollectionLabel(name), value: name }))}
-                                    value={selectedCollection}
-                                    onChange={(val) => setSelectedCollection(val)}
-                                    isRequired
+                                    options={columnOptions[col.key] || [{ label: 'All', value: 'All' }]}
+                                    value={columnFilters[col.key] || ''}
+                                    onChange={(val) => handleFilterChange(col.key, val)}
                                 />
                             </div>
+                        ))}
 
-                            {/* Dynamic Filter Selects */}
-                            
-                            {/* Entity/Partner Filter */}
-                            <div className="flex-grow min-w-[200px]">
-                                <Input
-                                    label="Filter by Partner/Entity"
-                                    type="select"
-                                    options={[{label: 'All Entities', value: 'All'}, ...getCollection('FIN_PARTNERS_CRUD').map(p => ({label: p.partner_name, value: p.partner_name}))]}
-                                    value={columnFilters['partner_name'] || ''}
-                                    onChange={(val) => handleFilterChange('partner_name', val)}
-                                />
-                            </div>
+                        <div className="min-w-0 max-w-full w-full overflow-hidden">
+                            <Input
+                                label="Report Type"
+                                type="select"
+                                options={REPORT_TYPES}
+                                value={reportType}
+                                onChange={(val) => setReportType(val)}
+                            />
+                        </div>
 
-                            {selectedCollection && (filterableColumns || []).map(col => (
-                                <div key={col.key} className="flex-grow min-w-[200px]">
-                                    <Input
-                                        label={`Filter: ${col.label}`}
-                                        type="select"
-                                        options={columnOptions[col.key] || [{ label: 'All', value: 'All' }]}
-                                        value={columnFilters[col.key] || ''}
-                                        onChange={(val) => handleFilterChange(col.key, val)}
-                                    />
-                                </div>
-                            ))}
+                        <div className="min-w-0 max-w-full w-full overflow-hidden">
+                            <Input
+                                label="Sort By"
+                                type="select"
+                                options={[
+                                    { label: 'None', value: '' },
+                                    ...(filterableColumns || []).map((c) => ({ label: c.label, value: c.key })),
+                                ]}
+                                value={sortKey}
+                                onChange={(val) => setSortKey(val)}
+                            />
+                        </div>
 
-                            {/* Report Type Select (DAILY, WEEKLY, etc) */}
-                            <div className="flex-grow min-w-[200px]">
-                                <Input
-                                    label="Report Type"
-                                    type="select"
-                                    options={REPORT_TYPES}
-                                    value={reportType}
-                                    onChange={(val) => setReportType(val)}
-                                />
-                            </div>
-
-                            {/* Sort By Select */}
-                            <div className="flex-grow min-w-[200px]">
-                                <Input
-                                    label="Sort By"
-                                    type="select"
-                                    options={[{ label: 'None', value: '' }, ...(filterableColumns || []).map(c => ({ label: c.label, value: c.key }))]}
-                                    value={sortKey}
-                                    onChange={(val) => setSortKey(val)}
-                                />
-                            </div>
-
-                            {/* Group By Select */}
-                            <div className="flex-grow min-w-[200px]">
-                                <Input
-                                    label="Group By"
-                                    type="select"
-                                    options={[{ label: 'None', value: '' }, ...(filterableColumns || []).map(c => ({ label: c.label, value: c.key }))]}
-                                    value={groupByKey}
-                                    onChange={(val) => setGroupByKey(val)}
-                                />
-                            </div>
+                        <div className="min-w-0 max-w-full w-full overflow-hidden">
+                            <Input
+                                label="Group By"
+                                type="select"
+                                options={[
+                                    { label: 'None', value: '' },
+                                    ...(filterableColumns || []).map((c) => ({ label: c.label, value: c.key })),
+                                ]}
+                                value={groupByKey}
+                                onChange={(val) => setGroupByKey(val)}
+                            />
                         </div>
                     </div>
+                </div>
 
-                    {/* Export Button Integration */}
-                    <div className="col-span-full pt-4 flex justify-end">
+                <div className="w-full pt-2 flex flex-wrap justify-end gap-2">
+                    {typeof ExportButton === 'function' ? (
                         <ExportButton
                             data={filteredAndSortedData}
                             columns={columns}
-                            filename={`${getCollectionLabel(selectedCollection)}-${reportType}-Report`}
+                            filename={selectedCollection || 'report'}
+                            isFinancial
                         />
-                    </div>
+                    ) : (
+                        <button
+                            type="button"
+                            onClick={exportCSV}
+                            className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700 transition font-semibold"
+                        >
+                            Export CSV
+                        </button>
+                    )}
                 </div>
             </div>
 
-            {/* Results Table */}
-            {selectedCollection && (
-                <div className="flex-grow overflow-y-auto p-2 mt-4">
-                    <h3 className="text-xl font-bold text-white mb-4">
-                        Report Results: {getCollectionLabel(selectedCollection)} ({filteredAndSortedData.length} Records)
-                    </h3>
+            <div className="mb-4 flex flex-wrap gap-2 items-center">
+                <input
+                    type="text"
+                    placeholder="Search records..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="border border-cyan-500/30 bg-black/50 text-white placeholder:text-gray-500 p-2 rounded-lg text-sm w-full md:w-64 outline-none focus:ring-2 focus:ring-cyan-500/40"
+                />
+                <button
+                    type="button"
+                    onClick={exportCSV}
+                    className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700 transition font-semibold"
+                >
+                    Export to CSV
+                </button>
+            </div>
 
-                    {Object.entries(groupedData).map(([groupKey, data]) => (
-                        <div key={groupKey} className="mb-6 p-4 rounded-lg bg-gray-800/50">
-                            <h4 className="text-lg font-semibold text-gray-300 sticky top-0 bg-gray-800/80 p-2 -m-2 mb-2 z-10">
-                                {groupByKey ? `${filterableColumns.find(col => col.key === groupByKey)?.label || groupByKey}: ${groupKey} (${data.length})` : `All Records (${data.length})`}
-                            </h4>
-                            <div className="mb-4 flex flex-wrap gap-2 items-center no-print">
-                               <input
-                                    type="text"
-                                    placeholder="Search records..."
-                                    value={searchTerm}
-                                    onChange={(e) => setSearchTerm(e.target.value)}
-                                    className="border border-cyan-500/30 bg-black/50 text-white placeholder:text-gray-500 p-2 rounded-lg text-sm w-full md:w-64 outline-none focus:ring-2 focus:ring-cyan-500/40"
-                               />
-                               <button
-                                    type="button"
-                                    onClick={() => exportCSV(selectedCollection)}
-                                    className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700 transition font-semibold"
-                               >
-                                 Export to CSV
-                               </button>
-                             </div>
-                             <div className="uu-table-scroll overflow-x-auto rounded-xl border border-white/10 bg-black/40">
-                                <table className="min-w-full divide-y divide-gray-700">
-                                    <thead className="bg-slate-900">
-                                        <tr>
-                                            {(displayColumns || []).map((col, i) => (
-                                                <th key={i} className="px-4 py-3 text-left text-[10px] font-black uppercase tracking-wider text-cyan-300/90 whitespace-nowrap">
-                                                    {col.label}
-                                                </th>
-                                            ))}
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-gray-800">
-                                        {data.length === 0 ? (
-                                            <tr>
-                                                <td colSpan={Math.max(displayColumns.length, 1)} className="px-4 py-8 text-center text-gray-500 text-sm">
-                                                    No rows to display
+            {Object.entries(groupedData).map(([groupName, rows]) => (
+                <div key={groupName} className="mb-6">
+                    {groupByKey ? (
+                        <h4 className="text-sm font-black text-cyan-400 uppercase tracking-widest mb-2 px-1">
+                            {groupName} · {rows.length}
+                        </h4>
+                    ) : null}
+                    <div className="uu-table-scroll w-full max-w-full min-w-0 overflow-x-auto overflow-y-auto max-h-[min(55vh,520px)] rounded-xl border border-white/10 bg-black/40">
+                        <table className="w-max min-w-full border-collapse table-auto">
+                            <thead className="bg-slate-950/95 sticky top-0 z-10">
+                                <tr className="border-b border-white/10">
+                                    {(displayColumns || []).map((col, i) => (
+                                        <th
+                                            key={i}
+                                            className="px-3 py-2.5 text-left text-[10px] font-black uppercase tracking-wider text-cyan-300/90 whitespace-nowrap border-r border-white/5 last:border-r-0"
+                                        >
+                                            {col.label}
+                                        </th>
+                                    ))}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {(rows || []).map((row, ri) => (
+                                    <tr key={row.id || ri} className="border-b border-white/5 hover:bg-white/5">
+                                        {(displayColumns || []).map((col, j) => {
+                                            const raw = row[col.key];
+                                            let cell;
+                                            if (Array.isArray(raw)) {
+                                                cell = (raw || []).slice(0, 2).map((entry, idx) => (
+                                                    <span
+                                                        key={idx}
+                                                        className="bg-gray-700 text-gray-200 rounded-full px-2 py-1 text-xs mr-1 inline-block"
+                                                    >
+                                                        {typeof entry === 'object' ? Object.values(entry).join(' / ') : String(entry)}
+                                                    </span>
+                                                ));
+                                            } else if (raw === null || raw === undefined || raw === '') {
+                                                cell = <span className="text-gray-500">—</span>;
+                                            } else if (
+                                                col.type === 'number' ||
+                                                typeof raw === 'number' ||
+                                                (typeof raw === 'string' &&
+                                                    raw !== '' &&
+                                                    !isNaN(Number(raw)) &&
+                                                    /salary|pay|gross|net|amount|tax|pension|basic|ot|allowance/i.test(col.key || ''))
+                                            ) {
+                                                const n = Number(raw);
+                                                cell = Number.isFinite(n)
+                                                    ? n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                                                    : String(raw);
+                                            } else {
+                                                cell = String(raw);
+                                            }
+                                            return (
+                                                <td key={j} className="px-4 py-3.5 whitespace-nowrap text-sm text-white font-medium">
+                                                    {cell}
                                                 </td>
-                                            </tr>
-                                        ) : data.map((record, ri) => (
-                                            <tr
-                                                key={record.id || ri}
-                                                className={`transition duration-150 hover:bg-cyan-500/10 ${ri % 2 === 0 ? 'bg-white/[0.03]' : 'bg-transparent'}`}
-                                            >
-                                                {(displayColumns || []).map((col, j) => {
-                                                    const raw = record[col.key];
-                                                    let cell;
-                                                    if (Array.isArray(raw)) {
-                                                        cell = raw.slice(0, 2).map((entry, idx) => (
-                                                            <span key={idx} className="bg-gray-700 text-gray-200 rounded-full px-2 py-1 text-xs mr-1 inline-block">
-                                                                {typeof entry === 'object' ? Object.values(entry).join(' / ') : String(entry)}
-                                                            </span>
-                                                        ));
-                                                    } else if (raw === null || raw === undefined || raw === '') {
-                                                        cell = <span className="text-gray-500">—</span>;
-                                                    } else if (col.type === 'number' || (typeof raw === 'number') || (typeof raw === 'string' && raw !== '' && !isNaN(Number(raw)) && /salary|pay|gross|net|amount|tax|pension|basic|ot|allowance/i.test(col.key || ''))) {
-                                                        const n = Number(raw);
-                                                        cell = Number.isFinite(n)
-                                                            ? n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-                                                            : String(raw);
-                                                    } else {
-                                                        cell = String(raw);
-                                                    }
-                                                    return (
-                                                        <td key={j} className="px-4 py-3.5 whitespace-nowrap text-sm text-white font-medium">
-                                                            {cell}
-                                                        </td>
-                                                    );
-                                                })}
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                    ))}
-                    {filteredAndSortedData.length === 0 && (
-                        <p className="text-center py-8 text-gray-500">No records match the current criteria.</p>
-                    )}
+                                            );
+                                        })}
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
-            )}
+            ))}
+
+            {filteredAndSortedData.length === 0 ? (
+                <p className="text-center py-8 text-gray-500">No records match the current criteria.</p>
+            ) : null}
         </ContainerCard>
     );
 };
@@ -16406,7 +16595,7 @@ const MultiEntryField = ({ label, entries, fieldConfig, onChange, glassClass }) 
                         );
                     })}
                 </div>
-                <button
+                <button ref={addBtnRef}
                     type="button"
                     onClick={handleAdd}
                     className="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-black py-6 rounded-3xl text-[12px] uppercase tracking-widest transition-all shadow-2xl shadow-cyan-900/60 active:scale-95"
@@ -16443,55 +16632,157 @@ const ContainerCard = ({ title, Icon, children, glassClass, className = '' }) =>
         </div>
     );
 };
-const Modal = ({ isOpen, onClose, title, children, glassClass = '', footer }) => {
+
+
+const Modal = ({ isOpen, onClose, title, children, glassClass = '', footer, anchorRef }) => {
+    const panelRef = React.useRef(null);
+    const [box, setBox] = React.useState(null);
+
+    React.useEffect(() => {
+        if (!isOpen) return undefined;
+        const place = () => {
+            try {
+                const btn = anchorRef && anchorRef.current ? anchorRef.current : null;
+                const vw = window.innerWidth;
+                const vh = window.innerHeight;
+
+                // Prefer the table / main content panel — never the left submenu
+                let panel = null;
+                if (btn && btn.closest) {
+                    panel =
+                        btn.closest('[data-uu-table-panel]') ||
+                        btn.closest('.table-panel') ||
+                        btn.closest('main') ||
+                        btn.closest('[class*="overflow"]') ||
+                        btn.parentElement;
+                    // Walk up until we get a reasonably wide content box (skip tight toolbars)
+                    let walk = btn.parentElement;
+                    for (let i = 0; i < 8 && walk; i++) {
+                        const wr = walk.getBoundingClientRect();
+                        if (wr.width >= Math.min(480, vw * 0.45) && wr.height >= 120) {
+                            panel = walk;
+                            break;
+                        }
+                        walk = walk.parentElement;
+                    }
+                }
+
+                const pr = panel && panel.getBoundingClientRect
+                    ? panel.getBoundingClientRect()
+                    : { left: Math.min(280, vw * 0.22), top: 80, right: vw - 12, bottom: vh - 12, width: vw * 0.7, height: vh - 100 };
+
+                // Content column only (exclude typical left nav ~0–260px if panel spans full)
+                let contentLeft = pr.left;
+                let contentRight = pr.right;
+                // If panel is almost full width, inset past submenu
+                if (pr.left < 40 && pr.width > vw * 0.85) {
+                    contentLeft = Math.min(280, Math.max(200, vw * 0.18));
+                    contentRight = vw - 12;
+                }
+
+                const contentW = Math.max(280, contentRight - contentLeft);
+                const width = Math.min(Math.max(480, contentW * 0.88), contentW - 16, 920);
+
+                let left;
+                let top;
+                if (btn && btn.getBoundingClientRect) {
+                    const r = btn.getBoundingClientRect();
+                    // Align toward the Add button within the table content band
+                    left = r.right - width;
+                    if (left < contentLeft + 8) left = contentLeft + 8;
+                    if (left + width > contentRight - 8) left = contentRight - width - 8;
+
+                    const estH = Math.min(vh * 0.7, 540);
+                    const below = r.bottom + 8;
+                    if (below + Math.min(estH, 280) < Math.min(pr.bottom, vh) - 8) {
+                        top = below;
+                    } else {
+                        top = Math.max(pr.top + 8, r.top - 8 - Math.min(estH, r.top - pr.top));
+                    }
+                } else {
+                    left = contentLeft + (contentW - width) / 2;
+                    top = Math.max(pr.top + 24, vh * 0.12);
+                }
+
+                const maxBottom = Math.min(pr.bottom, vh - 8);
+                const maxHeight = Math.max(240, Math.min(maxBottom - top - 8, vh * 0.82, 720));
+                setBox({ top, left, width, maxHeight });
+            } catch (e) {
+                setBox(null);
+            }
+        };
+        place();
+        window.addEventListener('resize', place);
+        window.addEventListener('scroll', place, true);
+        return () => {
+            window.removeEventListener('resize', place);
+            window.removeEventListener('scroll', place, true);
+        };
+    }, [isOpen, anchorRef]);
+
+
     if (!isOpen) return null;
 
-    return (
+    const node = (
         <div
-            className="fixed inset-0 z-[9999] flex items-end sm:items-center justify-center
-                       p-0 sm:p-5 bg-slate-950/50 backdrop-blur-md"
+            className="fixed inset-0 z-[99999]"
+            style={{ position: 'fixed', inset: 0, zIndex: 99999 }}
             role="presentation"
         >
+            {/* Light transparent scrim — page stays clearly visible */}
             <div
-                className={`relative z-[10000] w-full sm:max-w-2xl max-h-[92dvh] flex flex-col
-                            overflow-hidden rounded-t-2xl sm:rounded-2xl
-                            border-2 border-white/25 bg-slate-900/95 backdrop-blur-xl text-white
-                            shadow-[0_25px_80px_rgba(0,0,0,0.65)] ring-1 ring-cyan-400/25
+                className="absolute inset-0 bg-slate-950/25 backdrop-blur-[2px]"
+                style={{ background: 'rgba(2, 8, 20, 0.22)' }}
+            />
+            <div
+                ref={panelRef}
+                className={`absolute flex flex-col overflow-hidden rounded-2xl
+                            border border-white/30 bg-slate-900/80 backdrop-blur-xl text-white
+                            shadow-[0_20px_60px_rgba(0,0,0,0.45)] ring-1 ring-cyan-400/20
                             ${glassClass || ''}`}
+                style={box ? {
+                    top: box.top,
+                    left: box.left,
+                    width: box.width,
+                    maxHeight: box.maxHeight,
+                } : {
+                    top: '12vh',
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                    width: 'min(920px, calc(100vw - 48px))',
+                    maxHeight: '78vh',
+                }}
                 role="dialog"
                 aria-modal="true"
                 onMouseDown={(e) => e.stopPropagation()}
                 onClick={(e) => e.stopPropagation()}
             >
-                <div className="h-1 w-full shrink-0 bg-gradient-to-r from-cyan-500 via-sky-400 to-violet-500" />
-
-                <div className="shrink-0 flex items-center justify-between gap-3 px-4 py-3 border-b border-white/15 bg-white/5">
-                    <h3 className="text-sm sm:text-lg font-black uppercase tracking-wide text-cyan-300 truncate">
+                <div className="h-1 w-full shrink-0 bg-gradient-to-r from-cyan-500/80 via-sky-400/80 to-violet-500/80" />
+                <div className="shrink-0 flex items-center justify-between gap-3 px-4 py-2.5 border-b border-white/10 bg-white/5">
+                    <h3 className="text-sm sm:text-base font-black uppercase tracking-wide text-cyan-300 truncate">
                         {title}
                     </h3>
                     <button
                         type="button"
                         onClick={onClose}
-                        className="p-2.5 rounded-xl border border-white/20 bg-white/5 min-h-[44px] min-w-[44px]
+                        className="p-2 rounded-xl border border-white/15 bg-white/5 min-h-[40px] min-w-[40px]
                                    flex items-center justify-center text-gray-300 hover:text-red-300"
                         aria-label="Close"
                     >
                         <Icons.X className="w-5 h-5" />
                     </button>
                 </div>
-
-                <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-4 py-4 overscroll-contain">
+                <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-4 py-3 overscroll-contain">
                     {children}
                 </div>
-
-                <div className="shrink-0 flex flex-wrap justify-end gap-2 px-4 py-3 border-t border-white/15 bg-slate-900/95
-                                pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+                <div className="shrink-0 flex flex-wrap justify-end gap-2 px-4 py-2.5 border-t border-white/10 bg-slate-900/70
+                                pb-[max(0.5rem,env(safe-area-inset-bottom))]">
                     {footer}
                     <button
                         type="button"
                         onClick={onClose}
-                        className="px-4 py-3 rounded-xl text-xs font-bold uppercase border border-white/20
-                                   bg-white/5 text-gray-200 min-h-[44px] flex-1 sm:flex-none"
+                        className="px-4 py-2.5 rounded-xl text-xs font-bold uppercase border border-white/20
+                                   bg-white/5 text-gray-200 min-h-[40px] flex-1 sm:flex-none"
                     >
                         Cancel
                     </button>
@@ -16499,8 +16790,17 @@ const Modal = ({ isOpen, onClose, title, children, glassClass = '', footer }) =>
             </div>
         </div>
     );
-};
 
+    try {
+        if (typeof document !== 'undefined' && document.body) {
+            const portalFn =
+                (typeof createPortal === 'function' && createPortal) ||
+                (typeof ReactDOM !== 'undefined' && ReactDOM.createPortal);
+            if (typeof portalFn === 'function') return portalFn(node, document.body);
+        }
+    } catch (e) {}
+    return node;
+};
 
 // New Component: Export Helpers
 const convertToExcel = (data, columns, filename) => {
@@ -16599,6 +16899,7 @@ const DataTable = ({ collectionName, data, columns: columnsProp, glassClass, tit
     const { deleteRecord, updateRecord, commitAllPayroll } = useData();
     const { checkPermission } = useAuth();
     const [isModalOpen, setIsModalOpen] = useState(false);
+    const addBtnRef = useRef(null);
     const [editingRecord, setEditingRecord] = useState(null);
     const [searchTerm, setSearchTerm] = useState("");
     const [statusFilter, setStatusFilter] = useState("All");
@@ -16857,7 +17158,7 @@ const DataTable = ({ collectionName, data, columns: columnsProp, glassClass, tit
             <div className="flex flex-wrap justify-between items-center gap-3 mb-6">
                 <div className="flex flex-wrap items-center gap-2">
                 {checkPermission('CAN_ADD_RECORD', allRoles) && (
-                    <button onClick={() => {setEditingRecord({}); setIsModalOpen(true);}} className="bg-green-600 hover:bg-green-500 text-white font-black py-2.5 px-6 rounded-xl text-[10px] uppercase tracking-widest transition-all shadow-lg active:scale-95">
+                    <button ref={addBtnRef} onClick={() => {setEditingRecord({}); setIsModalOpen(true);}} className="bg-green-600 hover:bg-green-500 text-white font-black py-2.5 px-6 rounded-xl text-[10px] uppercase tracking-widest transition-all shadow-lg active:scale-95">
                         + Add {getAddLabel()}
 
                     </button>
@@ -16909,7 +17210,7 @@ const DataTable = ({ collectionName, data, columns: columnsProp, glassClass, tit
                 </table>
             </div>
 
-            <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={`New ${getAddLabel()}`}>
+            <Modal anchorRef={addBtnRef} isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={editingRecord && editingRecord.id ? `Edit ${getAddLabel()}` : `New ${getAddLabel()}`}>
                 <FormModal collectionName={collectionName} initialData={editingRecord} onSave={() => setIsModalOpen(false)} onCancel={() => setIsModalOpen(false)} />
             </Modal>
         </ContainerCard>
@@ -22917,6 +23218,239 @@ export const FIN_STATEMENTS_DISPLAY = ({ glassClass, viewId, ledgerEntries, payr
     const iconName = reportEngine?.icon || 'FileText';
     const IconComp = (Icons[iconName] && typeof Icons[iconName] === 'function') ? Icons[iconName] : Icons.FileText;
 
+
+    /** Full-statement print: robust iframe report for FP / P&L / Cash Flow (no popup dependency). */
+    /** Full-statement print: robust iframe report for FP / P&L / Cash Flow (no popup dependency). */
+    const printFullStatement = React.useCallback(() => {
+        const rows = (reportEngine && Array.isArray(reportEngine.rows) && reportEngine.rows.length)
+            ? reportEngine.rows
+            : (activeRows || []);
+        if (!rows.length) {
+            try { alert('No statement lines to print.'); } catch (e) {}
+            return;
+        }
+        const title = (reportEngine && reportEngine.title) || 'Financial Statement';
+        const subtitle = (reportEngine && reportEngine.subtitle) || 'Institutional financial report';
+        const periodFrom = startDate || 'Opening';
+        const periodTo = endDate || new Date().toISOString().slice(0, 10);
+        const printedAt = new Date().toLocaleString();
+        const stmtId = 'UU-FS-' + Date.now().toString(36).toUpperCase();
+        const esc = (s) => String(s == null ? '' : s)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+        const money = (v) => {
+            if (v == null || v === '') return '';
+            const n = Number(v);
+            if (!Number.isFinite(n)) return '';
+            const abs = Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            return n < 0 ? ('(' + abs + ')') : abs;
+        };
+        let lineCount = 0;
+        let amountSum = 0;
+        rows.forEach((r) => {
+            if (r && r.amount != null && r.amount !== '' && !r.isHeader) {
+                lineCount += 1;
+                amountSum += Number(r.amount) || 0;
+            }
+        });
+        const rowHtml = rows.map((r, idx) => {
+            const isHdr = !!r.isHeader;
+            const isTot = !!(r.isTotal || r.isGrandTotal);
+            const indent = Math.max(0, Number(r.indent) || 0);
+            const pad = 6 + indent * 12;
+            const amtCur = (!isHdr && r.amount != null && r.amount !== '') ? money(r.amount) : '';
+            const priorRaw = r.prior != null ? r.prior : (r.previous != null ? r.previous : r.amount_prior);
+            const amtPrior = (!isHdr && priorRaw != null && priorRaw !== '') ? money(priorRaw) : '';
+            const labelCls = isHdr || isTot || r.isBold ? 'lab bold' : (r.isItalic ? 'lab ital' : 'lab');
+            const trCls = isHdr ? 'hdr' : (r.isGrandTotal ? 'grand' : (isTot ? 'tot' : (idx % 2 ? 'alt' : '')));
+            return (
+                '<tr class="' + trCls + '">' +
+                '<td class="ln">' + (isHdr ? '' : String(idx + 1)) + '</td>' +
+                '<td class="' + labelCls + '" style="padding-left:' + pad + 'px">' + esc(r.label) + '</td>' +
+                '<td class="note">' + esc(r.note || '') + '</td>' +
+                '<td class="amt">' + esc(amtCur) + '</td>' +
+                '<td class="amt muted">' + esc(amtPrior) + '</td>' +
+                '</tr>'
+            );
+        }).join('');
+        const html = '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/>' +
+'<meta name="viewport" content="width=device-width, initial-scale=1"/>' +
+'<title>' + esc(title) + ' · Unity University</title><style>' +
+'@page{size:A4 portrait;margin:8mm 7mm 10mm 7mm}' +
+'*{box-sizing:border-box}' +
+'html,body{margin:0;padding:0;width:100%;background:#fff;color:#0f172a;font-family:"Segoe UI",Arial,sans-serif;' +
+'-webkit-print-color-adjust:exact;print-color-adjust:exact;overflow:visible}' +
+'.toolbar{position:sticky;top:0;z-index:50;display:flex;flex-wrap:wrap;gap:10px;align-items:center;' +
+'justify-content:space-between;padding:12px 16px;background:#0f172a;color:#f8fafc}' +
+'.toolbar .hint{font-size:11px;color:#94a3b8;max-width:520px;line-height:1.4}' +
+'.toolbar button{border:0;border-radius:8px;padding:9px 16px;font-weight:700;font-size:12px;cursor:pointer}' +
+'.btn-print{background:#0891b2;color:#fff}.btn-close{background:#334155;color:#e2e8f0}' +
+'.sheet{width:100%;max-width:none;margin:0;padding:6mm 4mm 8mm;overflow:visible}' +
+'.entity{display:grid;grid-template-columns:1fr auto;gap:8px;border-bottom:2.5px solid #0e7490;padding-bottom:6px;margin-bottom:8px}' +
+'.entity h1{margin:0;font-size:13pt;font-weight:800;color:#0e7490;text-transform:uppercase;letter-spacing:.02em}' +
+'.entity .org-sub{margin:2px 0 0;font-size:8pt;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#475569}' +
+'.entity .org-meta{margin:2px 0 0;font-size:7.5pt;color:#64748b;line-height:1.35}' +
+'.entity-badge{text-align:right;font-size:7.5pt;color:#64748b}' +
+'.entity-badge strong{display:block;font-size:8.5pt;color:#0f172a;margin-bottom:2px}' +
+'h2.stmt{margin:6px 0 2px;text-align:center;font-size:11.5pt;font-weight:800;text-transform:uppercase;letter-spacing:.05em}' +
+'.stmt-sub{text-align:center;font-size:8pt;color:#64748b;margin:0 0 6px}' +
+'.period-box{display:flex;flex-wrap:wrap;justify-content:center;gap:10px 18px;margin:0 0 8px;padding:5px 8px;' +
+'background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;font-size:8pt}' +
+'.period-box span{color:#64748b}.period-box strong{color:#0f172a}' +
+'.summary-strip{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:8px}' +
+'.summary-strip .cell{border:1px solid #e2e8f0;border-radius:4px;padding:5px 8px;background:#f8fafc}' +
+'.summary-strip .cell label{display:block;font-size:7pt;text-transform:uppercase;letter-spacing:.06em;color:#64748b;margin-bottom:1px}' +
+'.summary-strip .cell strong{font-size:9pt;color:#0f172a;font-variant-numeric:tabular-nums}' +
+'table.stmt{width:100%;border-collapse:collapse;font-size:8pt;table-layout:fixed}' +
+'table.stmt thead{display:table-header-group}' +
+'table.stmt thead th{background:#0e7490;color:#fff;text-align:left;padding:4px 5px;font-size:7pt;' +
+'text-transform:uppercase;letter-spacing:.04em;border:1px solid #0e7490}' +
+'table.stmt thead th.r{text-align:right}table.stmt thead th.c{text-align:center}' +
+'table.stmt td{padding:2.5px 5px;border:.4px solid #e2e8f0;vertical-align:top;word-wrap:break-word;overflow-wrap:anywhere}' +
+'table.stmt tr{page-break-inside:auto}' +
+'table.stmt tr.alt td{background:#fafbfc}' +
+'table.stmt tr.hdr td{background:#f1f5f9;font-weight:800;text-transform:uppercase;font-size:7.5pt;' +
+'border-top:1px solid #94a3b8;border-bottom:1px solid #94a3b8}' +
+'table.stmt tr.tot td{background:#ecfeff;font-weight:700;border-top:1px solid #67e8f9}' +
+'table.stmt tr.grand td{background:#cffafe;font-weight:800;border-top:1.5px solid #0e7490;border-bottom:1.5px solid #0e7490}' +
+'.ln{width:22px;text-align:center;color:#94a3b8;font-size:7pt}' +
+'.lab{color:#1e293b}.lab.bold{font-weight:800;text-transform:uppercase;font-size:7.5pt}' +
+'.lab.ital{font-style:italic;color:#64748b}' +
+'.note{text-align:center;color:#64748b;font-size:7pt;width:36px}' +
+'.amt{text-align:right;font-variant-numeric:tabular-nums;font-family:ui-monospace,Consolas,monospace;white-space:nowrap;font-size:7.5pt}' +
+'.amt.muted{color:#64748b}' +
+'.notes-block{margin-top:10px;padding:8px 10px;border:1px solid #e2e8f0;border-radius:4px;font-size:7.5pt;color:#475569;line-height:1.4;page-break-inside:avoid}' +
+'.notes-block h3{margin:0 0 4px;font-size:8pt;text-transform:uppercase;letter-spacing:.06em;color:#0e7490}' +
+'.foot{margin-top:14px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;page-break-inside:avoid}' +
+'.sign{text-align:center;padding-top:28px;border-top:1px solid #94a3b8;font-size:7.5pt;color:#475569}' +
+'.sign strong{display:block;color:#0f172a;font-size:8pt;margin-bottom:2px;text-transform:uppercase}' +
+'.disclaimer{margin-top:10px;font-size:7pt;color:#94a3b8;text-align:center;border-top:1px solid #e2e8f0;padding-top:6px}' +
+'@media print{' +
+'html,body{width:100%!important;height:auto!important;overflow:visible!important}' +
+'.toolbar{display:none!important}' +
+'.sheet{width:100%!important;max-width:none!important;margin:0!important;padding:0!important;overflow:visible!important}' +
+'table.stmt{width:100%!important}' +
+'thead{display:table-header-group}' +
+'tfoot{display:table-footer-group}' +
+'tr{page-break-inside:auto;page-break-after:auto}' +
+'tr.hdr,tr.tot,tr.grand{page-break-inside:avoid}' +
+'.foot{page-break-inside:avoid}' +
+'}' +
+'</style></head><body>' +
+'<div class="toolbar"><div class="hint"><strong style="color:#fff">' + esc(title) + '</strong><br/>' +
+'Full institutional statement · ' + rows.length + ' lines · Review, then Print / Save as PDF.</div>' +
+'<div><button type="button" class="btn-print" id="uuPrintBtn">Print / Save as PDF</button> ' +
+'<button type="button" class="btn-close" id="uuCloseBtn">Close</button></div></div>' +
+'<div class="sheet">' +
+'<div class="entity"><div>' +
+'<h1>Unity University</h1>' +
+'<p class="org-sub">Official Financial Statement</p>' +
+'<p class="org-meta">Gerji Head Office · Torhailoch Campus · Addis Ababa, Ethiopia<br/>' +
+'Functional currency: Ethiopian Birr (ETB) · Accrual basis</p></div>' +
+'<div class="entity-badge"><strong>Document ' + esc(stmtId) + '</strong>Printed ' + esc(printedAt) + '</div></div>' +
+'<h2 class="stmt">' + esc(title) + '</h2>' +
+'<p class="stmt-sub">' + esc(subtitle) + '</p>' +
+'<div class="period-box">' +
+'<div><span>Period from</span> <strong>' + esc(periodFrom) + '</strong></div>' +
+'<div><span>Period to</span> <strong>' + esc(periodTo) + '</strong></div>' +
+'<div><span>Currency</span> <strong>ETB</strong></div></div>' +
+'<div class="summary-strip">' +
+'<div class="cell"><label>Statement lines</label><strong>' + rows.length + '</strong></div>' +
+'<div class="cell"><label>Amount lines</label><strong>' + lineCount + '</strong></div>' +
+'<div class="cell"><label>Control sum (non-header)</label><strong>' + esc(money(amountSum)) + '</strong></div></div>' +
+'<table class="stmt"><thead><tr>' +
+'<th class="c">#</th><th>Description / Account designation</th><th class="c">Note</th>' +
+'<th class="r">Current period (ETB)</th><th class="r">Prior period (ETB)</th>' +
+'</tr></thead><tbody>' + rowHtml + '</tbody></table>' +
+'<div class="notes-block"><h3>Presentation notes</h3><div>' +
+'1. Prepared from the institutional chart of accounts and trial-balance linked amounts where available.<br/>' +
+'2. Figures in parentheses denote credit / negative movements as shown on screen.<br/>' +
+'3. Prior period column fills when comparative balances exist on the line; otherwise blank.<br/>' +
+'4. Control sum is arithmetic of non-header lines only — not a statutory total.</div></div>' +
+'<div class="foot">' +
+'<div class="sign"><strong>Prepared by</strong>Finance Officer<br/>Name / Signature / Date</div>' +
+'<div class="sign"><strong>Reviewed by</strong>Chief Accountant<br/>Name / Signature / Date</div>' +
+'<div class="sign"><strong>Approved by</strong>Finance Director<br/>Name / Signature / Date</div></div>' +
+'<p class="disclaimer">' + esc(title) + ' · Unity University SIS · Full statement (' + rows.length + ' lines) · ' +
+'Period ' + esc(periodFrom) + ' → ' + esc(periodTo) + ' · ' + esc(printedAt) + '</p>' +
+'</div>' +
+'<script>(function(){var b=document.getElementById("uuPrintBtn");var c=document.getElementById("uuCloseBtn");' +
+'if(b)b.onclick=function(){try{window.focus();window.print()}catch(e){}};' +
+'if(c)c.onclick=function(){try{window.close()}catch(e){}};' +
+'setTimeout(function(){try{window.focus()}catch(e){}},100);})();<\/script>' +
+'</body></html>';
+        // Prefer iframe (works when popups blocked). Fallback: new tab, then blob URL.
+        const runPrintInFrame = (doc) => {
+            try {
+                doc.open();
+                doc.write(html);
+                doc.close();
+            } catch (e) {}
+        };
+        let used = false;
+        try {
+            const existing = document.getElementById('uu-statement-print-frame');
+            if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+            const iframe = document.createElement('iframe');
+            iframe.id = 'uu-statement-print-frame';
+            iframe.setAttribute('title', 'Statement print');
+            iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;opacity:0;pointer-events:none;';
+            document.body.appendChild(iframe);
+            const idoc = iframe.contentDocument || (iframe.contentWindow && iframe.contentWindow.document);
+            if (idoc) {
+                runPrintInFrame(idoc);
+                used = true;
+                setTimeout(() => {
+                    try {
+                        iframe.contentWindow.focus();
+                        iframe.contentWindow.print();
+                    } catch (e) {}
+                }, 350);
+                try {
+                    const w = window.open('', '_blank', 'noopener,noreferrer,width=920,height=1100');
+                    if (w) {
+                        w.document.open();
+                        w.document.write(html);
+                        w.document.close();
+                    }
+                } catch (e2) {}
+            }
+        } catch (e) {}
+        if (!used) {
+            try {
+                const w = window.open('', '_blank', 'noopener,noreferrer,width=920,height=1100');
+                if (w) {
+                    w.document.open();
+                    w.document.write(html);
+                    w.document.close();
+                    setTimeout(() => { try { w.focus(); w.print(); } catch (e) {} }, 400);
+                    return;
+                }
+            } catch (e) {}
+            try {
+                const blob = new Blob([html], { type: 'text/html' });
+                const url = URL.createObjectURL(blob);
+                const w2 = window.open(url, '_blank');
+                if (!w2) {
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.target = '_blank';
+                    a.rel = 'noopener';
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                }
+                setTimeout(() => URL.revokeObjectURL(url), 60000);
+            } catch (e3) {
+                try { window.print(); } catch (e4) {}
+            }
+        }
+    }, [reportEngine, activeRows, startDate, endDate]);
+
+
+
     return (
         <div className="space-y-5 animate-in fade-in duration-500">
             <div className={`p-6 rounded-[2rem] ${glassClass} border border-cyan-500/25 bg-gradient-to-br from-slate-950/80 to-black/50 no-print`}>
@@ -22954,8 +23488,8 @@ export const FIN_STATEMENTS_DISPLAY = ({ glassClass, viewId, ledgerEntries, payr
                             chartRef={statementRef}
                             isFinancial={true}
                         />
-                        <button type="button" onClick={() => window.print()} className="px-3 py-2 rounded-xl text-[10px] font-black uppercase bg-white/10 text-white hover:bg-white/15 flex items-center gap-1.5">
-                            <Icons.Printer className="w-3.5 h-3.5" /> Print
+                        <button type="button" onClick={() => printFullStatement()} title="Full institutional statement — Print / Save as PDF" className="px-3 py-2 rounded-xl text-[10px] font-black uppercase bg-white/10 text-white hover:bg-white/15 flex items-center gap-1.5">
+                            <Icons.Printer className="w-3.5 h-3.5" /> Full Print
                         </button>
                     </div>
                 </div>
@@ -24445,6 +24979,7 @@ const HrmAppContent = () => {
     // FETCH LIVE ROLES: This is the heartbeat of the April 21 logic
     const allRoles = getCollection('ROLE_CRUD') || [];
     const [showNotifications, setShowNotifications] = useState(false);
+    const [notifCount, setNotifCount] = useState(0);
     const [mobileNavOpen, setMobileNavOpen] = useState(false);
     const isMobile = useIsMobile(768); 
     const [expandedFolders, setExpandedFolders] = useState(['HR', 'SETTINGS']); 
@@ -24524,9 +25059,19 @@ const HrmAppContent = () => {
                     <button 
                         type="button"
                         onClick={() => setShowNotifications(!showNotifications)}
-                        className={`p-2 rounded-full transition-all ${showNotifications ? 'bg-cyan-500 text-white' : 'text-gray-400'}`}
+                        className={`relative p-2 rounded-full transition-all ${showNotifications ? 'bg-cyan-500 text-white' : 'text-gray-400 hover:text-white hover:bg-white/10'}`}
                     >
-                        <Icons.Bell className="w-5 h-5" />
+                        <span className="relative inline-flex"><Icons.Bell className="w-5 h-5" />
+                                <span
+                                    className={`absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full text-[9px] font-black flex items-center justify-center ring-2 ring-slate-950 ${
+                                        notifCount > 0
+                                            ? 'bg-rose-500 text-white shadow-lg shadow-rose-500/50 animate-pulse'
+                                            : 'bg-transparent text-transparent'
+                                    }`}
+                                    title={notifCount > 0 ? `${notifCount} notifications` : 'No alerts'}
+                                >
+                                    {notifCount > 0 ? (notifCount > 99 ? '99+' : notifCount) : ''}
+                                </span></span>
                     </button>
                 </div>
             </header>
@@ -24574,15 +25119,22 @@ const HrmAppContent = () => {
                     {renderView(currentView, glassClass, getCollection, checkPermission, allRoles, allData)}
                 </main>
 
-                {showNotifications && (
-                    <aside className={`w-[25%] border-l border-white/10 animate-in slide-in-from-right ${glassClass}`}>
-                        <NotificationBar 
-                            glassClass={glassClass} 
-                            currentUser={currentUser} 
-                            onClose={() => setShowNotifications(false)} 
-                        />
-                    </aside>
-                )}
+                {/* Notification panel: always mounted so red bell badge count stays live */}
+                <aside
+                    className={`border-l border-white/10 ${glassClass} ${
+                        showNotifications
+                            ? 'w-[25%] min-w-[280px] max-w-[360px] animate-in slide-in-from-right'
+                            : 'hidden w-0 min-w-0 overflow-hidden'
+                    }`}
+                    aria-hidden={!showNotifications}
+                >
+                    <NotificationBar
+                        glassClass={glassClass}
+                        currentUser={currentUser}
+                        onClose={() => setShowNotifications(false)}
+                        onCountChange={setNotifCount}
+                    />
+                </aside>
                     <UnityUniversityAIDock glassClass={glassClass} />
 
             </div>
@@ -26790,7 +27342,25 @@ const UnityFinanceConsolidator = () => {
     </div>
   );
 };
-const NotificationBar = ({ glassClass, currentUser, onClose }) => {
+
+/** Relative time for notification rows (e.g. "1 min ago"). */
+const formatRelativeTime = (isoOrDate) => {
+    if (!isoOrDate) return '';
+    const then = new Date(isoOrDate);
+    if (isNaN(then.getTime())) return String(isoOrDate).slice(0, 16);
+    const sec = Math.round((Date.now() - then.getTime()) / 1000);
+    if (sec < 10) return 'just now';
+    if (sec < 60) return sec + ' sec ago';
+    const min = Math.floor(sec / 60);
+    if (min < 60) return min + (min === 1 ? ' min ago' : ' mins ago');
+    const hr = Math.floor(min / 60);
+    if (hr < 24) return hr + (hr === 1 ? ' hour ago' : ' hours ago');
+    const day = Math.floor(hr / 24);
+    if (day < 30) return day + (day === 1 ? ' day ago' : ' days ago');
+    return then.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+};
+
+const NotificationBar = ({ glassClass, currentUser, onClose, onCountChange }) => {
     const { getCollection, notificationTrigger, leaveUpdateTrigger, roleUpdateTrigger, allData } = useData();
     const [activeTab, setActiveTab] = useState('all');
     const [filter, setFilter] = useState('all'); // all | alert | warning | info
@@ -27022,6 +27592,16 @@ const NotificationBar = ({ glassClass, currentUser, onClose }) => {
         info: notifications.filter(n => n.severity === 'info').length,
         success: notifications.filter(n => n.severity === 'success').length,
     }), [notifications]);
+    useEffect(() => {
+        if (typeof onCountChange !== 'function') return;
+        const badge = Number(
+            counts && counts.all != null
+                ? counts.all
+                : ((counts && counts.alert) || 0) + ((counts && counts.warning) || 0) + ((counts && counts.info) || 0)
+        ) || 0;
+        onCountChange(badge, counts);
+    }, [counts, onCountChange]);
+
 
     const sevStyle = {
         alert: 'border-rose-500/40 bg-rose-950/40 text-rose-100',
@@ -27092,16 +27672,31 @@ const NotificationBar = ({ glassClass, currentUser, onClose }) => {
                     <p className="text-center text-gray-500 text-xs py-10">No notifications for this filter.</p>
                 ) : filtered.map(n => {
                     const Icon = Icons[sevIcon[n.severity]] || Icons.Bell;
+                    const when = formatRelativeTime(n.created_at || n.date || n.timestamp || n.time || n.as_of);
                     return (
-                        <div key={n.id} className={`rounded-xl border p-3 ${sevStyle[n.severity] || sevStyle.info}`}>
-                            <div className="flex items-start gap-2">
-                                <Icon className="w-4 h-4 shrink-0 mt-0.5 opacity-90" />
+                        <div key={n.id} className={`rounded-xl border p-3 ${sevStyle[n.severity] || sevStyle.info} transition hover:bg-white/[0.04]`}>
+                            <div className="flex items-start gap-2.5">
+                                <div className="shrink-0 w-8 h-8 rounded-lg bg-black/25 border border-white/10 flex items-center justify-center">
+                                    <Icon className="w-4 h-4 opacity-90" />
+                                </div>
                                 <div className="min-w-0 flex-1">
                                     <div className="flex items-center gap-2 flex-wrap">
-                                        <span className="text-[9px] font-black uppercase tracking-wider opacity-80">{n.category}</span>
-                                        <span className="text-[8px] uppercase opacity-50">{n.severity}</span>
+                                        <span className="text-[9px] font-black uppercase tracking-wider opacity-90">{n.category}</span>
+                                        <span className={`text-[8px] font-bold uppercase px-1.5 py-0.5 rounded ${
+                                            n.severity === 'alert' ? 'bg-rose-500/20 text-rose-300' :
+                                            n.severity === 'warning' ? 'bg-amber-500/20 text-amber-300' :
+                                            'bg-cyan-500/15 text-cyan-300'
+                                        }`}>{n.severity}</span>
+                                        {when ? (
+                                            <span className="text-[9px] text-gray-400 ml-auto tabular-nums" title={String(n.created_at || n.date || '')}>
+                                                {when}
+                                            </span>
+                                        ) : null}
                                     </div>
-                                    <p className="text-[11px] font-medium mt-0.5 leading-snug">{n.message}</p>
+                                    <p className="text-[11px] font-medium mt-1 leading-snug text-gray-100">{n.message}</p>
+                                    {n.module || n.source ? (
+                                        <p className="text-[9px] text-gray-500 mt-1 uppercase tracking-wide">{n.module || n.source}</p>
+                                    ) : null}
                                 </div>
                             </div>
                         </div>
@@ -27130,4 +27725,3 @@ export function FinanceApp() {
     );
 }
 export default FinanceApp;
-

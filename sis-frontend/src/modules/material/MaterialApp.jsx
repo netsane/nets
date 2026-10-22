@@ -5,6 +5,7 @@ import LoginModuleSwitcher from '../../unity/LoginModuleSwitcher.jsx';
 import { MobileStyles, useIsMobile } from '../../unity/mobileCompat.js';
                
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import * as Icons from 'lucide-react';
 
 import {
@@ -1819,17 +1820,44 @@ const Input = ({ label, type, value, onChange, placeholder, isRequired = false, 
     const id = React.useId();
     const [showECPicker, setShowECPicker] = useState(false);
     const [selectOpen, setSelectOpen] = useState(false);
+    const [selectMenuBox, setSelectMenuBox] = useState(null);
     const selectRootRef = useRef(null);
+    const selectBtnRef = useRef(null);
     useEffect(() => {
-        if (!selectOpen) return undefined;
+        if (!selectOpen) {
+            setSelectMenuBox(null);
+            return undefined;
+        }
+        const place = () => {
+            const el = selectBtnRef.current || selectRootRef.current;
+            if (!el || !el.getBoundingClientRect) return;
+            const r = el.getBoundingClientRect();
+            const width = Math.max(r.width, 240);
+            let left = r.left;
+            if (left + width > window.innerWidth - 8) left = Math.max(8, window.innerWidth - width - 8);
+            if (left < 8) left = 8;
+            const gap = 6;
+            const spaceBelow = window.innerHeight - r.bottom - gap;
+            const openUp = spaceBelow < 220 && r.top > spaceBelow;
+            const maxHeight = Math.min(320, openUp ? Math.max(180, r.top - gap - 8) : Math.max(180, spaceBelow));
+            const top = openUp ? Math.max(8, r.top - gap - maxHeight) : r.bottom + gap;
+            setSelectMenuBox({ top, left, width, maxHeight, zIndex: 99999 });
+        };
+        place();
         const onDoc = (e) => {
-            if (selectRootRef.current && !selectRootRef.current.contains(e.target)) setSelectOpen(false);
+            if (selectRootRef.current && selectRootRef.current.contains(e.target)) return;
+            if (e.target && e.target.closest && e.target.closest('[data-uu-select-menu]')) return;
+            setSelectOpen(false);
         };
         document.addEventListener('mousedown', onDoc);
         document.addEventListener('touchstart', onDoc);
+        window.addEventListener('resize', place);
+        window.addEventListener('scroll', place, true);
         return () => {
             document.removeEventListener('mousedown', onDoc);
             document.removeEventListener('touchstart', onDoc);
+            window.removeEventListener('resize', place);
+            window.removeEventListener('scroll', place, true);
         };
     }, [selectOpen]);
 
@@ -1892,6 +1920,7 @@ const Input = ({ label, type, value, onChange, placeholder, isRequired = false, 
                 <button
                     type="button"
                     id={id}
+                    ref={selectBtnRef}
                     onClick={() => setSelectOpen((o) => !o)}
                     className="w-full min-h-[48px] flex items-center justify-between gap-2
                                p-3.5 rounded-xl bg-black/60 border border-white/20 text-left
@@ -1906,12 +1935,19 @@ const Input = ({ label, type, value, onChange, placeholder, isRequired = false, 
                     </span>
                     <span className="text-cyan-400/80 text-xs shrink-0">{selectOpen ? '▲' : '▼'}</span>
                 </button>
-                {selectOpen && (
+                {selectOpen && selectMenuBox && createPortal(
                     <div
-                        className="absolute left-0 right-0 top-full mt-1 z-[10050]
-                                   max-h-56 overflow-y-auto rounded-xl
-                                   border border-white/20 bg-slate-900 shadow-2xl shadow-black/60"
+                        data-uu-select-menu="1"
                         role="listbox"
+                        className="fixed overflow-y-auto rounded-xl border border-cyan-500/30
+                                   bg-slate-950 text-white shadow-2xl shadow-black/80 ring-1 ring-white/10"
+                        style={{
+                            top: selectMenuBox.top,
+                            left: selectMenuBox.left,
+                            width: selectMenuBox.width,
+                            maxHeight: selectMenuBox.maxHeight,
+                            zIndex: 99999,
+                        }}
                     >
                         <button
                             type="button"
@@ -1948,7 +1984,8 @@ const Input = ({ label, type, value, onChange, placeholder, isRequired = false, 
                                 </button>
                             );
                         })}
-                    </div>
+                    </div>,
+                    document.body
                 )}
             </div>
         );
@@ -2025,48 +2062,56 @@ const Input = ({ label, type, value, onChange, placeholder, isRequired = false, 
 
 // Component for Generic Reports (Only available to Admins/Managers/Staff)
 const ReportsGenerator = ({ glassClass }) => {
-    const { allData, getCollection } = useData(); 
+    const { allData, getCollection } = useData();
     const { currentUser, checkPermission } = useAuth();
 
-    // New constants for Report Type
     const REPORT_TYPES = [
         { label: 'All Time', value: 'all' },
         { label: 'Daily', value: 'daily' },
         { label: 'Weekly', value: 'weekly' },
         { label: 'Monthly', value: 'monthly' },
         { label: 'Quarterly', value: 'quarterly' },
-        { label: 'Annually', value: 'annually' }
+        { label: 'Annually', value: 'annually' },
+    ];
+
+        const REPORT_PRESETS = [
+        { id: '', label: 'Custom selection' },
+        { id: 'MAT_ITEM', label: 'Material · Inventory / SKU', collection: 'MAT_ITEM_CRUD' },
+        { id: 'MAT_GRV', label: 'Material · GRV (Goods Received)', collection: 'MAT_GRV_CRUD' },
+        { id: 'MAT_GIV', label: 'Material · GIV (Goods Issued)', collection: 'MAT_GIV_CRUD' },
+        { id: 'MAT_PO', label: 'Material · Local Purchase', collection: 'MAT_PURCHASE_CRUD' },
+        { id: 'MAT_FOREIGN', label: 'Material · Foreign Purchase', collection: 'MAT_FOREIGN_PURCHASE_CRUD' },
+        { id: 'MAT_STORE', label: 'Material · Stores', collection: 'MAT_STORE_CRUD' },
+        { id: 'MAT_ROB', label: 'Material · Parts Robbing', collection: 'MAT_PARTS_ROBBING_CRUD' },
+        { id: 'MAT_VENDOR', label: 'Material · Vendors', collection: 'MAT_VENDOR_CRUD' },
     ];
 
     const getCollectionLabel = useCallback((name) => {
-        if (!name) return '';
-        if (typeof name !== 'string') return ''; 
+        if (!name || typeof name !== 'string') return '';
         return name.replace(/_/g, ' ').replace('CRUD', '(Data)').trim();
     }, []);
 
-    const collectionNames = useMemo(() => Object.keys(allData).sort(), [allData]);
-    const initialSelectedCollectionName = collectionNames.length > 0 ? collectionNames[0] : '';
-    
-    const [selectedCollection, setSelectedCollection] = useState(initialSelectedCollectionName);
+    const collectionNames = useMemo(() => Object.keys(allData || {}).sort(), [allData]);
+    const initialSelected = collectionNames.length > 0 ? collectionNames[0] : '';
+
+    const [selectedCollection, setSelectedCollection] = useState(initialSelected);
     const [sortKey, setSortKey] = useState('');
     const [groupByKey, setGroupByKey] = useState('');
-    const [reportType, setReportType] = useState('all'); // New State for Type
+    const [reportType, setReportType] = useState('all');
+    const [dateFrom, setDateFrom] = useState('');
+    const [dateTo, setDateTo] = useState('');
+    const [preset, setPreset] = useState('');
+    const [statusFilter, setStatusFilter] = useState('All');
+    const [searchTerm, setSearchTerm] = useState('');
 
-    const columns = useMemo(() => COLUMN_CONFIG[selectedCollection] || [], [selectedCollection]);
+    const columns = useMemo(() => (typeof COLUMN_CONFIG !== 'undefined' ? (COLUMN_CONFIG[selectedCollection] || []) : []), [selectedCollection]);
 
-    const filterableColumns = useMemo(() =>
-        columns.filter(col => !col.isHidden && col.type !== 'array'),
+    const filterableColumns = useMemo(
+        () => (columns || []).filter((col) => !col.isHidden && col.type !== 'array'),
         [columns]
     );
 
-    const [columnFilters, setColumnFilters] = useState(() => {
-        return filterableColumns.reduce((acc, col) => {
-            acc[col.key] = '';  
-            return acc;
-        }, {});
-    });
-
-    const currentData = useMemo(() => getCollection(selectedCollection) || [], [getCollection, selectedCollection]);
+    const [columnFilters, setColumnFilters] = useState({});
 
     useEffect(() => {
         if (selectedCollection) {
@@ -2078,24 +2123,24 @@ const ReportsGenerator = ({ glassClass }) => {
             );
             setSortKey('');
             setGroupByKey('');
-            setReportType('all'); // Reset type on collection change
+            setReportType('all');
         }
     }, [selectedCollection, filterableColumns]);
 
+    const currentData = useMemo(() => getCollection(selectedCollection) || [], [getCollection, selectedCollection]);
+
     const getColumnFilterOptions = useCallback((data, columnKey) => {
         const values = new Set(['All']);
-        data.forEach(item => {
+        (data || []).forEach((item) => {
             const value = item[columnKey];
-            if (value !== null && value !== undefined) {
-                values.add(String(value));
-            }
+            if (value !== null && value !== undefined) values.add(String(value));
         });
-        return Array.from(values).map(v => ({ label: v, value: v }));
+        return Array.from(values).map((v) => ({ label: v, value: v }));
     }, []);
 
-    const columnOptions = React.useMemo(() => {
+    const columnOptions = useMemo(() => {
         const options = {};
-        filterableColumns.forEach(col => {
+        filterableColumns.forEach((col) => {
             options[col.key] = getColumnFilterOptions(currentData, col.key);
         });
         return options;
@@ -2104,55 +2149,111 @@ const ReportsGenerator = ({ glassClass }) => {
     const filteredAndSortedData = useMemo(() => {
         let data = [...currentData];
 
-        data = data.filter(item => {
-            return filterableColumns.every(col => {
+        data = data.filter((item) =>
+            (filterableColumns || []).every((col) => {
                 const filterValue = columnFilters[col.key] || '';
-                if (filterValue === 'All' || !filterValue) {
-                    return true;
+                if (filterValue === 'All' || !filterValue) return true;
+                return String(item[col.key] || '').toLowerCase() === filterValue.toLowerCase();
+            })
+        );
+
+        if (statusFilter && statusFilter !== 'All') {
+            const sf = statusFilter.toLowerCase();
+            data = data.filter((item) => String(item.status || item.Status || '').toLowerCase() === sf);
+        }
+
+        const dateKeys = [
+            'date', 'posting_date', 'createdAt', 'created_at', 'payroll_process_date',
+            'process_date', 'leave_start', 'start_date', 'transaction_date', 'grv_date', 'period',
+        ];
+
+        if (dateFrom || dateTo) {
+            const fromTs = dateFrom ? new Date(dateFrom).setHours(0, 0, 0, 0) : null;
+            const toTs = dateTo ? new Date(dateTo).setHours(23, 59, 59, 999) : null;
+            data = data.filter((item) => {
+                let raw = null;
+                for (const k of dateKeys) {
+                    if (item[k] != null && String(item[k]).trim() !== '') {
+                        raw = item[k];
+                        break;
+                    }
                 }
-                const itemValue = String(item[col.key] || '').toLowerCase();
-                const filterValueLower = filterValue.toLowerCase();
-                return itemValue === filterValueLower;
+                if (!raw) return true;
+                const ts = new Date(raw).getTime();
+                if (isNaN(ts)) return true;
+                if (fromTs != null && ts < fromTs) return false;
+                if (toTs != null && ts > toTs) return false;
+                return true;
             });
-        });
+        }
+
+        if (reportType && reportType !== 'all') {
+            const now = new Date();
+            data = data.filter((item) => {
+                let raw = null;
+                for (const k of dateKeys) {
+                    if (item[k] != null && String(item[k]).trim() !== '') {
+                        raw = item[k];
+                        break;
+                    }
+                }
+                if (!raw) return true;
+                const d = new Date(raw);
+                if (isNaN(d.getTime())) return true;
+                if (reportType === 'daily') return d.toDateString() === now.toDateString();
+                if (reportType === 'weekly') {
+                    const weekAgo = new Date(now);
+                    weekAgo.setDate(now.getDate() - 7);
+                    return d >= weekAgo && d <= now;
+                }
+                if (reportType === 'monthly') return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+                if (reportType === 'quarterly') {
+                    const q = Math.floor(now.getMonth() / 3);
+                    return Math.floor(d.getMonth() / 3) === q && d.getFullYear() === now.getFullYear();
+                }
+                if (reportType === 'annually') return d.getFullYear() === now.getFullYear();
+                return true;
+            });
+        }
+
+        if (searchTerm && searchTerm.trim()) {
+            const q = searchTerm.trim().toLowerCase();
+            data = data.filter((item) =>
+                Object.values(item || {}).some((v) => String(v ?? '').toLowerCase().includes(q))
+            );
+        }
 
         if (sortKey) {
             data.sort((a, b) => {
                 const aVal = a[sortKey];
                 const bVal = b[sortKey];
-                if ((typeof aVal === 'number' || (!isNaN(parseFloat(aVal)) && isFinite(aVal))) && (typeof bVal === 'number' || (!isNaN(parseFloat(bVal)) && isFinite(bVal)))) {
-                    return parseFloat(aVal) - parseFloat(bVal);
-                }
-                const stringA = String(aVal || '').toLowerCase();
-                const stringB = String(bVal || '').toLowerCase();
-                if (stringA < stringB) return -1;
-                if (stringA > stringB) return 1;
-                return 0;
+                const na = parseFloat(aVal);
+                const nb = parseFloat(bVal);
+                if (!isNaN(na) && !isNaN(nb) && isFinite(na) && isFinite(nb)) return na - nb;
+                return String(aVal || '').toLowerCase().localeCompare(String(bVal || '').toLowerCase());
             });
         }
 
         return data;
-    }, [currentData, columnFilters, sortKey, filterableColumns]);
+    }, [currentData, columnFilters, sortKey, filterableColumns, searchTerm, dateFrom, dateTo, reportType, statusFilter]);
 
     const groupedData = useMemo(() => {
-        if (!groupByKey) {
-            return { 'All Records': filteredAndSortedData };
-        }
+        if (!groupByKey) return { 'All Records': filteredAndSortedData };
         return filteredAndSortedData.reduce((acc, item) => {
             const key = String(item[groupByKey] || 'N/A');
-            acc[key] = acc[key] || [];
+            if (!acc[key]) acc[key] = [];
             acc[key].push(item);
             return acc;
         }, {});
     }, [filteredAndSortedData, groupByKey]);
 
-    const displayColumns = useMemo(() => columns.filter(col => !col.isHidden && col.type !== 'array').slice(0, 8), [columns]);
+    const displayColumns = useMemo(
+        () => (columns || []).filter((col) => !col.isHidden && col.type !== 'array').slice(0, 8),
+        [columns]
+    );
 
     const handleFilterChange = (columnKey, value) => {
-        setColumnFilters(prevFilters => ({
-            ...prevFilters,
-            [columnKey]: value,
-        }));
+        setColumnFilters((prev) => ({ ...prev, [columnKey]: value }));
     };
 
     useEffect(() => {
@@ -2161,159 +2262,308 @@ const ReportsGenerator = ({ glassClass }) => {
         }
     }, [collectionNames, selectedCollection]);
 
+    const exportCSV = () => {
+        const rows = filteredAndSortedData;
+        if (!rows || !rows.length) return;
+        const cols = displayColumns.length
+            ? displayColumns
+            : Object.keys(rows[0] || {}).map((k) => ({ key: k, label: k }));
+        const headers = cols.map((c) => c.label || c.key);
+        const body = rows.map((r) =>
+            cols
+                .map((c) => {
+                    const v = r[c.key];
+                    const s = v == null ? '' : String(v).replace(/"/g, '""');
+                    return `"${s}"`;
+                })
+                .join(',')
+        );
+        const csv = [headers.join(','), ...body].join('\n');
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${selectedCollection || 'report'}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+    };
+
+    const partners = getCollection('FIN_PARTNERS_CRUD') || [];
+
     return (
-        <ContainerCard  Icon='FileText' glassClass={glassClass} className="h-full min-h-0 flex flex-col">
-            <div className="space-y-4 mb-6 p-4 border border-gray-700/50 rounded-xl">
-                <h3 className="text-lg font-semibold text-cyan-400 flex items-center">
-                    <Icons.Building className="w-5 h-5 mr-2" />
-                    Report Configuration
+        <ContainerCard Icon="FileText" glassClass={glassClass} className="h-full max-w-full min-w-0 overflow-x-hidden overflow-y-auto">
+            <div className="space-y-3 mb-4 p-3 sm:p-4 border border-white/10 rounded-xl max-w-full min-w-0 overflow-visible bg-black/20">
+                <h3 className="text-base font-semibold text-cyan-400 flex items-center shrink-0">
+                    <Icons.FileBarChart className="w-5 h-5 mr-2 shrink-0" />
+                    Institutional Report Studio
                 </h3>
+                <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">
+                    Presets · date range · column filters · group · export
+                </p>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                    <div className="col-span-full">
-                        <div className="flex flex-wrap gap-4 justify-start items-end">
-                            
-                            {/* Data Collection Select */}
-                            <div className="flex-grow min-w-[200px]">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-2">
+                    <div className="rounded-xl border border-cyan-500/20 bg-cyan-950/20 p-3">
+                        <p className="text-[9px] text-cyan-400/80 uppercase font-black">Rows</p>
+                        <p className="text-lg font-black text-white">{filteredAndSortedData.length}</p>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-black/30 p-3">
+                        <p className="text-[9px] text-gray-500 uppercase font-black">Source</p>
+                        <p className="text-xs font-bold text-white truncate">{getCollectionLabel(selectedCollection) || '—'}</p>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-black/30 p-3">
+                        <p className="text-[9px] text-gray-500 uppercase font-black">Period</p>
+                        <p className="text-xs font-bold text-white">{reportType}</p>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-black/30 p-3">
+                        <p className="text-[9px] text-gray-500 uppercase font-black">Groups</p>
+                        <p className="text-lg font-black text-white">{Object.keys(groupedData || {}).length}</p>
+                    </div>
+                </div>
+
+                <div className="w-full max-w-full min-w-0 overflow-visible">
+                    <div className="relative z-[50] grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 items-end min-w-0 w-full">
+                        <div className="min-w-0 max-w-full w-full overflow-visible">
+                            <Input
+                                label="Report preset"
+                                type="select"
+                                options={REPORT_PRESETS.map((p) => ({ label: p.label, value: p.id }))}
+                                value={preset}
+                                onChange={(val) => {
+                                    setPreset(val);
+                                    const hit = REPORT_PRESETS.find((p) => p.id === val);
+                                    if (hit && hit.collection && collectionNames.includes(hit.collection)) {
+                                        setSelectedCollection(hit.collection);
+                                    }
+                                }}
+                            />
+                        </div>
+
+                        <div className="min-w-0 max-w-full w-full overflow-visible">
+                            <Input
+                                label="Data Collection"
+                                type="select"
+                                options={collectionNames.map((name) => ({ label: getCollectionLabel(name), value: name }))}
+                                value={selectedCollection}
+                                onChange={(val) => setSelectedCollection(val)}
+                                isRequired
+                            />
+                        </div>
+
+                        <div className="min-w-0 max-w-full w-full overflow-visible">
+                            <label className="text-[10px] font-black uppercase text-gray-500 tracking-widest">Date from</label>
+                            <input
+                                type="date"
+                                value={dateFrom}
+                                onChange={(e) => setDateFrom(e.target.value)}
+                                className="w-full mt-1 bg-black/50 border border-white/15 rounded-xl px-3 py-2.5 text-white text-sm outline-none focus:ring-1 focus:ring-cyan-500/40"
+                            />
+                        </div>
+
+                        <div className="min-w-0 max-w-full w-full overflow-visible">
+                            <label className="text-[10px] font-black uppercase text-gray-500 tracking-widest">Date to</label>
+                            <input
+                                type="date"
+                                value={dateTo}
+                                onChange={(e) => setDateTo(e.target.value)}
+                                className="w-full mt-1 bg-black/50 border border-white/15 rounded-xl px-3 py-2.5 text-white text-sm outline-none focus:ring-1 focus:ring-cyan-500/40"
+                            />
+                        </div>
+
+                        <div className="min-w-0 max-w-full w-full overflow-visible">
+                            <Input
+                                label="Status"
+                                type="select"
+                                options={[
+                                    { label: 'All', value: 'All' },
+                                    { label: 'Draft', value: 'Draft' },
+                                    { label: 'Posted', value: 'Posted' },
+                                    { label: 'Approved', value: 'Approved' },
+                                    { label: 'Pending', value: 'Pending' },
+                                    { label: 'Active', value: 'Active' },
+                                ]}
+                                value={statusFilter}
+                                onChange={(val) => setStatusFilter(val)}
+                            />
+                        </div>
+
+                        <div className="min-w-0 max-w-full w-full overflow-visible">
+                            <Input
+                                label="Filter by Partner/Entity"
+                                type="select"
+                                options={[
+                                    { label: 'All Entities', value: 'All' },
+                                    ...partners.map((p) => ({
+                                        label: p.partner_name || p.name || p.id,
+                                        value: p.partner_name || p.name || p.id,
+                                    })),
+                                ]}
+                                value={columnFilters.partner_name || ''}
+                                onChange={(val) => handleFilterChange('partner_name', val)}
+                            />
+                        </div>
+
+                        {(filterableColumns || []).map((col) => (
+                            <div key={col.key} className="min-w-0 max-w-full w-full overflow-visible">
                                 <Input
-                                    label="Data Collection"
+                                    label={`Filter: ${col.label}`}
                                     type="select"
-                                    options={collectionNames.map(name => ({ label: getCollectionLabel(name), value: name }))}
-                                    value={selectedCollection}
-                                    onChange={(val) => setSelectedCollection(val)}
-                                    isRequired
+                                    options={columnOptions[col.key] || [{ label: 'All', value: 'All' }]}
+                                    value={columnFilters[col.key] || ''}
+                                    onChange={(val) => handleFilterChange(col.key, val)}
                                 />
                             </div>
+                        ))}
 
-                            {/* Dynamic Filter Selects */}
-                            {selectedCollection && filterableColumns.map(col => (
-                                <div key={col.key} className="flex-grow min-w-[200px]">
-                                    <Input
-                                        label={`Filter: ${col.label}`}
-                                        type="select"
-                                        options={columnOptions[col.key] || [{ label: 'All', value: 'All' }]}
-                                        value={columnFilters[col.key] || ''}
-                                        onChange={(val) => handleFilterChange(col.key, val)}
-                                    />
-                                </div>
-                            ))}
+                        <div className="min-w-0 max-w-full w-full overflow-visible">
+                            <Input
+                                label="Report Type"
+                                type="select"
+                                options={REPORT_TYPES}
+                                value={reportType}
+                                onChange={(val) => setReportType(val)}
+                            />
+                        </div>
 
-                            {/* Report Type Select (DAILY, WEEKLY, etc) */}
-                            <div className="flex-grow min-w-[200px]">
-                                <Input
-                                    label="Report Type"
-                                    type="select"
-                                    options={REPORT_TYPES}
-                                    value={reportType}
-                                    onChange={(val) => setReportType(val)}
-                                />
-                            </div>
+                        <div className="min-w-0 max-w-full w-full overflow-visible">
+                            <Input
+                                label="Sort By"
+                                type="select"
+                                options={[
+                                    { label: 'None', value: '' },
+                                    ...(filterableColumns || []).map((c) => ({ label: c.label, value: c.key })),
+                                ]}
+                                value={sortKey}
+                                onChange={(val) => setSortKey(val)}
+                            />
+                        </div>
 
-                            {/* Sort By Select */}
-                            <div className="flex-grow min-w-[200px]">
-                                <Input
-                                    label="Sort By"
-                                    type="select"
-                                    options={[{ label: 'None', value: '' }, ...filterableColumns.map(c => ({ label: c.label, value: c.key }))]}
-                                    value={sortKey}
-                                    onChange={(val) => setSortKey(val)}
-                                />
-                            </div>
-
-                            {/* Group By Select */}
-                            <div className="flex-grow min-w-[200px]">
-                                <Input
-                                    label="Group By"
-                                    type="select"
-                                    options={[{ label: 'None', value: '' }, ...filterableColumns.map(c => ({ label: c.label, value: c.key }))]}
-                                    value={groupByKey}
-                                    onChange={(val) => setGroupByKey(val)}
-                                />
-                            </div>
+                        <div className="min-w-0 max-w-full w-full overflow-visible">
+                            <Input
+                                label="Group By"
+                                type="select"
+                                options={[
+                                    { label: 'None', value: '' },
+                                    ...(filterableColumns || []).map((c) => ({ label: c.label, value: c.key })),
+                                ]}
+                                value={groupByKey}
+                                onChange={(val) => setGroupByKey(val)}
+                            />
                         </div>
                     </div>
+                </div>
 
-                    {/* Export Button Integration */}
-                    <div className="col-span-full pt-4 flex justify-end">
+                <div className="w-full pt-2 flex flex-wrap justify-end gap-2">
+                    {typeof ExportButton === 'function' ? (
                         <ExportButton
                             data={filteredAndSortedData}
                             columns={columns}
-                            filename={`${getCollectionLabel(selectedCollection)}-${reportType}-Report`}
+                            filename={selectedCollection || 'report'}
+                            isFinancial
                         />
-                    </div>
+                    ) : (
+                        <button
+                            type="button"
+                            onClick={exportCSV}
+                            className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700 transition font-semibold"
+                        >
+                            Export CSV
+                        </button>
+                    )}
                 </div>
             </div>
 
-            {/* Results Table — single scrollport so header + rows stay aligned */}
-            {selectedCollection && (
-                <div className="mt-4 flex flex-col min-h-0 flex-1 border border-white/10 rounded-xl overflow-hidden bg-black/30">
-                    <div className="shrink-0 px-4 py-3 border-b border-white/10 bg-slate-950/90">
-                        <h3 className="text-lg sm:text-xl font-bold text-white">
-                            Report Results: {getCollectionLabel(selectedCollection)}{' '}
-                            <span className="text-cyan-400">({filteredAndSortedData.length} Records)</span>
-                        </h3>
-                    </div>
+            <div className="mb-4 flex flex-wrap gap-2 items-center">
+                <input
+                    type="text"
+                    placeholder="Search records..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="border border-cyan-500/30 bg-black/50 text-white placeholder:text-gray-500 p-2 rounded-lg text-sm w-full md:w-64 outline-none focus:ring-2 focus:ring-cyan-500/40"
+                />
+                <button
+                    type="button"
+                    onClick={exportCSV}
+                    className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700 transition font-semibold"
+                >
+                    Export to CSV
+                </button>
+            </div>
 
-                    {filteredAndSortedData.length === 0 ? (
-                        <p className="text-center py-12 text-gray-500 text-sm">No records match the current criteria.</p>
-                    ) : (
-                        <div className="flex-1 min-h-[240px] max-h-[min(60vh,560px)] overflow-auto custom-scrollbar">
-                            {Object.entries(groupedData).map(([groupKey, data]) => (
-                                <div key={groupKey} className="min-w-0">
-                                    <div className="sticky top-0 z-20 px-4 py-2 text-[11px] font-black uppercase tracking-widest text-cyan-300 bg-slate-900 border-b border-cyan-500/20">
-                                        {groupByKey
-                                            ? `${filterableColumns.find(col => col.key === groupByKey)?.label || groupByKey}: ${groupKey} (${data.length})`
-                                            : `All Records (${data.length})`}
-                                    </div>
-                                    <table className="w-max min-w-full border-collapse text-left border border-white/15">
-                                        <thead className="sticky top-9 z-10">
-                                            <tr className="bg-slate-900/95">
-                                                {displayColumns.map((col, i) => (
-                                                    <th
-                                                        key={col.key || i}
-                                                        className="px-3 py-2.5 text-[9px] font-black uppercase tracking-widest text-cyan-300/90 border-b border-white/10 border-r border-white/5 whitespace-nowrap bg-slate-900/95"
-                                                        style={{ minWidth: col.type === 'number' ? 100 : 130, maxWidth: 260 }}
+            {Object.entries(groupedData).map(([groupName, rows]) => (
+                <div key={groupName} className="mb-6">
+                    {groupByKey ? (
+                        <h4 className="text-sm font-black text-cyan-400 uppercase tracking-widest mb-2 px-1">
+                            {groupName} · {rows.length}
+                        </h4>
+                    ) : null}
+                    <div className="uu-table-scroll w-full max-w-full min-w-0 overflow-x-auto overflow-y-auto max-h-[min(55vh,520px)] rounded-xl border border-white/10 bg-black/40">
+                        <table className="w-max min-w-full border-collapse table-auto">
+                            <thead className="bg-slate-950/95 sticky top-0 z-10">
+                                <tr className="border-b border-white/10">
+                                    {(displayColumns || []).map((col, i) => (
+                                        <th
+                                            key={i}
+                                            className="px-3 py-2.5 text-left text-[10px] font-black uppercase tracking-wider text-cyan-300/90 whitespace-nowrap border-r border-white/5 last:border-r-0"
+                                        >
+                                            {col.label}
+                                        </th>
+                                    ))}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {(rows || []).map((row, ri) => (
+                                    <tr key={row.id || ri} className="border-b border-white/5 hover:bg-white/5">
+                                        {(displayColumns || []).map((col, j) => {
+                                            const raw = row[col.key];
+                                            let cell;
+                                            if (Array.isArray(raw)) {
+                                                cell = (raw || []).slice(0, 2).map((entry, idx) => (
+                                                    <span
+                                                        key={idx}
+                                                        className="bg-gray-700 text-gray-200 rounded-full px-2 py-1 text-xs mr-1 inline-block"
                                                     >
-                                                        {col.label}
-                                                    </th>
-                                                ))}
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {data.map((record) => (
-                                                <tr key={record.id} className="border-b border-white/5 hover:bg-cyan-500/10 transition-colors">
-                                                    {displayColumns.map((col, j) => (
-                                                        <td
-                                                            key={col.key || j}
-                                                            className="px-3 py-2.5 text-[11px] text-gray-200 border-r border-white/5"
-                                                            style={{ minWidth: col.type === 'number' ? 100 : 130, maxWidth: 260 }}
-                                                        >
-                                                            <div className="truncate" title={String(record[col.key] ?? '')}>
-                                                                {Array.isArray(record[col.key])
-                                                                    ? record[col.key].slice(0, 2).map((entry, idx) => (
-                                                                        <span key={idx} className="bg-gray-700/50 text-gray-300 rounded-full px-2 py-0.5 text-[10px] mr-1 inline-block">
-                                                                            {typeof entry === 'object' ? Object.values(entry).join(' / ') : String(entry)}
-                                                                        </span>
-                                                                    ))
-                                                                    : (record[col.key] !== undefined && record[col.key] !== null && record[col.key] !== ''
-                                                                        ? String(record[col.key])
-                                                                        : <span className="text-white/20 italic">—</span>)}
-                                                            </div>
-                                                        </td>
-                                                    ))}
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            ))}
-                        </div>
-                    )}
+                                                        {typeof entry === 'object' ? Object.values(entry).join(' / ') : String(entry)}
+                                                    </span>
+                                                ));
+                                            } else if (raw === null || raw === undefined || raw === '') {
+                                                cell = <span className="text-gray-500">—</span>;
+                                            } else if (
+                                                col.type === 'number' ||
+                                                typeof raw === 'number' ||
+                                                (typeof raw === 'string' &&
+                                                    raw !== '' &&
+                                                    !isNaN(Number(raw)) &&
+                                                    /salary|pay|gross|net|amount|tax|pension|basic|ot|allowance/i.test(col.key || ''))
+                                            ) {
+                                                const n = Number(raw);
+                                                cell = Number.isFinite(n)
+                                                    ? n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                                                    : String(raw);
+                                            } else {
+                                                cell = String(raw);
+                                            }
+                                            return (
+                                                <td key={j} className="px-4 py-3.5 whitespace-nowrap text-sm text-white font-medium">
+                                                    {cell}
+                                                </td>
+                                            );
+                                        })}
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
-            )}
+            ))}
+
+            {filteredAndSortedData.length === 0 ? (
+                <p className="text-center py-8 text-gray-500">No records match the current criteria.</p>
+            ) : null}
         </ContainerCard>
     );
 };
+
+
 
 
 /* --- FULLY MODIFIED MULTIENTRYFIELD COMPONENT --- */
@@ -2414,7 +2664,7 @@ const MultiEntryField = ({ label, entries, fieldConfig, onChange, glassClass }) 
                         );
                     })}
                 </div>
-                <button
+                <button ref={addBtnRef}
                     type="button"
                     onClick={handleAdd}
                     className="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-black py-6 rounded-3xl text-[12px] uppercase tracking-widest transition-all shadow-2xl shadow-cyan-900/60 active:scale-95"
@@ -2441,55 +2691,162 @@ const ContainerCard = ({ title, Icon, children, glassClass, className = '' }) =>
         </div>
     );
 };
-const Modal = ({ isOpen, onClose, title, children, glassClass = '', footer }) => {
+
+
+const Modal = ({ isOpen, onClose, title, children, glassClass = '', footer, anchorRef }) => {
+    const panelRef = React.useRef(null);
+    const [box, setBox] = React.useState(null);
+
+    React.useEffect(() => {
+        if (!isOpen) return undefined;
+        const place = () => {
+            try {
+                const btn = anchorRef && anchorRef.current ? anchorRef.current : null;
+                const vw = window.innerWidth;
+                const vh = window.innerHeight;
+
+                // Prefer the table / main content panel — never the left submenu
+                let panel = null;
+                if (btn && btn.closest) {
+                    panel =
+                        btn.closest('[data-uu-table-panel]') ||
+                        btn.closest('.table-panel') ||
+                        btn.closest('main') ||
+                        btn.closest('[class*="overflow"]') ||
+                        btn.parentElement;
+                    // Walk up until we get a reasonably wide content box (skip tight toolbars)
+                    let walk = btn.parentElement;
+                    for (let i = 0; i < 8 && walk; i++) {
+                        const wr = walk.getBoundingClientRect();
+                        if (wr.width >= Math.min(480, vw * 0.45) && wr.height >= 120) {
+                            panel = walk;
+                            break;
+                        }
+                        walk = walk.parentElement;
+                    }
+                }
+
+                const pr = panel && panel.getBoundingClientRect
+                    ? panel.getBoundingClientRect()
+                    : { left: Math.min(280, vw * 0.22), top: 80, right: vw - 12, bottom: vh - 12, width: vw * 0.7, height: vh - 100 };
+
+                // Content column only (exclude typical left nav ~0–260px if panel spans full)
+                let contentLeft = pr.left;
+                let contentRight = pr.right;
+                // If panel is almost full width, inset past submenu
+                if (pr.left < 40 && pr.width > vw * 0.85) {
+                    contentLeft = Math.min(280, Math.max(200, vw * 0.18));
+                    contentRight = vw - 12;
+                }
+
+                const contentW = Math.max(280, contentRight - contentLeft);
+                const width = Math.min(Math.max(420, contentW * 0.58), contentW - 24, 640);
+
+                let left;
+                let top;
+                if (btn && btn.getBoundingClientRect) {
+                    const r = btn.getBoundingClientRect();
+                    // Align toward the Add button within the table content band
+                    left = r.right - width;
+                    if (left < contentLeft + 8) left = contentLeft + 8;
+                    if (left + width > contentRight - 8) left = contentRight - width - 8;
+
+                    const estH = Math.min(vh * 0.88, 820);
+                    const below = r.bottom + 8;
+                    // Prefer a tall panel in the content column; pin near top of panel if needed
+                    if (below + 320 < Math.min(pr.bottom, vh) - 8) {
+                        top = Math.min(below, Math.max(pr.top + 12, vh * 0.06));
+                    } else {
+                        top = Math.max(12, Math.min(r.top, pr.top + 12, vh * 0.06));
+                    }
+                    // Ensure enough height: if remaining space short, move top up
+                    if (Math.min(pr.bottom, vh - 8) - top < 360) {
+                        top = Math.max(12, Math.min(pr.bottom, vh - 8) - Math.min(estH, 820));
+                    }
+                } else {
+                    left = contentLeft + (contentW - width) / 2;
+                    top = Math.max(pr.top + 24, vh * 0.12);
+                }
+
+                const maxBottom = Math.min(pr.bottom, vh - 8);
+                const maxHeight = Math.max(360, Math.min(vh * 0.88, maxBottom - top - 8, 820));
+                setBox({ top, left, width, maxHeight });
+            } catch (e) {
+                setBox(null);
+            }
+        };
+        place();
+        window.addEventListener('resize', place);
+        window.addEventListener('scroll', place, true);
+        return () => {
+            window.removeEventListener('resize', place);
+            window.removeEventListener('scroll', place, true);
+        };
+    }, [isOpen, anchorRef]);
+
+
     if (!isOpen) return null;
 
-    return (
+    const node = (
         <div
-            className="fixed inset-0 z-[9999] flex items-end sm:items-center justify-center
-                       p-0 sm:p-5 bg-slate-950/50 backdrop-blur-md"
+            className="fixed inset-0 z-[99999]"
+            style={{ position: 'fixed', inset: 0, zIndex: 99999 }}
             role="presentation"
         >
+            {/* Light transparent scrim — page stays clearly visible */}
             <div
-                className={`relative z-[10000] w-full sm:max-w-2xl max-h-[92dvh] flex flex-col
-                            overflow-hidden rounded-t-2xl sm:rounded-2xl
-                            border-2 border-white/25 bg-slate-900/95 backdrop-blur-xl text-white
-                            shadow-[0_25px_80px_rgba(0,0,0,0.65)] ring-1 ring-cyan-400/25
+                className="absolute inset-0 bg-slate-950/25 backdrop-blur-[2px]"
+                style={{ background: 'rgba(2, 8, 20, 0.22)' }}
+            />
+            <div
+                ref={panelRef}
+                className={`absolute flex flex-col overflow-hidden rounded-2xl
+                            border border-white/30 bg-slate-900/80 backdrop-blur-xl text-white
+                            shadow-[0_20px_60px_rgba(0,0,0,0.45)] ring-1 ring-cyan-400/20
                             ${glassClass || ''}`}
+                style={box ? {
+                    top: box.top,
+                    left: box.left,
+                    width: box.width,
+                    maxHeight: box.maxHeight, minHeight: Math.min(box.maxHeight || 480, 480),
+                } : {
+                    top: '12vh',
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                    width: 'min(640px, calc(100vw - 48px))',
+                    maxHeight: '78vh',
+                }}
                 role="dialog"
                 aria-modal="true"
                 onMouseDown={(e) => e.stopPropagation()}
                 onClick={(e) => e.stopPropagation()}
             >
-                <div className="h-1 w-full shrink-0 bg-gradient-to-r from-cyan-500 via-sky-400 to-violet-500" />
-
-                <div className="shrink-0 flex items-center justify-between gap-3 px-4 py-3 border-b border-white/15 bg-white/5">
-                    <h3 className="text-sm sm:text-lg font-black uppercase tracking-wide text-cyan-300 truncate">
+                <div className="h-1 w-full shrink-0 bg-gradient-to-r from-cyan-500/80 via-sky-400/80 to-violet-500/80" />
+                <div className="shrink-0 flex items-center justify-between gap-3 px-4 py-2.5 border-b border-white/10 bg-white/5">
+                    <h3 className="text-sm sm:text-base font-black uppercase tracking-wide text-cyan-300 truncate">
                         {title}
                     </h3>
                     <button
                         type="button"
                         onClick={onClose}
-                        className="p-2.5 rounded-xl border border-white/20 bg-white/5 min-h-[44px] min-w-[44px]
+                        className="p-2 rounded-xl border border-white/15 bg-white/5 min-h-[40px] min-w-[40px]
                                    flex items-center justify-center text-gray-300 hover:text-red-300"
                         aria-label="Close"
                     >
                         <Icons.X className="w-5 h-5" />
                     </button>
                 </div>
-
-                <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-4 py-4 overscroll-contain">
+                <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-4 py-3 overscroll-contain">
                     {children}
                 </div>
-
-                <div className="shrink-0 flex flex-wrap justify-end gap-2 px-4 py-3 border-t border-white/15 bg-slate-900/95
-                                pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+                <div className="shrink-0 flex flex-wrap justify-end gap-2 px-4 py-2.5 border-t border-white/10 bg-slate-900/70
+                                pb-[max(0.5rem,env(safe-area-inset-bottom))]">
                     {footer}
                     <button
                         type="button"
                         onClick={onClose}
-                        className="px-4 py-3 rounded-xl text-xs font-bold uppercase border border-white/20
-                                   bg-white/5 text-gray-200 min-h-[44px] flex-1 sm:flex-none"
+                        className="px-4 py-2.5 rounded-xl text-xs font-bold uppercase border border-white/20
+                                   bg-white/5 text-gray-200 min-h-[40px] flex-1 sm:flex-none"
                     >
                         Cancel
                     </button>
@@ -2497,8 +2854,17 @@ const Modal = ({ isOpen, onClose, title, children, glassClass = '', footer }) =>
             </div>
         </div>
     );
-};
 
+    try {
+        if (typeof document !== 'undefined' && document.body) {
+            const portalFn =
+                (typeof createPortal === 'function' && createPortal) ||
+                (typeof ReactDOM !== 'undefined' && ReactDOM.createPortal);
+            if (typeof portalFn === 'function') return portalFn(node, document.body);
+        }
+    } catch (e) {}
+    return node;
+};
 
 // New Component: Export Helpers
 const exportTableWorkbook = async (data, columns, filename, options = {}) => {
@@ -2754,6 +3120,7 @@ const DataTable = ({ collectionName, data, columns, glassClass, title, getCollec
     const { checkPermission } = useAuth();
 
     const [isModalOpen, setIsModalOpen] = useState(false);
+    const addBtnRef = useRef(null);
     const [editingRecord, setEditingRecord] = useState(null);
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState('ALL');
@@ -3000,7 +3367,7 @@ const DataTable = ({ collectionName, data, columns, glassClass, title, getCollec
                         )}
                         <ExportButton data={filteredData} columns={columns} filename={exportFilename} />
                         {checkPermission('CAN_ADD_RECORD', allRoles) && (
-                            <button type="button" onClick={handleAdd}
+                            <button ref={addBtnRef} type="button" onClick={handleAdd}
                                 className="bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-2 px-4 rounded-xl flex items-center gap-2 text-[10px] uppercase tracking-widest border border-white/20">
                                 <Icons.Plus size={14} /> Add {getAddLabel()}
                             </button>
@@ -3097,11 +3464,7 @@ const DataTable = ({ collectionName, data, columns, glassClass, title, getCollec
                 </table>
             </div>
 
-            <Modal
-                isOpen={isModalOpen}
-                onClose={() => setIsModalOpen(false)}
-                title={editingRecord && editingRecord.id ? `Edit ${getAddLabel()}` : `New ${getAddLabel()}`}
-            >
+            <Modal anchorRef={addBtnRef} isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={editingRecord && editingRecord.id ? `Edit ${getAddLabel()}` : `New ${getAddLabel()}`}>
                 <FormModal
                     collectionName={collectionName}
                     initialData={editingRecord}
@@ -3252,7 +3615,25 @@ const COLUMN_CONFIG = {
    8. NOTIFICATION & UTILITY BAR (Standard)
    ---------------------------------------------------------------------- */
 
-const NotificationBar = ({ glassClass, currentUser, onClose }) => {
+
+/** Relative time for notification rows (e.g. "1 min ago"). */
+const formatRelativeTime = (isoOrDate) => {
+    if (!isoOrDate) return '';
+    const then = new Date(isoOrDate);
+    if (isNaN(then.getTime())) return String(isoOrDate).slice(0, 16);
+    const sec = Math.round((Date.now() - then.getTime()) / 1000);
+    if (sec < 10) return 'just now';
+    if (sec < 60) return sec + ' sec ago';
+    const min = Math.floor(sec / 60);
+    if (min < 60) return min + (min === 1 ? ' min ago' : ' mins ago');
+    const hr = Math.floor(min / 60);
+    if (hr < 24) return hr + (hr === 1 ? ' hour ago' : ' hours ago');
+    const day = Math.floor(hr / 24);
+    if (day < 30) return day + (day === 1 ? ' day ago' : ' days ago');
+    return then.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+};
+
+const NotificationBar = ({ glassClass, currentUser, onClose, onCountChange }) => {
     const { getCollection, notificationTrigger } = useData();
     const [activeTab, setActiveTab] = useState('notifications');
 
@@ -3521,6 +3902,17 @@ const NotificationBar = ({ glassClass, currentUser, onClose }) => {
 
         return list;
     }, [items, grv, giv, robbing, localPO, foreignPO, today, upcomingHolidays, notificationTrigger]);
+    const counts = useMemo(() => ({
+        all: (notifications || []).length,
+        alert: (notifications || []).filter(n => n.severity === 'alert').length,
+        warning: (notifications || []).filter(n => n.severity === 'warning').length,
+        info: (notifications || []).filter(n => n.severity === 'info').length,
+    }), [notifications]);
+    useEffect(() => {
+        if (typeof onCountChange !== 'function') return;
+        onCountChange(Number(counts.all) || 0, counts);
+    }, [counts, onCountChange]);
+
 
     const activityLog = useMemo(() => {
         const stamp = (r, label) => ({
@@ -7088,6 +7480,7 @@ const HrmAppContent = () => {
     // FETCH LIVE ROLES: This is the heartbeat of the April 21 logic
     const allRoles = getCollection('ROLE_CRUD') || [];
     const [showNotifications, setShowNotifications] = useState(false);
+    const [notifCount, setNotifCount] = useState(0);
     const [mobileNavOpen, setMobileNavOpen] = useState(false);
     const isMobile = useIsMobile(768); 
     const [expandedFolders, setExpandedFolders] = useState(['HR', 'SETTINGS']); 
@@ -7148,8 +7541,15 @@ const HrmAppContent = () => {
                         <p className="text-[8px] sm:text-[9px] text-cyan-500 uppercase font-black truncate">{currentUser?.role}</p>
                     </div>
                     <button type="button" onClick={logout} className="p-2 bg-red-500/10 text-red-500 rounded-lg hover:bg-red-500/20 text-[10px] sm:text-xs font-bold transition-all">LOGOUT</button>
-                    <button type="button" onClick={() => setShowNotifications(!showNotifications)} className={`p-2 rounded-full transition-all ${showNotifications ? 'bg-cyan-500 text-white' : 'text-gray-400'}`}>
-                        <Icons.Bell className="w-5 h-5" />
+                    <button type="button" onClick={() => setShowNotifications(!showNotifications)} className={`relative p-2 rounded-full transition-all ${showNotifications ? 'bg-cyan-500 text-white' : 'text-gray-400 hover:text-white hover:bg-white/10'}`}>
+                        <span className="relative inline-flex">
+                            <Icons.Bell className="w-5 h-5" />
+                            {notifCount > 0 && (
+                                <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-rose-500 text-white text-[9px] font-black flex items-center justify-center shadow-lg shadow-rose-500/50 ring-2 ring-slate-950 animate-pulse" title={`${notifCount} notifications`}>
+                                    {notifCount > 99 ? '99+' : notifCount}
+                                </span>
+                            )}
+                        </span>
                     </button>
                 </div>
             </header>
@@ -7197,15 +7597,21 @@ const HrmAppContent = () => {
                     {renderView(currentView, glassClass, getCollection, checkPermission, allRoles)}
                 </main>
 
-                {showNotifications && (
-                    <aside className={`w-[25%] border-l border-white/10 animate-in slide-in-from-right ${glassClass}`}>
-                        <NotificationBar 
-                            glassClass={glassClass} 
-                            currentUser={currentUser} 
-                            onClose={() => setShowNotifications(false)} 
-                        />
-                    </aside>
-                )}
+                <aside
+                    className={`border-l border-white/10 ${glassClass} ${
+                        showNotifications
+                            ? 'w-[25%] min-w-[280px] max-w-[360px] animate-in slide-in-from-right'
+                            : 'hidden w-0 min-w-0 overflow-hidden'
+                    }`}
+                    aria-hidden={!showNotifications}
+                >
+                    <NotificationBar
+                        glassClass={glassClass}
+                        currentUser={currentUser}
+                        onClose={() => setShowNotifications(false)}
+                        onCountChange={setNotifCount}
+                    />
+                </aside>
                     <UnityUniversityAIDock glassClass={glassClass} />
 
             </div>
@@ -7808,4 +8214,3 @@ export function MaterialApp() {
     );
 }
 export default MaterialApp;
-
